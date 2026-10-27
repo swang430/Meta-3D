@@ -91,7 +91,11 @@ class SwitchTopologyCreate(SwitchTopologyBase):
     lab_profile_id: UUID
 
 
+from .topology_conversion import TopologyConversionCommit
+
+
 class SwitchTopologyUpdate(BaseModel):
+    conversion: TopologyConversionCommit | None = None
     connection_numeric_declarations: Dict[str, List[Literal[
         'cable_loss_db', 'cable_length_m', 'calibrated_loss_db', 'calibrated_phase_deg'
     ]]] = Field(default_factory=dict, description='仅本次PATCH显式重申数值的连线ID和字段；不持久化、不返回。')

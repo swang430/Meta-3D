@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/switch-topologies/{topology_id}/conversion-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Topology Conversion
+         * @description 只读预览原保存声明；不改图、默认位、历史或HAL。
+         */
+        post: operations["preview_topology_conversion_api_v1_switch_topologies__topology_id__conversion_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/switch-topologies/{topology_id}/calibration-matrix/{mode}": {
         parameters: {
             query?: never;
@@ -3135,6 +3155,94 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** TopologyConversionPreview */
+        TopologyConversionPreview: {
+            /** Source Digest */
+            source_digest: string;
+            changes: components["schemas"]["TopologyConversionRequest"];
+            /** Candidate */
+            candidate: {
+                [key: string]: unknown;
+            };
+            /** Differences */
+            differences: components["schemas"]["ConversionDifference"][];
+            /** Warnings */
+            warnings: string[];
+        };
+        /** ConversionDifference */
+        ConversionDifference: {
+            /** Object Kind */
+            object_kind: string;
+            /** Object Id */
+            object_id: string;
+            /** Field */
+            field: string;
+            /** Before Present */
+            before_present: boolean;
+            /** Before */
+            before?: unknown;
+            /** After */
+            after: unknown;
+        };
+        /** TopologyConversionCommit */
+        TopologyConversionCommit: {
+            /** Source Digest */
+            source_digest: string;
+            changes: components["schemas"]["TopologyConversionRequest"];
+        };
+        /** TopologyConversionRequest */
+        TopologyConversionRequest: {
+            /** Nodes */
+            nodes?: components["schemas"]["ConversionNodeEdit"][];
+            /** Connections */
+            connections?: components["schemas"]["ConversionConnectionEdit"][];
+        };
+        /** TopologyInternalPath */
+        TopologyInternalPath: {
+            /** From Port */
+            from_port: string;
+            /** To Port */
+            to_port: string;
+        };
+        /** ConversionConnectionEdit */
+        ConversionConnectionEdit: {
+            /** Connection Id */
+            connection_id: string;
+            /** Source Pin */
+            source_pin?: string | null;
+            /** Target Pin */
+            target_pin?: string | null;
+            /** Cable Loss Db */
+            cable_loss_db?: number | null;
+            /** Loss Owner Connection Id */
+            loss_owner_connection_id?: string | null;
+            /**
+             * Same Physical Cable Confirmed
+             * @default false
+             */
+            same_physical_cable_confirmed: boolean;
+        };
+        /** ConversionNodeEdit */
+        ConversionNodeEdit: {
+            /** Node Id */
+            node_id: string;
+            /** Target Type */
+            target_type?: ("ce_port" | "channel_emulator" | "bse_port" | "communication_tester" | "sa_port" | "signal_analyzer") | null;
+            /** Ports */
+            ports?: string[] | null;
+            /** Port Directions */
+            port_directions?: {
+                [key: string]: "input" | "output" | "bidirectional" | "unknown";
+            } | null;
+            /** Port Roles */
+            port_roles?: {
+                [key: string]: "dl" | "ul";
+            } | null;
+            /** Internal Paths */
+            internal_paths?: components["schemas"]["TopologyInternalPath"][] | null;
+            /** Ce Port */
+            ce_port?: string | null;
+        };
         /** CalibrationMatrixResponse */
         CalibrationMatrixResponse: {
             /** Mode Id */
@@ -3431,6 +3539,7 @@ export interface components {
         };
         /** SwitchTopologyUpdate */
         SwitchTopologyUpdate: {
+            conversion?: components["schemas"]["TopologyConversionCommit"] | null;
             /**
              * Connection Numeric Declarations
              * @description 仅本次PATCH显式重申数值的连线ID和字段；不持久化、不返回。
@@ -6300,6 +6409,43 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    preview_topology_conversion_api_v1_switch_topologies__topology_id__conversion_preview_post: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopologyConversionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopologyConversionPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_topology_calibration_matrix_api_v1_switch_topologies__topology_id__calibration_matrix__mode__get: {
         parameters: {
             query: {

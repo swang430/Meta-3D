@@ -9,6 +9,9 @@ from copy import deepcopy
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import OperationalError
+from sqlalchemy import cast, Text, update
+import sqlite3
 from typing import Optional, List
 from uuid import UUID
 import logging
@@ -35,6 +38,11 @@ from app.schemas.topology_internal_paths import validate_internal_path_write
 from app.schemas.topology_loss_ownership import validate_loss_owner_write
 from app.services.chamber_resolution import resolve_current_chamber
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
+from app.schemas.topology_conversion import TopologyConversionRequest, TopologyConversionPreview
+from app.services.topology_conversion import (
+    GRAPH_FIELDS, build_conversion, conversion_source_digest, conversion_differences, conversion_warnings,
+)
+from app.services import execution_exclusion_guard
 
 router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
@@ -548,6 +556,92 @@ def get_switch_topology(
     return _load_scoped_topology(db, topology_id, chamber.id)
 
 
+def _conversion_snapshot(db, topology_id, chamber_id):
+    # 同一次SELECT取新源与数据库原始JSON文本；不使用identity-map里的旧对象。
+    row=db.query(SwitchTopology.id,SwitchTopology.chamber_id,SwitchTopology.switch_category_id,
+        SwitchTopology.nodes,SwitchTopology.connections,SwitchTopology.operating_modes,
+        cast(SwitchTopology.nodes,Text),cast(SwitchTopology.connections,Text),
+        cast(SwitchTopology.operating_modes,Text)).filter(
+            SwitchTopology.id==topology_id,SwitchTopology.chamber_id==chamber_id).one_or_none()
+    if row is None:
+        raise HTTPException(404,detail='Switch topology not found in current Lab')
+    source=dict(zip(('id','chamber_id','switch_category_id'),map(str,row[:3])))
+    source.update(dict(zip(GRAPH_FIELDS,deepcopy(row[3:6]))))
+    return source,row[6:9]
+
+
+def _conversion_candidate(source, changes):
+    try:
+        candidate=build_conversion(source,changes)
+    except ValueError as exc:
+        raise HTTPException(422,detail=str(exc)) from exc
+    nodes,edges,modes=(candidate[key] for key in GRAPH_FIELDS)
+    declared_nodes={edit.node_id for edit in changes.nodes if edit.model_fields_set & {
+        'target_type','ports','port_directions','port_roles','internal_paths'}}
+    repinned={edit.connection_id for edit in changes.connections
+              if edit.model_fields_set & {'source_pin','target_pin'}}
+    for edge in edges:
+        if edge['id'] in repinned or edge['source'] in declared_nodes or edge['target'] in declared_nodes:
+            if any(not isinstance(edge.get(key),str) or not edge[key].strip()
+                   for key in ('source_pin','target_pin')):
+                raise HTTPException(422,detail=f'连线 {edge["id"]} 转换须显式保存两端pin，不推定默认端口')
+    # builder只动声明白名单，未动键直接深复制原JSON；不默认化历史opaque或数值。
+    _validate_nominal(nodes,edges,previous_nodes=source['nodes'],previous_connections=source['connections'])
+    _validate_structure(nodes,edges,modes)
+    _validate_ports(nodes,edges,previous_nodes=source['nodes'],previous_connections=source['connections'])
+    _validate_internal_paths(nodes,edges,modes,previous_nodes=source['nodes'],
+        previous_connections=source['connections'],previous_modes=source['operating_modes'])
+    _validate_loss_owners(nodes,edges,modes,previous_connections=source['connections'])
+    return candidate
+
+
+@router.post('/{topology_id}/conversion-preview',response_model=TopologyConversionPreview,
+             response_model_exclude_unset=True)
+def preview_topology_conversion(topology_id: UUID, request: TopologyConversionRequest,
+        lab_profile_id: UUID = Query(...), db: Session = Depends(get_db)):
+    """只读预览原保存声明；不改图、默认位、历史或HAL。"""
+    chamber=_resolve_scope(db,lab_profile_id)
+    source,_=_conversion_snapshot(db,topology_id,chamber.id)
+    candidate=_conversion_candidate(source,request)
+    return dict(source_digest=conversion_source_digest(source),changes=request.model_dump(exclude_unset=True),
+                candidate=candidate,differences=conversion_differences(source,candidate),
+                warnings=conversion_warnings(source,candidate))
+
+
+def _commit_conversion(db,topology_id,chamber,conversion):
+    if execution_exclusion_guard.active_unsafe_diagnostic():
+        raise HTTPException(409,detail='仪器工作正在进行，暂不能确认转换')
+    source,raw=_conversion_snapshot(db,topology_id,chamber.id)
+    if conversion_source_digest(source)!=conversion.source_digest:
+        db.rollback()
+        raise HTTPException(409,detail='原图已变化，请重新预览')
+    candidate=_conversion_candidate(source,conversion.changes)
+    # 只用未挂载Session的临时对象复用原统计函数；禁止旧ORM对象dirty绕过CAS。
+    statistics=SwitchTopology(**candidate)
+    statistics.update_statistics()
+    statement=update(SwitchTopology).where(
+        SwitchTopology.id==topology_id,SwitchTopology.chamber_id==chamber.id,
+        SwitchTopology.switch_category_id==UUID(source['switch_category_id']),
+        cast(SwitchTopology.nodes,Text)==raw[0],cast(SwitchTopology.connections,Text)==raw[1],
+        cast(SwitchTopology.operating_modes,Text)==raw[2],
+    ).values(**candidate,**{key:getattr(statistics,key) for key in
+        ('total_nodes','total_connections','total_probes','total_channels')})
+    try:
+        result=db.execute(statement.execution_options(synchronize_session=False))
+        if result.rowcount!=1:
+            db.rollback()
+            raise HTTPException(409,detail='原图已变化，请重新预览')
+        db.commit()
+    except OperationalError as exc:
+        db.rollback()
+        code=getattr(exc.orig,'sqlite_errorcode',None)
+        if isinstance(code,int) and code & 0xff in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):
+            raise HTTPException(409,detail='原图正在被其他会话修改，请重新预览') from exc
+        raise
+    db.expire_all()
+    return _load_scoped_topology(db,topology_id,chamber.id)
+
+
 @router.patch("/{topology_id}", response_model=SwitchTopologyResponse)
 def update_switch_topology(
     topology_id: UUID,
@@ -558,6 +652,10 @@ def update_switch_topology(
 ):
     """Update an existing switch topology (scoped to the current lab's chamber)"""
     chamber = _resolve_scope(db, lab_profile_id)
+    if 'conversion' in raw_body:
+        if set(raw_body)!={'conversion'} or request.conversion is None:
+            raise HTTPException(422,detail='conversion不能与其他更新字段同时提交，也不能置空')
+        return _commit_conversion(db,topology_id,chamber,request.conversion)
     topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     update_data = request.model_dump(exclude_unset=True)
