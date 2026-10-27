@@ -560,11 +560,11 @@ def copy_switch_topology(topology_id: UUID, request: SwitchTopologyCopy,
         installed_date=source.installed_date, installed_by=source.installed_by,
         is_active=False, is_default=False, **graph)
     try:
-        copied.update_statistics()
         db.add(copied)
         db.flush()
-        # 响应验证早于提交，避免已创建后才响应500的半成功。
+        # 先校验必填图字段，再计算依赖节点id的统计；失败仍在提交前回滚。
         SwitchTopologyResponse.model_validate(copied).model_dump(mode='json')
+        copied.update_statistics()
         db.commit()
     except ValidationError as exc:
         db.rollback()

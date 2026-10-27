@@ -115,3 +115,7 @@ fbf7029b60328164762a75342e8abd8549b2e3308fe7f67aba9875da6ef7a720  api/openapi.ya
 ```
 
 自查未发现新硬件调用/默认位/执行绑定写点。`git diff --check` exit0。文件分类均为“修”（API/schema/OpenAPI/针对性回归/隔离fixture和代理/报告），未混入其他原有output、venv或Playwright目录。补改4a final_graph_validation属于本片导入契约消费方回归，不是扩做4a生产能力。
+
+## 独立审查后 P2 修复
+
+独立审查发现probe dict缺id仍在统计先KeyError→500。root裁决本片按现有422契约修复：先补真实HTTP反例RED，再将既有Response校验移到统计之前（flush后、commit前），不修源或补默认。详细命令/日志/输入哈希见同目录 `task-1-fix-report.md`。本轮新反例1 failed/43 deselected，最小换序后Task1全部44例+scope/chamber+OpenAPI闭包累计81 passed/79 warnings/4.16s；未重跑13模块或全后端。等待原reviewer增量确认，原144/44数字仅代表修复前版本，不冒充最新版本。

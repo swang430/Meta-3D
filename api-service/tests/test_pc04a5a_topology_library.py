@@ -211,6 +211,18 @@ def test_unserializable_source_rolls_back_before_commit(client, db, lab, source)
     assert db.query(SwitchTopology).count() == count
 
 
+def test_probe_missing_id_is_422_before_statistics_and_keeps_source(client, db, lab, source):
+    nodes = deepcopy(source.nodes)
+    nodes[1].pop('id')
+    source.nodes = nodes; db.commit()
+    before, count = raw(graph(source)), db.query(SwitchTopology).count()
+    response = copy_request(client, lab, source, name='缺ID源图不能复制')
+    assert response.status_code == 422, response.text
+    db.expire_all(); db.refresh(source)
+    assert raw(graph(source)) == before
+    assert db.query(SwitchTopology).count() == count
+
+
 @pytest.mark.parametrize('field', ['connections', 'nodes', 'operating_modes'])
 @pytest.mark.parametrize('value', [None, [None]])
 def test_malformed_raw_graph_is_422_without_partial_copy(client, db, lab, source, field, value):
