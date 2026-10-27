@@ -11,7 +11,7 @@ class ScopeChain(BaseModel):
     ce_port: str
     probe_id: int
     polarization: str
-    cable_loss_db: float = Field(allow_inf_nan=False, description='既有拓扑声明，不是本片实测')
+    cable_loss_db: float | None = Field(allow_inf_nan=False, description='既有拓扑声明，null为未知，不是本片实测')
 
 
 class CalibrationScopePayload(BaseModel):

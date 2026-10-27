@@ -8,7 +8,7 @@
 
 **Tech Stack:** 现有 React/TypeScript/Mantine/ReactFlow、FastAPI/Pydantic、SQLAlchemy JSON、pytest、tsx/node:test；无新依赖/迁移/SCPI。
 
-**Spec:** [已批准器件与端口设计](../design/2026-10-26-topology-device-port-contract.md)、[正式队列](../roadmap-first-call.md)。分支 `codex/pc04a4c-internal-rf-paths`；基线 `8d5bc6d48805b6de7be246e4c40940de33534fa8`。前片 [PR #540](https://github.com/swang430/Meta-3D/pull/540) 于 `2026-10-26T17:48:55Z` 合并；[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖 `75b4ef9332`，无重大问题。4c Task1～4任务级独立审查已完成（C07真实鼠标非阻塞P3保留）；累计P1已187b3b11修复，PR #541 R1唯一P1已71774b09修复并获原reviewer独立内审ADDRESSED、无新增功能缺陷。71774b09新版唯一最终全后端7822通过/17跳过/1历史G8失败（8597 warnings，700.70s，exit1，不称全绿），7815与7808仅旧输入。修复本地未push，待root文档增量核验后push/回复R1 inline并触发覆盖新HEAD的R2；R2尚未请求/通过，未合并。4d/4e未启动。
+**Spec:** [已批准器件与端口设计](../design/2026-10-26-topology-device-port-contract.md)、[正式队列](../roadmap-first-call.md)。分支 `codex/pc04a4c-internal-rf-paths`；基线 `8d5bc6d48805b6de7be246e4c40940de33534fa8`。4c 已由 [PR #541](https://github.com/swang430/Meta-3D/pull/541) 于 `2026-10-26T22:31:48Z` 合并至 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)于 `22:26:25Z` 覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。主目录 main 已快进同步，用户修改与资料保留。新版最终全后端 **7822 passed /17 skipped /1 历史 G8 failed**（8597 warnings，700.70s，exit1）不称全绿；C07真实鼠标未验和现场B/HOLD边界保留。当前仅启动4d计划，4e未启动；前片验证不代表4d通过。
 
 ### 实际进度（施工规范的完成状态以此为准）
 
@@ -19,9 +19,9 @@
 | Task3 | f67baac9，规格符合/质量Approved | 真实浏览器RED/GREEN/变异恢复，GUI88与build；原RED保留 |
 | Task4原交付 | 0cc0d552，任务级Approved（C07非阻塞P3） | 原浏览器库`/tmp/pc04a4c-tRJ0AF` C01～C16/C13补证按未变GUI/API输入边界复用；GUI88/build12.18s不重复。旧全后端`/tmp/pc04a4c-KxzsaG` 7808/17/1仅f67baac9→0cc0d552历史输入，不代表累计修复 |
 | 累计修复旧阶段 | 187b3b11累计P1已独立ADDRESSED | 435相关与核心变异；旧阶段专用库`/tmp/pc04a4c-GEebeR`全量7815/17/1仅187b3b11输入，不代表R1修复后版本 |
-| PR #541 R1修复与新版补验 | 71774b09，原reviewer独立内审ADDRESSED，无新增功能缺陷 | 442相关及四项核心变异恢复；新库`/tmp/pc04a4c-WSV9eC`唯一最终全后端7822通过/17跳过/1历史G8失败/8597 warnings，700.70s，exit1，1174输入及依赖起止一致。[正式摘要](../validation/2026-10-27-pc04a4c-internal-rf-paths.md)区分新旧与GUI/浏览器复用边界；待root文档增量核验后push/回复R1 inline并请求R2，尚未R2/合并 |
+| PR #541 R1修复与新版补验 | 71774b09，原reviewer独立内审ADDRESSED，无新增功能缺陷 | 442相关及四项核心变异恢复；新库`/tmp/pc04a4c-WSV9eC`唯一最终全后端7822通过/17跳过/1历史G8失败/8597 warnings，700.70s，exit1，1174输入及依赖起止一致。[正式摘要](../validation/2026-10-27-pc04a4c-internal-rf-paths.md)区分新旧与GUI/浏览器复用边界；R2覆盖最终HEAD无发现，PR #541已合并39d4bb0b |
 
-下方逐步清单保留施工/复现规范，不以原计划空框否定本表已证实的阶段状态；PR #541 R1已发生，71774b09本地修复内审通过不等于R2通过。root文档增量核验后再push、回复R1 inline并触发R2；本轮未push/请求R2/合并，合并前不得勾4c或启动4d。
+下方逐步清单保留施工/复现规范，不以原计划空框否定本表已证实状态；独立内审、R1修复及覆盖最终HEAD的R2已完成，PR #541已合并。当前进入4d计划，不重复4c验证。
 
 ## Global Constraints
 

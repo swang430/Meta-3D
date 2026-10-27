@@ -1,6 +1,6 @@
 # 拓扑器件参数与物理端口完整性设计
 
-状态：2026-10-26 用户已过目并明确“开始吧”，授权按开发流程逐片完成。4a已由PR #539合并至`1207f8c5`；4b由[PR #540](https://github.com/swang430/Meta-3D/pull/540)于2026-10-26T17:48:55Z合并至`8d5bc6d4`，[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖`75b4ef9332`无重大问题，详见[4b验证摘要](../validation/2026-10-26-pc04a4b-topology-port-roles.md)。当前4c已按[实施计划](../plans/2026-10-27-pc04a4c-internal-rf-paths.md)实现并完成任务级验证；累计P1已187b3b11修复；PR #541 R1唯一P1已71774b09修复并由原reviewer独立内审ADDRESSED、无新增功能缺陷；71774b09新版唯一全后端7822 passed/17 skipped/1历史G8 failed（8597 warnings，700.70s，exit1，不称全绿），旧7815仅旧输入。待root文档增量核验后push/回复R1 inline并触发覆盖新HEAD的R2；尚未R2/合并，4d～4e未启动；WIP=1。4b历史全量7663 passed/17 skipped/1 failed仅属前片证据，不作为4c验证。
+状态：2026-10-26 用户已明确批准4a～4e串行开发；4a PR #539与4b PR #540已交付。4c 已由 [PR #541](https://github.com/swang430/Meta-3D/pull/541) 于 `2026-10-26T22:31:48Z` 合并至 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)于 `22:26:25Z` 覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。主目录 main 已快进同步，用户修改与资料保留。新版最终全后端 **7822 passed /17 skipped /1 历史 G8 failed**（8597 warnings，700.70s，exit1）不称全绿；C07真实鼠标未验和现场B/HOLD边界保留。当前4d Task1～4及前累计内审已完成，PR542 R1修复a5013706已独立ADDRESSED；该版全后端7945通过/17跳过/1历史G8失败（9654 warnings，793.12s，exit1，不称全绿），输入起止一致。普通scope/compare恢复保存声明盘点，采集严格门未放宽；旧7941/17/1与未变GUI证据复用边界见[本片验证摘要](../validation/2026-10-27-pc04a4d-legacy-conversion.md)。待文档增量审查、push/R2，尚未合并；4e未启动。 4d计划见[旧拓扑显式转换](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)。
 
 ## 故障与目标
 
@@ -55,6 +55,18 @@ CAICT 的 PA 只作为连线 pa_gain_db 显示，编辑抽屉没有对应字段�
 不承诺无依据的日历工期；按依赖逐片推进。每片已有自己的验证，4e不得成为前四片推迟验证的理由。
 
 ## 实施落点与验证
+
+### 4d 补充裁决：显式物理线缆单一损耗归属
+
+不从数值相等或器件类型推断同一实物。仅当操作员明确逐组确认时，允许同一cable/receive_cable节点一入一出两条相邻外边，以非归属边的`loss_owner_connection_id`引用另一原边。每边至多一组、无循环/级联/跨模式半组；旧图缺声明完全保留。引用字段必要：删值会失去来源，置null是未知而非不参与，置0是编造；只换值或收窄数值条件不能区分同实物与两条相同损耗线缆。因此保存最小关联，不建资产平台或节点数值副本。
+
+owner原calibrated_loss（含0）优先，否则原cable_loss；alias旧数值保留可追溯、关联期间只读，不再参与该组损耗。通用路径按所选owner去重一次，owner未知仍未知；正式旧binding仍只消费末边，末边为alias时只换源到同一所选路径owner，绝不改成多段求和。上游归属组不能偷偷加入正式末边值。整链confirmed补偿仍只一次，不加标称。相位沿原算法，本声明只管损耗。
+
+原图预览必须列原值、采用源和两种消费差异；撤销引用恢复旧两侧参与，明确展示总值变化。设置/撤销均显式确认，保存时校全部模式和引用，运行时半组/失引用拒绝而非借全图边补值。普通无关保存仍兼容，禁止自动转换旧ce_port/bse_port/sa_port或默认补端点。
+
+量值归属不是物理接线变化：进入configuration_scope复核提示，不加入rf_execution_identity；参考整边route_digest投影只排除这个新键以与正常路径对称，快照本身保留。已有confirmed/历史执行/证书不撤销不重算；实际pin/pair/映射变化仍走原失配门。操作员声明不授实物或测量资格，误关联会少计损耗，必须显式操作而非自动猜测。
+
+转换预览只读；确认由同次数据库快照构建候选并单条条件UPDATE原子提交，不能仅检查digest后无条件ORM保存。普通PATCH客户端无需新增digest。完整支持域、nullable消费全集、CAS和TDD矩阵以[4d实施计划](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)为施工规范；计划与Task1～3已独立批准，Task4验证/审查尚在收尾，不据此宣称合并或现场B通过。
 
 既有落点：gui/src/features/TopologyEditor/{TopologyEditor.tsx,nodePortHelpers.ts,CustomNodes.tsx,CustomEdges.tsx,topologyDraft.ts}；gui/src/api/switchTopologyService.ts；api-service/app/schemas/switch_topology.py；api-service/app/services/topology_service.py；实际保存端点及路径解析消费方须在各子片计划中枚举后确定。器件专用字段表单从巨型TopologyEditor拆出小组件，仅限本功能。
 

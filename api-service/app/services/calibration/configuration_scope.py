@@ -43,24 +43,37 @@ def _fields(value, names):
     return {name: getattr(value, name) for name in names}
 
 
+def _scope_chain_for_route(topology, route):
+    """身份不携带默认量值；只取同一实际所选路径的末边或显式owner。"""
+    from app.services.calibration.rf_chain_resolver import RFChainSpec
+    from app.services.topology_loss import effective_connection_loss, loss_source_for_terminal
+    mode = next((item for item in topology.operating_modes or [] if item.get('id') == route.operating_mode), {})
+    ids = set(mode.get('active_connections') or [edge['id'] for edge in topology.connections or []
+                                               if route.operating_mode in edge.get('modes', [])])
+    active = [edge for edge in topology.connections or [] if edge['id'] in ids]
+    source = loss_source_for_terminal(topology.nodes or [], active, route.connection_ids)
+    return RFChainSpec(route.chain_id, route.ce_port, route.probe_id, route.polarization,
+                       cable_loss_db=effective_connection_loss(source))
+
+
 def build_calibration_scope(db: Session, lab_id: UUID, mode: str = 'mimo_ota', *, topology_id: UUID | None = None) -> CalibrationScopeSnapshot:
     resolution = resolve_rf_chains(db, lab_id, mode)
     if topology_id is not None:
         # 普通显式topology仍使用完整正式集合；不借此绕过重复CE门。
         from app.services.calibration.route_calibration import list_route_selections
-        from app.services.calibration.rf_chain_resolver import RFChainResolution, RFChainSpec
+        from app.services.calibration.rf_chain_resolver import RFChainResolution
         selected_routes = list_route_selections(db, lab_id, topology_id, mode)
         selected_topology = db.get(SwitchTopology, topology_id)
         resolution = RFChainResolution(lab_profile_id=lab_id,chamber_id=selected_topology.chamber_id,
             topology_id=str(topology_id),topology_name=selected_topology.name,operating_mode=mode,
-            chains=[RFChainSpec(r.chain_id,r.ce_port,r.probe_id,r.polarization) for r in selected_routes])
+            chains=[_scope_chain_for_route(selected_topology,r) for r in selected_routes])
     return _build_scope_payload(db,lab_id,mode,resolution)
 
 
 def build_selected_route_calibration_scope(db: Session,lab_id: UUID,mode: str,*,topology_id: UUID,chain_id: str) -> CalibrationScopeSnapshot:
     """批服务器指定单项的真实scope；不先经过正式全局集合唯一门。"""
     from app.services.calibration.route_calibration import resolve_explicit_route_selection
-    from app.services.calibration.rf_chain_resolver import RFChainResolution,RFChainSpec
+    from app.services.calibration.rf_chain_resolver import RFChainResolution
     from app.services.declared_rf_routes import resolve_saved_rf_path
     topology=db.get(SwitchTopology,topology_id)
     if topology is None:
@@ -72,7 +85,7 @@ def build_selected_route_calibration_scope(db: Session,lab_id: UUID,mode: str,*,
     route=resolve_explicit_route_selection(db,lab_id,topology_id,mode,chain_id,[e['id'] for e in edges])
     resolution=RFChainResolution(lab_profile_id=lab_id,chamber_id=topology.chamber_id,
         topology_id=str(topology.id),topology_name=topology.name,operating_mode=mode,
-        chains=[RFChainSpec(route.chain_id,route.ce_port,route.probe_id,route.polarization)])
+        chains=[_scope_chain_for_route(topology,route)])
     return _build_scope_payload(db,lab_id,mode,resolution,selected_route=route)
 
 
@@ -166,6 +179,44 @@ def _build_scope_payload(db,lab_id,mode,resolution,*,selected_route=None):
         } for n in topology.nodes or [] if n.get('id') in node_ids])
         graph['active_connections'] = sorted(active)
         graph['required_instruments'] = sorted(selected_mode.get('required_instruments') or [])
+        # 仅新增显式归属投影；不补null、不重建历史baseline，也不改变旧图摘要。
+        if any('loss_owner_connection_id' in c for c in topology.connections or []):
+            if selected_route is not None:
+                selected_ids = set([*selected_route.connection_ids, *selected_route.calibration_connection_ids])
+            else:
+                from app.services.declared_rf_routes import resolve_saved_rf_path
+                def effective_edges(mode_id):
+                    saved_mode = next((m for m in topology.operating_modes or [] if m.get('id') == mode_id), None)
+                    if saved_mode is None:
+                        return []
+                    ids = set(saved_mode.get('active_connections') or [c['id'] for c in topology.connections or []
+                        if mode_id in c.get('modes', [])])
+                    return [c for c in topology.connections or [] if c['id'] in ids]
+
+                normal = effective_edges(mode)
+                reference = effective_edges('calibration')
+                selected_ids, probe_ids = set(), set()
+                for chain in resolution.chains:
+                    nodes, edges = resolve_saved_rf_path(topology.nodes or [], normal, chain.chain_id,
+                        check_internal_paths=False)
+                    selected_ids.update(c['id'] for c in edges)
+                    probe_ids.add(nodes[-1]['id'])
+                # 只盘点所选探头可达的保存参考边；不以内部贯通/采集资格门筛掉声明。
+                frontier = list(probe_ids)
+                seen = set(probe_ids)
+                while frontier:
+                    parent = frontier.pop()
+                    for edge in reference:
+                        if edge.get('source') != parent:
+                            continue
+                        selected_ids.add(edge['id'])
+                        if edge['target'] not in seen:
+                            seen.add(edge['target'])
+                            frontier.append(edge['target'])
+            declarations = [{ 'id': c['id'], 'loss_owner_connection_id': c['loss_owner_connection_id'] }
+                for c in topology.connections or [] if c['id'] in selected_ids and 'loss_owner_connection_id' in c]
+            if declarations:
+                graph['loss_ownership'] = _ordered(declarations)
     probes = db.query(Probe).filter(Probe.chamber_config_id == chamber.id, Probe.is_active.is_(True)).all()
     chains = sorted([{
         'chain_id': c.chain_id, 'ce_port': c.ce_port, 'probe_id': c.probe_id,

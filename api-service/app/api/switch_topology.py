@@ -9,6 +9,9 @@ from copy import deepcopy
 from sqlalchemy.orm import Session
 from sqlalchemy.orm.attributes import flag_modified
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import OperationalError
+from sqlalchemy import cast, Text, update
+import sqlite3
 from typing import Optional, List
 from uuid import UUID
 import logging
@@ -27,13 +30,19 @@ from app.schemas.switch_topology import (
 from app.services.topology_service import TopologyService
 from app.schemas.topology_nominal import (
     MISSING, CONNECTION_NUMERIC_FIELDS, same_json, validate_nominal_write,
-    preserve_graph_rows, normalize_nominal_metadata,
+    preserve_graph_rows, normalize_nominal_metadata, validate_number,
 )
 from app.services.declared_rf_routes import resolve_saved_rf_path
 from app.schemas.topology_ports import validate_port_write
 from app.schemas.topology_internal_paths import validate_internal_path_write
+from app.schemas.topology_loss_ownership import validate_loss_owner_write
 from app.services.chamber_resolution import resolve_current_chamber
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
+from app.schemas.topology_conversion import TopologyConversionRequest, TopologyConversionPreview
+from app.services.topology_conversion import (
+    GRAPH_FIELDS, build_conversion, conversion_source_digest, conversion_differences, conversion_warnings,
+)
+from app.services import execution_exclusion_guard
 
 router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
@@ -61,6 +70,11 @@ def preserve_connection_rows(raw_rows, normalized_rows, previous_rows, declarati
             equal_raw = same_json(value, prior)
             equal_display = (key in CONNECTION_NUMERIC_FIELDS and key in old
                              and same_json(value, old_normalized[key]))
+            if key == 'cable_loss_db' and (key in declared or not (equal_raw or equal_display)):
+                try:
+                    validate_number(value, key=key, nonnegative=True)
+                except ValueError as exc:
+                    raise HTTPException(422, detail=str(exc)) from exc
             if key not in declared and (equal_raw or equal_display):
                 result[key] = deepcopy(prior)
             elif key == 'nominal_metadata':
@@ -99,6 +113,13 @@ def _validate_numeric_declarations(declarations, raw_connections):
         if (ident not in by_id or len(keys) != len(set(keys)) or
                 any(key not in CONNECTION_NUMERIC_FIELDS or key not in by_id[ident] for key in keys)):
             raise HTTPException(422, detail='数值声明必须引用本次提交的连线与数值字段，且不得重复')
+
+
+def _validate_loss_owners(nodes, connections, modes, **kwargs):
+    try:
+        validate_loss_owner_write(nodes, connections, modes, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
 
 
 def _validate_structure(nodes, connections, modes) -> None:
@@ -356,6 +377,7 @@ def create_switch_topology(
     _validate_structure(nodes_data, connections_data, modes_data)
     _validate_ports(nodes_data, connections_data)
     _validate_internal_paths(nodes_data, connections_data, modes_data)
+    _validate_loss_owners(nodes_data, connections_data, modes_data)
 
     # Define default if this is marked as default —— 只在本暗室范围内让位，
     # 不许从 lab A 顺手改掉 chamber B 的默认行（P1-57 跨暗室写点）。
@@ -454,6 +476,15 @@ def import_topology_from_template(
 
     generate = _load_template(template_id)
     topo_data = generate()
+    # 模板沿4a保留typed旧数值字符串；新增非法量值必须早于替换旧行/默认位写入。
+    try:
+        for edge in topo_data.get('connections', []):
+            if 'cable_loss_db' in edge:
+                value = edge['cable_loss_db']
+                validate_number(float(value) if isinstance(value, str) else value,
+                                key='cable_loss_db', nonnegative=True)
+    except ValueError as exc:
+        raise HTTPException(422, detail=str(exc)) from exc
     _validate_structure(topo_data.get('nodes', []), topo_data.get('connections', []),
                         topo_data.get('operating_modes', []))
     _validate_nominal(topo_data.get('nodes', []), topo_data.get('connections', []))
@@ -471,6 +502,8 @@ def import_topology_from_template(
                              topo_data.get('operating_modes', []), allow_legacy_missing=True)
 
     replaced_ids=[]
+    _validate_loss_owners(topo_data.get('nodes', []), topo_data.get('connections', []),
+                          topo_data.get('operating_modes', []))
     if replace_existing:
         # 只删本 (switch, 派生暗室) 的行 —— 别的暗室的行一根手指都不碰
         existing=db.query(SwitchTopology).filter(
@@ -523,6 +556,92 @@ def get_switch_topology(
     return _load_scoped_topology(db, topology_id, chamber.id)
 
 
+def _conversion_snapshot(db, topology_id, chamber_id):
+    # 同一次SELECT取新源与数据库原始JSON文本；不使用identity-map里的旧对象。
+    row=db.query(SwitchTopology.id,SwitchTopology.chamber_id,SwitchTopology.switch_category_id,
+        SwitchTopology.nodes,SwitchTopology.connections,SwitchTopology.operating_modes,
+        cast(SwitchTopology.nodes,Text),cast(SwitchTopology.connections,Text),
+        cast(SwitchTopology.operating_modes,Text)).filter(
+            SwitchTopology.id==topology_id,SwitchTopology.chamber_id==chamber_id).one_or_none()
+    if row is None:
+        raise HTTPException(404,detail='Switch topology not found in current Lab')
+    source=dict(zip(('id','chamber_id','switch_category_id'),map(str,row[:3])))
+    source.update(dict(zip(GRAPH_FIELDS,deepcopy(row[3:6]))))
+    return source,row[6:9]
+
+
+def _conversion_candidate(source, changes):
+    try:
+        candidate=build_conversion(source,changes)
+    except ValueError as exc:
+        raise HTTPException(422,detail=str(exc)) from exc
+    nodes,edges,modes=(candidate[key] for key in GRAPH_FIELDS)
+    declared_nodes={edit.node_id for edit in changes.nodes if edit.model_fields_set & {
+        'target_type','ports','port_directions','port_roles','internal_paths'}}
+    repinned={edit.connection_id for edit in changes.connections
+              if edit.model_fields_set & {'source_pin','target_pin'}}
+    for edge in edges:
+        if edge['id'] in repinned or edge['source'] in declared_nodes or edge['target'] in declared_nodes:
+            if any(not isinstance(edge.get(key),str) or not edge[key].strip()
+                   for key in ('source_pin','target_pin')):
+                raise HTTPException(422,detail=f'连线 {edge["id"]} 转换须显式保存两端pin，不推定默认端口')
+    # builder只动声明白名单，未动键直接深复制原JSON；不默认化历史opaque或数值。
+    _validate_nominal(nodes,edges,previous_nodes=source['nodes'],previous_connections=source['connections'])
+    _validate_structure(nodes,edges,modes)
+    _validate_ports(nodes,edges,previous_nodes=source['nodes'],previous_connections=source['connections'])
+    _validate_internal_paths(nodes,edges,modes,previous_nodes=source['nodes'],
+        previous_connections=source['connections'],previous_modes=source['operating_modes'])
+    _validate_loss_owners(nodes,edges,modes,previous_connections=source['connections'])
+    return candidate
+
+
+@router.post('/{topology_id}/conversion-preview',response_model=TopologyConversionPreview,
+             response_model_exclude_unset=True)
+def preview_topology_conversion(topology_id: UUID, request: TopologyConversionRequest,
+        lab_profile_id: UUID = Query(...), db: Session = Depends(get_db)):
+    """只读预览原保存声明；不改图、默认位、历史或HAL。"""
+    chamber=_resolve_scope(db,lab_profile_id)
+    source,_=_conversion_snapshot(db,topology_id,chamber.id)
+    candidate=_conversion_candidate(source,request)
+    return dict(source_digest=conversion_source_digest(source),changes=request.model_dump(exclude_unset=True),
+                candidate=candidate,differences=conversion_differences(source,candidate),
+                warnings=conversion_warnings(source,candidate))
+
+
+def _commit_conversion(db,topology_id,chamber,conversion):
+    if execution_exclusion_guard.active_unsafe_diagnostic():
+        raise HTTPException(409,detail='仪器工作正在进行，暂不能确认转换')
+    source,raw=_conversion_snapshot(db,topology_id,chamber.id)
+    if conversion_source_digest(source)!=conversion.source_digest:
+        db.rollback()
+        raise HTTPException(409,detail='原图已变化，请重新预览')
+    candidate=_conversion_candidate(source,conversion.changes)
+    # 只用未挂载Session的临时对象复用原统计函数；禁止旧ORM对象dirty绕过CAS。
+    statistics=SwitchTopology(**candidate)
+    statistics.update_statistics()
+    statement=update(SwitchTopology).where(
+        SwitchTopology.id==topology_id,SwitchTopology.chamber_id==chamber.id,
+        SwitchTopology.switch_category_id==UUID(source['switch_category_id']),
+        cast(SwitchTopology.nodes,Text)==raw[0],cast(SwitchTopology.connections,Text)==raw[1],
+        cast(SwitchTopology.operating_modes,Text)==raw[2],
+    ).values(**candidate,**{key:getattr(statistics,key) for key in
+        ('total_nodes','total_connections','total_probes','total_channels')})
+    try:
+        result=db.execute(statement.execution_options(synchronize_session=False))
+        if result.rowcount!=1:
+            db.rollback()
+            raise HTTPException(409,detail='原图已变化，请重新预览')
+        db.commit()
+    except OperationalError as exc:
+        db.rollback()
+        code=getattr(exc.orig,'sqlite_errorcode',None)
+        if isinstance(code,int) and code & 0xff in (sqlite3.SQLITE_BUSY,sqlite3.SQLITE_LOCKED):
+            raise HTTPException(409,detail='原图正在被其他会话修改，请重新预览') from exc
+        raise
+    db.expire_all()
+    return _load_scoped_topology(db,topology_id,chamber.id)
+
+
 @router.patch("/{topology_id}", response_model=SwitchTopologyResponse)
 def update_switch_topology(
     topology_id: UUID,
@@ -533,6 +652,10 @@ def update_switch_topology(
 ):
     """Update an existing switch topology (scoped to the current lab's chamber)"""
     chamber = _resolve_scope(db, lab_profile_id)
+    if 'conversion' in raw_body:
+        if set(raw_body)!={'conversion'} or request.conversion is None:
+            raise HTTPException(422,detail='conversion不能与其他更新字段同时提交，也不能置空')
+        return _commit_conversion(db,topology_id,chamber,request.conversion)
     topology = _load_scoped_topology(db, topology_id, chamber.id)
 
     update_data = request.model_dump(exclude_unset=True)
@@ -561,6 +684,8 @@ def update_switch_topology(
     _validate_internal_paths(nodes_data, connections_data,
         update_data.get('operating_modes', topology.operating_modes), previous_nodes=topology.nodes,
         previous_connections=topology.connections, previous_modes=topology.operating_modes)
+    _validate_loss_owners(nodes_data, connections_data,
+        update_data.get('operating_modes', topology.operating_modes), previous_connections=topology.connections)
 
     # P1-57：chamber 由 LabProfile 派生 —— PATCH 不接受改绑（含置 NULL）。
     # 之前的规则只查「chamber 存在」，现在收窄成「必须等于派生暗室」；

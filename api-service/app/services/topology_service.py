@@ -14,6 +14,8 @@ import logging
 from typing import List, Dict, Optional, Any, Set, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
+from app.services.topology_loss import effective_connection_loss, loss_sources_for_path
+from app.schemas.topology_ports import RF_ENDPOINT_TYPE_GROUPS
 
 logger = logging.getLogger(__name__)
 
@@ -41,11 +43,12 @@ class TopologyConnection:
     target: str             # 目标节点 ID
     target_pin: str         # 目标端口 (in, P1, P2, ...)
     cable_type: str = ""
-    cable_loss_db: float = 0.0
+    cable_loss_db: Optional[float] = None
     cable_length_m: float = 0.0
     calibrated_loss_db: Optional[float] = None
     calibrated_phase_deg: Optional[float] = None
     modes: List[str] = field(default_factory=list)
+    loss_owner_connection_id: Optional[str] = None
 
 
 @dataclass
@@ -55,7 +58,7 @@ class SignalPath:
     source_node: TopologyNode
     target_node: TopologyNode
     hops: List[Tuple[TopologyNode, TopologyConnection]]  # 中间跳: (节点, 到达它的连线)
-    total_loss_db: float
+    total_loss_db: Optional[float]
     total_phase_deg: float
     calibration_status: str  # "valid" | "expired" | "missing"
 
@@ -113,11 +116,12 @@ class TopologyService:
                 target=c["target"],
                 target_pin=c.get("target_pin", "in"),
                 cable_type=c.get("cable_type", ""),
-                cable_loss_db=c.get("cable_loss_db", 0.0),
+                cable_loss_db=None if c.get('cable_loss_db') is None else float(c['cable_loss_db']),
                 cable_length_m=c.get("cable_length_m", 0.0),
                 calibrated_loss_db=c.get("calibrated_loss_db"),
                 calibrated_phase_deg=c.get("calibrated_phase_deg"),
                 modes=c.get("modes", []),
+                loss_owner_connection_id=c.get('loss_owner_connection_id'),
             )
             self._connections[conn.id] = conn
 
@@ -169,7 +173,7 @@ class TopologyService:
             }
 
         # 找到所有源节点 (没有入边的节点 = 信号源)
-        source_types = {"ce_port", "bse_port", "sa_port"}
+        source_types = set().union(*RF_ENDPOINT_TYPE_GROUPS)
         source_nodes = [
             n for n in self._nodes.values()
             if n.type in source_types
@@ -245,11 +249,10 @@ class TopologyService:
             first_conn = path_hops[0][1]
             source_node = self._nodes.get(first_conn.source, current)
 
-            total_loss = sum(
-                h[1].calibrated_loss_db if h[1].calibrated_loss_db is not None
-                else h[1].cable_loss_db
-                for h in path_hops
-            )
+            sources = loss_sources_for_path(list(self._raw_nodes.values()),
+                [self._raw_connections[ident] for ident in active_conn_ids], [h[1].id for h in path_hops])
+            losses = [effective_connection_loss(edge) for edge in sources]
+            total_loss = None if any(value is None for value in losses) else sum(losses)
             total_phase = sum(
                 h[1].calibrated_phase_deg or 0.0
                 for h in path_hops
@@ -257,8 +260,8 @@ class TopologyService:
 
             # 计算校准状态
             cal_statuses = []
-            for _, conn in path_hops:
-                if conn.calibrated_loss_db is not None:
+            for conn in sources:
+                if conn.get('calibrated_loss_db') is not None:
                     cal_statuses.append("valid")
                 else:
                     cal_statuses.append("missing")
@@ -321,22 +324,19 @@ class TopologyService:
         Returns:
             总损耗 (dB)，如果路径不存在返回 None
         """
-        path = self._find_shortest_path(source_id, target_id)
-        if path is None:
+        resolved = self._find_shortest_path(source_id, target_id)
+        if resolved is None:
             return None
-
-        total = 0.0
-        for conn in path:
-            if conn.calibrated_loss_db is not None:
-                total += conn.calibrated_loss_db
-            else:
-                total += conn.cable_loss_db
-        return total
+        path, active_ids = resolved
+        sources = loss_sources_for_path(list(self._raw_nodes.values()),
+            [self._raw_connections[ident] for ident in active_ids], [edge.id for edge in path])
+        values = [effective_connection_loss(edge) for edge in sources]
+        return None if any(value is None for value in values) else sum(values)
 
     def _find_shortest_path(
         self, source_id: str, target_id: str
-    ) -> Optional[List[TopologyConnection]]:
-        """BFS 寻找最短路径"""
+    ) -> Optional[Tuple[List[TopologyConnection], frozenset[str]]]:
+        """BFS 寻找最短路径，同时保留其实际模式边集供量值源核对。"""
         from collections import deque
 
         if source_id not in self._nodes or target_id not in self._nodes:
@@ -362,7 +362,7 @@ class TopologyService:
                     ids = declaration.get('connection_ids') if isinstance(declaration, dict) else None
                     if ids != [edge.id for edge in path]:
                         continue
-                return path
+                return path, active_ids
             if self._nodes[current].type in {'probe', 'antenna', 'termination'} and path:
                 continue
 
@@ -408,7 +408,7 @@ class TopologyService:
                 "target_label": path.target_node.label,
                 "total_loss_db": path.total_loss_db,
                 "total_phase_deg": path.total_phase_deg,
-                "compensation_db": -path.total_loss_db,  # 补偿值 = 负损耗
+                "compensation_db": None if path.total_loss_db is None else -path.total_loss_db,
                 "calibration_status": path.calibration_status,
                 "hop_count": len(path.hops),
             }
@@ -511,6 +511,13 @@ class TopologyService:
 
         # 5. 连线损耗合理性
         for conn in self._connections.values():
+            raw = self._raw_connections[conn.id]
+            loss_source = self._raw_connections.get(raw.get('loss_owner_connection_id'), raw)
+            if effective_connection_loss(loss_source) is None:
+                issues.append(ValidationIssue(severity='warning', node_id=None, connection_id=conn.id,
+                    message=f"连线 '{conn.id}' 的损耗未知"))
+            if conn.cable_loss_db is None:
+                continue
             if conn.cable_loss_db < 0:
                 issues.append(ValidationIssue(
                     severity="warning",
@@ -655,11 +662,13 @@ class TopologyService:
                     "target": c.target,
                     "target_pin": c.target_pin,
                     "cable_type": c.cable_type,
-                    "cable_loss_db": c.cable_loss_db,
+                    **({'cable_loss_db': c.cable_loss_db} if 'cable_loss_db' in self._raw_connections[c.id] else {}),
                     "cable_length_m": c.cable_length_m,
                     "calibrated_loss_db": c.calibrated_loss_db,
                     "calibrated_phase_deg": c.calibrated_phase_deg,
                     "modes": c.modes,
+                    **({'loss_owner_connection_id': c.loss_owner_connection_id}
+                       if 'loss_owner_connection_id' in self._raw_connections[c.id] else {}),
                 }
                 for c in self._connections.values()
             ],

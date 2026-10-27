@@ -10,7 +10,40 @@ export type ConnectionNumericField = 'cable_loss_db' | 'cable_length_m' | 'calib
 export type ConnectionNumericDeclarations = Record<string, ConnectionNumericField[]>;
 export type TopologyUpdatePayload = Partial<SwitchTopology> & {
   connection_numeric_declarations?: ConnectionNumericDeclarations;
+  conversion?: { source_digest: string; changes: TopologyConversionRequest };
 };
+
+export interface ConversionNodeEdit {
+  node_id: string;
+  target_type?: 'ce_port' | 'channel_emulator' | 'bse_port' | 'communication_tester' | 'sa_port' | 'signal_analyzer';
+  ports?: string[];
+  port_directions?: TopologyPortDirections;
+  port_roles?: Record<string, 'dl' | 'ul'>;
+  internal_paths?: TopologyInternalPath[];
+  ce_port?: string;
+}
+export interface ConversionConnectionEdit {
+  connection_id: string;
+  source_pin?: string;
+  target_pin?: string;
+  cable_loss_db?: number | null;
+  loss_owner_connection_id?: string | null;
+  same_physical_cable_confirmed?: boolean;
+}
+export interface TopologyConversionRequest {
+  nodes?: ConversionNodeEdit[];
+  connections?: ConversionConnectionEdit[];
+}
+export interface TopologyConversionPreview {
+  source_digest: string;
+  changes: TopologyConversionRequest;
+  // 原保存JSON，可能缺position/pin或保留旧数值字符串，不能冒充GET默认化模型。
+  candidate: { nodes: Record<string, JsonValue>[]; connections: Record<string, JsonValue>[];
+    operating_modes: Record<string, JsonValue>[] };
+  differences: { object_kind: string; object_id: string; field: string; before_present: boolean;
+    before?: JsonValue; after: JsonValue }[];
+  warnings: string[];
+}
 
 export function mergeConnectionDeclarations(current: ConnectionNumericDeclarations, id: string,
   fields: ConnectionNumericField[]): ConnectionNumericDeclarations {
@@ -40,7 +73,8 @@ export interface TopologyConnection {
   target: string;
   target_pin?: string;
   cable_type?: string;
-  cable_loss_db?: number;
+  cable_loss_db?: number | null;
+  loss_owner_connection_id?: string;
   pa_gain_db?: JsonValue;
   nominal_metadata?: JsonValue;
   ce_port?: string;
@@ -106,6 +140,13 @@ export const switchTopologyService = {
 
   async updateTopology(id: string, labProfileId: string, data: TopologyUpdatePayload) {
     const response = await apiClient.patch(`/switch-topologies/${id}`, data, {
+      params: { lab_profile_id: labProfileId },
+    });
+    return response.data;
+  },
+
+  async previewConversion(id: string, labProfileId: string, changes: TopologyConversionRequest): Promise<TopologyConversionPreview> {
+    const response = await apiClient.post(`/switch-topologies/${id}/conversion-preview`, changes, {
       params: { lab_profile_id: labProfileId },
     });
     return response.data;

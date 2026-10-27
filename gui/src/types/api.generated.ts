@@ -4,6 +4,90 @@
  */
 
 export interface paths {
+    "/api/v1/switch-topologies/{topology_id}/conversion-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Preview Topology Conversion
+         * @description 只读预览原保存声明；不改图、默认位、历史或HAL。
+         */
+        post: operations["preview_topology_conversion_api_v1_switch_topologies__topology_id__conversion_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}/calibration-matrix/{mode}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Topology Calibration Matrix
+         * @description Generate the calibration compensation matrix for a specific operating mode
+         */
+        get: operations["get_topology_calibration_matrix_api_v1_switch_topologies__topology_id__calibration_matrix__mode__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}/paths/{mode}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Resolve Topology Paths
+         * @description Resolve all active signal paths for a specific operating mode
+         */
+        get: operations["resolve_topology_paths_api_v1_switch_topologies__topology_id__paths__mode__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/lab-profiles/{lab_profile_id}/rf-chains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Rf Chains
+         * @description Resolve RF chains for a (lab_profile, operating_mode) pair.
+         *
+         *     Returns the same data the path-loss calibrator iterates over, plus
+         *     chamber/topology names so the UI can render `VNA→Switch→Cable→Probe`
+         *     for human verification before kicking off a calibration.
+         */
+        get: operations["get_rf_chains_api_v1_lab_profiles__lab_profile_id__rf_chains_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/switch-topologies": {
         parameters: {
             query?: never;
@@ -3071,6 +3155,168 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** TopologyConversionPreview */
+        TopologyConversionPreview: {
+            /** Source Digest */
+            source_digest: string;
+            changes: components["schemas"]["TopologyConversionRequest"];
+            /** Candidate */
+            candidate: {
+                [key: string]: unknown;
+            };
+            /** Differences */
+            differences: components["schemas"]["ConversionDifference"][];
+            /** Warnings */
+            warnings: string[];
+        };
+        /** ConversionDifference */
+        ConversionDifference: {
+            /** Object Kind */
+            object_kind: string;
+            /** Object Id */
+            object_id: string;
+            /** Field */
+            field: string;
+            /** Before Present */
+            before_present: boolean;
+            /** Before */
+            before?: unknown;
+            /** After */
+            after: unknown;
+        };
+        /** TopologyConversionCommit */
+        TopologyConversionCommit: {
+            /** Source Digest */
+            source_digest: string;
+            changes: components["schemas"]["TopologyConversionRequest"];
+        };
+        /** TopologyConversionRequest */
+        TopologyConversionRequest: {
+            /** Nodes */
+            nodes?: components["schemas"]["ConversionNodeEdit"][];
+            /** Connections */
+            connections?: components["schemas"]["ConversionConnectionEdit"][];
+        };
+        /** TopologyInternalPath */
+        TopologyInternalPath: {
+            /** From Port */
+            from_port: string;
+            /** To Port */
+            to_port: string;
+        };
+        /** ConversionConnectionEdit */
+        ConversionConnectionEdit: {
+            /** Connection Id */
+            connection_id: string;
+            /** Source Pin */
+            source_pin?: string | null;
+            /** Target Pin */
+            target_pin?: string | null;
+            /** Cable Loss Db */
+            cable_loss_db?: number | null;
+            /** Loss Owner Connection Id */
+            loss_owner_connection_id?: string | null;
+            /**
+             * Same Physical Cable Confirmed
+             * @default false
+             */
+            same_physical_cable_confirmed: boolean;
+        };
+        /** ConversionNodeEdit */
+        ConversionNodeEdit: {
+            /** Node Id */
+            node_id: string;
+            /** Target Type */
+            target_type?: ("ce_port" | "channel_emulator" | "bse_port" | "communication_tester" | "sa_port" | "signal_analyzer") | null;
+            /** Ports */
+            ports?: string[] | null;
+            /** Port Directions */
+            port_directions?: {
+                [key: string]: "input" | "output" | "bidirectional" | "unknown";
+            } | null;
+            /** Port Roles */
+            port_roles?: {
+                [key: string]: "dl" | "ul";
+            } | null;
+            /** Internal Paths */
+            internal_paths?: components["schemas"]["TopologyInternalPath"][] | null;
+            /** Ce Port */
+            ce_port?: string | null;
+        };
+        /** CalibrationMatrixResponse */
+        CalibrationMatrixResponse: {
+            /** Mode Id */
+            mode_id: string;
+            /** Matrix */
+            matrix: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        /** SignalPathResponse */
+        SignalPathResponse: {
+            /** Path Id */
+            path_id: string;
+            source_node: components["schemas"]["TopologyNode"];
+            target_node: components["schemas"]["TopologyNode"];
+            /** Total Loss Db */
+            total_loss_db: number | null;
+            /** Total Phase Deg */
+            total_phase_deg: number;
+            /** Calibration Status */
+            calibration_status: string;
+            /** Hop Count */
+            hop_count: number;
+        };
+        /** RFChainResolutionResponse */
+        RFChainResolutionResponse: {
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /** Lab Name */
+            lab_name: string;
+            /** Chamber Id */
+            chamber_id?: string | null;
+            /** Chamber Name */
+            chamber_name?: string | null;
+            /** Topology Id */
+            topology_id?: string | null;
+            /** Topology Name */
+            topology_name?: string | null;
+            /** Operating Mode */
+            operating_mode: string;
+            /** Chains */
+            chains: components["schemas"]["RFChainEntry"][];
+            /** Warnings */
+            warnings: string[];
+            /** Success */
+            success: boolean;
+        };
+        /** RFChainEntry */
+        RFChainEntry: {
+            /**
+             * Chain Id
+             * @description SwitchTopology connection id; stable lookup key
+             */
+            chain_id: string;
+            /**
+             * Ce Port
+             * @description Source-side label, e.g. 'B1.1' for the channel emulator port
+             */
+            ce_port: string;
+            /** Probe Id */
+            probe_id: number;
+            /** Polarization */
+            polarization: string;
+            /**
+             * Cable Loss Db
+             * @description 拓扑连线损耗，null为未知，不是零
+             */
+            cable_loss_db: number | null;
+        };
         /** SwitchTopologyListResponse */
         SwitchTopologyListResponse: {
             /** Total */
@@ -3188,9 +3434,14 @@ export interface components {
             cable_type: string;
             /**
              * Cable Loss Db
-             * @default 0
+             * @description 标称线缆损耗(dB)，null/缺键为未知；显式0为已声明零值，不代表校准实测。新增/变更为有限非负number或null，旧未修改typed字符串沿保形契约。
              */
-            cable_loss_db: number;
+            cable_loss_db?: number | null;
+            /**
+             * Loss Owner Connection Id
+             * @description 仅显式同线缆两侧引用另一原边量值；持久化不接受null/self/环/半组，缺键沿旧语义，不授予实物或校准资格。
+             */
+            loss_owner_connection_id?: string | null;
             /** @description 标称PA增益(dB)，非实测。新增/变更只接受有限number或null；PATCH仅兼容同Lab同ID同键、JSON类型和值均未改变的历史原值。 */
             pa_gain_db?: components["schemas"]["JsonValue"];
             /** @description 标称说明原始JSON：仅pa_gain_db/cable_loss_db键，值含unit(dB)、source_note(string/null)、frequency_range_mhz(两个有限正数且递增或null)。写入时严格验证，不授予实测或采用资格。 */
@@ -3288,6 +3539,7 @@ export interface components {
         };
         /** SwitchTopologyUpdate */
         SwitchTopologyUpdate: {
+            conversion?: components["schemas"]["TopologyConversionCommit"] | null;
             /**
              * Connection Numeric Declarations
              * @description 仅本次PATCH显式重申数值的连线ID和字段；不持久化、不返回。
@@ -4291,9 +4543,9 @@ export interface components {
             polarization: string;
             /**
              * Cable Loss Db
-             * @description 既有拓扑声明，不是本片实测
+             * @description 既有拓扑声明，null为未知，不是本片实测
              */
-            cable_loss_db: number;
+            cable_loss_db: number | null;
         };
         JsonValue: unknown;
         /** EmulationControlRequest */
@@ -6157,6 +6409,145 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    preview_topology_conversion_api_v1_switch_topologies__topology_id__conversion_preview_post: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopologyConversionRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopologyConversionPreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_topology_calibration_matrix_api_v1_switch_topologies__topology_id__calibration_matrix__mode__get: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+                mode: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CalibrationMatrixResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    resolve_topology_paths_api_v1_switch_topologies__topology_id__paths__mode__get: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+                mode: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SignalPathResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_rf_chains_api_v1_lab_profiles__lab_profile_id__rf_chains_get: {
+        parameters: {
+            query?: {
+                /** @description SwitchTopology operating mode id */
+                operating_mode?: string;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RFChainResolutionResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_switch_topologies_api_v1_switch_topologies_get: {
         parameters: {
             query: {

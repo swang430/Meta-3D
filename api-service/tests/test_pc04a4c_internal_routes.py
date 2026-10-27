@@ -93,6 +93,9 @@ def test_actual_saved_pins_restore_public_paths_and_loss(client, configured, gra
     if not explicit:
         del nodes[1]['params']['internal_paths']
     graph.nodes, graph.connections = nodes, copy.deepcopy(graph.connections[:2])
+    # 本例验证内部可达性，明确声明已知零；其它未声明量值仍保持未知。
+    for edge in graph.connections:
+        edge['cable_loss_db'] = 0
     graph.operating_modes = graph.operating_modes[:1]
     db_session.commit()
     base = f'/api/v1/switch-topologies/{graph.id}'
@@ -229,6 +232,8 @@ def test_same_endpoint_diamond_requires_selection_not_matrix_overwrite(client, c
 
 def test_bfs_keeps_input_port_state_and_termination_never_expands():
     data = branch_graph(selected=False)
+    for edge in data['connections']:
+        edge['cable_loss_db'] = 0
     data['nodes'][3]['params']['internal_paths'] = [{'from_port': 'other', 'to_port': 'out'}]
     assert TopologyService(data).get_end_to_end_loss('ce1', 'p') is None
     assert TopologyService(data).get_end_to_end_loss('ce2', 'p') == 0
@@ -242,9 +247,9 @@ def test_bfs_keeps_input_port_state_and_termination_never_expands():
 def test_bfs_uses_one_effective_mode_not_union_counts_or_cross_mode_wiring(cross_modes):
     data = dict(nodes=[dict(id='ce', type='ce_port'), dict(id='other', type='ce_port'),
         dict(id='pad', type='pad', params={'ports': ['in', 'out']}), dict(id='p', type='probe')],
-        connections=[dict(id='i', source='ce', source_pin='out', target='pad', target_pin='in'),
-            dict(id='o', source='pad', source_pin='out', target='p', target_pin='in'),
-            dict(id='other', source='other', source_pin='out', target='pad', target_pin='in')],
+        connections=[dict(id='i', source='ce', source_pin='out', target='pad', target_pin='in', cable_loss_db=0),
+            dict(id='o', source='pad', source_pin='out', target='p', target_pin='in', cable_loss_db=0),
+            dict(id='other', source='other', source_pin='out', target='pad', target_pin='in', cable_loss_db=0)],
         operating_modes=[dict(id='normal', active_connections=['i'] if cross_modes else ['i', 'o']),
             dict(id='alternate', active_connections=['o'] if cross_modes else ['other', 'o'])])
     if cross_modes:
