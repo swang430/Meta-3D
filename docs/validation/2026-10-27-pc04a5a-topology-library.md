@@ -11,7 +11,7 @@ Task3 实施、自查、真实浏览器矩阵、GUI build和唯一后端全量�
 
 ## 已执行软件链
 
-真实headed浏览器 session `pc04a5a-task3` 使用实际UI鼠标/键盘，真实API保存重读。证据在 `output/playwright/pc04a5a/task3-*`，其中 `.txt` 保留具体操作和断言、`task3-requests-final.txt`保留请求序列。没有React handler代点击、没有伪造成功响应。
+真实headed浏览器 session `pc04a5a-task3` 使用实际UI鼠标/键盘，真实API保存重读。证据在 `output/playwright/pc04a5a/task3-*`：成功脚本 `.txt` 保留操作正文，部分失败文件仅有CLI错误，不能称所有正文完整保存；`task3-requests-final.txt`保留请求序列。没有React handler代点击、没有伪造成功响应。
 
 - 101图全集实际出现 `skip=100&limit=100` 第二请求，并选到最旧原图；改名name-only、复制201、重读inactive/nondefault、设浏览器默认、重载恢复与选回原图。
 - 原图raw三JSON列与同seed未编辑姊妹图完全相同，2020时间戳保持；副本仅两个已有calibrated字段置null，字符串数字/缺键/opaque保留。只读命令：`api-service/.venv/bin/python api-service/tests/pc04a5a_browser_audit.py /tmp/pc04a5a-s1qHHo/browser.sqlite`，exit0；结果 `task3-db-audit.json`。
@@ -22,6 +22,8 @@ Task3 实施、自查、真实浏览器矩阵、GUI build和唯一后端全量�
 - Mock采集分两次：真实POST成功但故意丢回应/阻断恢复GET的开始未知，以及真实POST202已拿活动run后终态GET断网；两种UI都保持库/复制锁，开始未知时切Lab也阻断；恢复GET后真实run终态释放。没有confirmed/采用，不把Mock读数作为实测。原件 `task3-collection-unknown.*`、`task3-collection-terminal-unknown.*`。
 
 页面加载时序、自动打开器件Modal、未声明端口pad真实422，以及等待合成文案的验收脚本异常均保留，后续按实际UI独立重验；没有为通过而放宽产品门或隐去失败。详见本地 `.superpowers/sdd/2026-10-27-pc04a5a-topology-library/task-3-report.md`。
+
+写超时结果依据 `task3-copy-timeout.png`、请求1255及既有只读库核验交叉记录；`task3-timeout-template.txt`只有随后等待模板文案超时的CLI错误，不包含注入正文，不据此声称完整可复原。未补写原件或为此重跑验证。
 
 ## 回归与构建实际结果
 
