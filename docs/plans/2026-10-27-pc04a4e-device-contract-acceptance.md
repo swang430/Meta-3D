@@ -81,7 +81,7 @@
 
 **Interfaces:** 消费原POST/PATCH/import/preview及原采用/执行fixture。输出逐case请求/响应、SQL前后、selection与新旧freeze的证据索引，供Task2选择同构图、Task3判定覆盖；不增加业务接口。
 
-- [ ] 1. 读取上述fixture及接口字段，按E01～E06列出新增case与已有case复用映射；记录每个对象的Lab/暗室/topology/node/edge/chain/run/application/execution身份。先冻结模板原件hash。
+- [ ] 1. 读取上述fixture及接口字段，按E01～E06列出新增case与已有case复用映射；记录每个对象的Lab/暗室/topology/node/edge/chain/run/application/execution身份。E05以冻结fixture的`conn_p0v`正常链（终点`probe_0_v`）为身份基准；借用参考图时将原`probe1v`接入点明确映射到`probe_0_v`，参考PA边使用独立`pa_edge_id`并核对实际`calibration_connection_ids`，不能将`conn_p0v`当参考PA边或混用两个probe身份。先冻结模板原件hash。
 - [ ] 2. 只新增以下组合；使用真实TestClient/生产resolver，外部transport沿既有受控fixture，不替换builder/parser/正式消费者。对已正确功能允许直接GREEN，不回退生产造RED。
 
 | ID | 输入/步骤 | 必须断言 |
@@ -104,7 +104,7 @@ assert entries(second_execution)['conn_p0v']['value_db'] == 28
 assert read_execution_route_compensation(first_execution) == first_freeze
 ```
 
-`selection`取真实路径响应的单条`RouteSelection`（`calibration_connection_ids`在其顶层；run内才嵌入`selection_snapshot`），`saved_raw_pa_edge`取SQL原JSON，`entries`与freeze reader复用已存在fixture/API；这是断言片段，不是可独立运行的伪fixture，不为片段更改生产契约。
+`selection`取真实路径响应的单条`RouteSelection`，`calibration_connection_ids`在其顶层。GET采集run的路径快照取`result.configuration.route_selection`；底层`DiagnosticRun`封套取`sequence_evidence.extra.fixed_route_acquisition.configuration.route_selection`；`selection_snapshot`只属于`RouteApplicationRecord`采用记录。按同一run/application身份分别归档，不混用三种封套。`saved_raw_pa_edge`取SQL原JSON，`entries`与freeze reader复用已存在fixture/API；这是断言片段，不是可独立运行的伪fixture，不为片段更改生产契约。
 
 - [ ] 4. 新库隔离运行新增文件及4a～4d契约/identity/route application/freeze/compensation相关集；原命令、实际输出与退出码落证。只有真实生产失败才按第4节RED→最小修复→GREEN，核心变异并恢复hash；脚本错误不计产品RED。
 - [ ] 5. 逐case记已验/失败/未执行，独立规格与质量审查；提交本任务最小增量。Task1不跑全后端、不push。
