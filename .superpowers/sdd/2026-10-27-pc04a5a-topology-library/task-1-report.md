@@ -2,6 +2,8 @@
 
 状态：Task1已实现并自查，等待root独立规格/质量审查。尚未声称独立审查或最终验收通过。
 
+实现提交：`2c3f0a442ba56876878876f3c54cf24545242e0c`（feat: 增加保形拓扑副本和库元数据保护）。后续证据提交仅补报告和浏览器文本原件，不改变生产/测试。
+
 ## 边界与环境
 
 - BASE：`5282eeb8435c133f1c684962be0a2bd345ac1839`；分支 `codex/topology-library-pa-plan`。
@@ -28,6 +30,8 @@
 2. 启动前18105/15105无监听；API18105，专用Vite15105，绝不代理到用户8000。Playwright真实headed浏览器选择“PC04A5a实验室0”→“射频拓扑”。
 3. 当前scope实际列表200、total=2、两个不同UUID；界面只有“隔离原图-0-1-000”，无库Select/改名/复制入口，不能选回第二图。浏览器真实fetch `POST /api/v1/switch-topologies/{id}/copy?lab_profile_id=...` 返回404/Not Found，未拦截网络响应。
 4. 原件：`output/playwright/pc04a5a/browser-red.png`、`pc04a5a-browser-red.snapshot.log`、`browser-red-api.log`、`seed.log`。截图SHA256 `5ce0fc94eacc1171bae5d00b982a6b2fac697664881fcdd91c20a16bf3dd7302`。这些原件保留在本工作树，不清理旧证据。
+
+`.log`被仓库通用日志忽略规则排除，未强行加入ignored日志。为使本任务浏览器证据随提交保存，五份浏览器/seed日志另存同名`.txt`，与本地`.log`逐字节一致；不是重生成或删减。截图及`.txt`为任务交接的可版本化原件。
 
 启动命令（api-service / gui各自目录）：
 
@@ -98,6 +102,7 @@ npm run dev -- --config vite.pc04a5a.config.ts --host 127.0.0.1 --port 15105 --s
 - 此边界先报告root；父任务当轮已结束、不能即时回复。实现者按Task1明确的“源无法序列化→422”要求做最小解释：只加三数组/每行dict形态拒绝，不修图、不填默认、不扩到保存校验；root仍须复核。代价是损坏形态必须先修复源才能复制，但原契约本就不允许不可响应的半成功副本。
 - 形态拒绝后覆盖原3病例及全部Task1+修订模块：`/tmp/pc04a5a-ieAIwr/final-green.log`，`141 passed, 143 warnings in 6.48s`，exit0。后续扩充到全部三个图列的null/[null]对称参数，不改变生产逻辑。
 - 最终对称参数版同5模块命令加 `-o log_cli=false`：`/tmp/pc04a5a-nnw09I/final-green.log`，`144 passed, 143 warnings in 6.81s`，exit0（含本任务43例）。这是最新代码/测试版本，不把前轮141或37作为最终数字。
+- 实现提交`2c3f0a44`落盘后核验（仓库根目录）：`api-service/.venv/bin/python -m pytest api-service/tests/test_pc04a5a_topology_library.py api-service/tests/test_pc04a4a_nominal_properties.py::test_checked_crud_and_schema_closure_match_live_contract -q -o log_cli=false`。新库 `/tmp/pc04a5a-WxmRCL/test.sqlite`、mock/bootstrap环境同前；`postcommit-green.log`原文 `44 passed, 43 warnings in 4.49s`，exit0。后续只改此报告及证据文本，没有运行第二次全后端。
 
 ## 验证版本指纹
 
