@@ -40,8 +40,8 @@ TASK3_EVIDENCE=/tmp/pc04a4e-task3-final-G2kMRn .venv/bin/python /tmp/pc04a4e-tas
 
 首次G8：1 failed/40 warnings/1.37s，pytest exit1；唯一失败PC07A1历史报告task-3-report.md第111行UUID execute路由。`git diff 780a4b46 -- api-service/tests/test_rule_gates.py docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md`为空，门/历史位置无diff；不改历史、不放宽门、不称全绿。最终门统计随后由实际输出附录，不能以首次结果替代最终执行。
 
-最终G8实跑：1 failed/40 warnings/0.89s，exit1，UTC 2026-10-27T06:33:58.149025+00:00→06:34:00.719212+00:00；仍仅同一历史文件第111行UUID，未见新增失败，不称全绿。两份新文档8个本地链接/图片目标全部存在，git diff --check无输出、exit0。最终输入清单、dirty diff、状态、依赖及原件hash由audit.js归档，G8运行后的变动只为本SDD报告/progress（不属门的docs扫描输入）。本次GUI命令原文及exit见上文，原始日志位于前述目录。
+最终G8实跑：1 failed/40 warnings/0.89s，exit1，UTC 2026-10-27T06:33:58.149025+00:00→06:34:00.719212+00:00；仍仅同一历史文件第111行UUID，未见新增失败，不称全绿。两份新文档8个本地链接/图片目标全部存在，git diff --check无输出、exit0。最终输入清单、dirty diff、状态、依赖及原件hash由audit.js归档，G8扫描使用git ls-files列出的全仓跟踪Markdown，并按路径排除Instrument_API_Doc、docs/archive、docs/site-debug、docs/design，排除docs/roadmap-archive.md、docs/roadmap-first-call.md、docs/project-retrospective.md、文件名带日期或已不存在的文件；SDD目录本身不豁免。该次新guide及新SDD报告/progress尚未跟踪，不能称已被实跑遍历。新增文本已另行人工核对，没有新增该门匹配的计划链路由字面量；人工核对不冒充门实跑。本次GUI命令原文及exit见上文，原始日志位于前述目录。
 
 最终验证原件含launcher/g8/execution/bootstrap/reuse清单；相关命令退出均读原始输出。所有目录、venv、DB、output/scratch保留。工作树预存未跟踪.playwright-cli、.venv、output均不纳提交，不删除。无push/无主claim释放。
 
-附：首次依赖归档audit.js调用npm ls --all --json触发大量既有extraneous及Node默认缓冲区ENOBUFS，未完成索引；原脚本和已产输入/diff/status保留。改用独立audit-final.js文件描述符直写stdout/stderr，完整保存npm依赖盘点及非零退出；不改依赖、不把盘点失败当构建失败。review-inputs.json为报告追加后的审查输入hash，artifact-sha256.txt为现存临时原件索引。
+附：首次依赖归档audit.js调用npm ls --all --json触发大量既有extraneous及Node默认缓冲区ENOBUFS，未完成索引；原脚本和已产输入/diff/status保留。改用独立audit-final.js文件描述符直写stdout/stderr，完整保存npm依赖盘点及非零退出；不改依赖、不把盘点失败当构建失败。review-inputs.json为报告追加后的审查输入hash，artifact-sha256.txt为现存临时原件索引；累计独立复核为15/16匹配，唯一audit-final.log在索引生成后追加导致不符（索引记录空文件hash）。保留旧索引不覆盖、不重建，不称全项匹配。

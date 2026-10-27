@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-执行状态（2026-10-27）：Task1独立规格/质量通过（历史HTTP缺口由新定点补验）；Task2规格有限通过、质量Approved（首轮同名截图覆盖P2保留）。Task3指南/正式摘要与验证已形成，待任务及累计独立审查、PR外审，不称整体验收PASS。详见[逐分支摘要](../validation/2026-10-27-pc04a4e-device-contract-acceptance.md)与[指南](../guides/topology-device-contract.md)。
+执行状态（2026-10-27）：Task1独立规格/质量通过（历史HTTP缺口由新定点补验）；Task2规格有限通过、质量Approved（首轮同名截图覆盖P2保留）。Task3指南/正式摘要与验证已形成，任务及累计独立内审已通过，可Ready PR，待最新HEAD外审，不称整体验收PASS。详见[逐分支摘要](../validation/2026-10-27-pc04a4e-device-contract-acceptance.md)与[指南](../guides/topology-device-contract.md)。
 
 范围裁决：E15诊断无专属下载入口不适用，正式报告下载未验；Mock cancelled仅软件编辑恢复，真实cleanup_unconfirmed/interrupted未验；FK哨兵只证引用409，不授采集/confirmed/资格。不可恢复首轮已覆盖截图，不补造原件。任务复选框保留计划文本，实际完成范围以上述摘要和SDD审查为准。未触发共享输入全量条件，本片未跑新版全后端；旧7945/17/1仅前片。
 

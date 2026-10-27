@@ -21,4 +21,8 @@ Ruling: 接受Task2首轮同名截图被覆盖的P2证据缺口，保持已披�
 Ruling: E15诊断无专属下载入口，正式报告下载未验；Mock cancelled终态仅证明软件编辑恢复，不证明cleanup或现场安全。FK哨兵仅证明引用保护，不授采用资格。若范围判断错误需后续补验，不扩大为正式或现场通过。
 Task2: minor (disclosed): build另含axios/service.ts动静态导入警告，Task3补列，不改生产消警告，不自动新增积压。
 
+Task3: complete (c579efb5..59d58b24，独立规格通过/质量Approved，无P1或阻塞P2，取代上方待审状态)
+Task3: minor (disclosed): audit-final.log索引后追加导致一项hash不一致；G8运行时guide未跟踪，SDD非天然排除。两P3交累计判断，不重复验证。
+Final review: complete (780a4b46..59d58b24，独立Ready PR；无P1/新增阻塞P2，两P3本次仅收窄说明，待增量复核与PR外审)
+
 用户要求保留所有SDD与验证证据，不删除工作空间。主claim由root管理。

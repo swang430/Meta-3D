@@ -1,6 +1,6 @@
 # PC04A4e 综合软件验收摘要
 
-结论：已执行的软件分支有证据；不是 E01～E15 全项无保留 PASS。Task1 独立规格/质量通过，Task2 规格有限通过、质量 Approved，附首轮同名截图覆盖 P2。Task3 仅作者自查，最终任务及累计独立审查、PR 外审由主代理继续安排。硬件、ASC/CE、PostgreSQL CAS、现场 B/HOLD 均不关闭。
+结论：已执行的软件分支有证据；不是 E01～E15 全项无保留 PASS。Task1 独立规格/质量通过，Task2 规格有限通过、质量 Approved，附首轮同名截图覆盖 P2。Task3 任务及累计独立内审已通过，无P1或新增阻塞P2，可进入Ready PR；仍待最新HEAD的PR外审，不称已合并。硬件、ASC/CE、PostgreSQL CAS、现场 B/HOLD 均不关闭。
 
 ## 输入与证据身份
 
@@ -38,6 +38,8 @@
 器件全集：air_path、amplifier、antenna、bse_port、cable、ce_port、channel_emulator、combiner、communication_tester、emcenter、pad、probe、receive_cable、reference_antenna、sa_port、signal_analyzer、switch_slot、termination、vna。
 
 ## 证据完整性与残余边界
+
+Task3临时原件索引累计独立核验15/16匹配：audit-final.log在索引完成后追加，旧索引中的空文件hash与现值不符；其余15项匹配。保留旧索引，不重建或声称全项匹配。G8实跑仅覆盖当时git跟踪且未被路径规则排除的Markdown，新guide当时未跟踪；SDD并非天然豁免。新增指南/SDD文字另行人工核对，无新增门匹配的计划链路由字面量；这不是新增文本已被门实跑的声明。
 
 Task2现存142份临时原件、97张截图索引已独立核hash；首轮部分同名截图被覆盖不可恢复，明确保留P2缺口，不补造/重跑冒原件。各失败目录与数据库均保留，修脚本/fixture后另库复验，不把fixture错误当产品RED。原4a三项未再现异常根因仍未知；本片V1/鼠标拖动是新证据，不回写4a/4c当时未验结论。
 
