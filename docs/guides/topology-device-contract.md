@@ -38,8 +38,4 @@ PA、衰减器、合路器等在“添加内部通路”后选择“内部输入
 
 采集时不改拓扑。取消请求没有回执时保持“采集状态未确认结束”锁定，恢复网络读取服务器状态，不靠本地 toast 解锁。本片全 Mock 的 cancelled 终态只证明软件编辑恢复，cleanup_confirmed 与 F64 release 仍 null；真实 cleanup_unconfirmed/interrupted 未验，不得据此确认实物停发。历史参考缺端口/pair 可以在当前 scope/compare 盘点，但路径/采集严格拒绝，盘点成功不授采集资格。历史诊断可查看 JSON；本流程无专属诊断下载入口，客户正式报告下载未验。
 
-截图均为隔离 Mock 软件示例：[旧 PA 抽屉与采集锁截图索引](../../.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md#截图进程与交接)。现存 97 张截图有 hash 索引，但首轮部分同名截图已覆盖，不能宣称全部尝试原件无损。逐分支结果、对象身份和原件目录见[正式验证摘要](../validation/2026-10-27-pc04a4e-device-contract-acceptance.md)。
-
-![隔离Mock示例：原CAICT旧PA抽屉，14.5仅验收输入](../../output/playwright/pc04a4e-caict-1793080742040-pa-14.5.png)
-
-![隔离Mock示例：取消回执未知，保持软件编辑锁](../../output/playwright/pc04a4e-collection-1793080977005-cancel-unknown-0.png)
+截图均为隔离 Mock 软件示例，仅保存在验收执行机器，未作为仓库资源或远程附件发布；GitHub页面和新检出不能直接查看原图。[Task2报告的本机证据说明](../../.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md#截图进程与交接)记录其用途；本机索引为 `/tmp/pc04a4e-9TxR8N/screenshots-sha256.txt`，不是读者可访问的下载地址。其中旧PA抽屉的14.5仅为验收输入，取消回执未知截图只证明软件编辑锁。现存97张截图有hash索引，但首轮部分同名截图已覆盖，不能宣称全部尝试原件无损。逐分支结果、对象身份和原件目录见[正式验证摘要](../validation/2026-10-27-pc04a4e-device-contract-acceptance.md)。
