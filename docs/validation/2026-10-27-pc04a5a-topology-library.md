@@ -63,9 +63,9 @@ exit1，`3 failed, 8003 passed, 17 skipped, 9811 warnings in 812.90s (0:13:32)`�
 |---|---|---|
 | G8 | `docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md:111` 的具体UUID execute路径 | 既有历史执行记录被门作现状路径；本片未改历史或门 |
 | G11 | `.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md:128` 的 `/api/v1/ws` | 既有报告被REST路径门命中；没有新增或改变代理/路由 |
-| gitignore已跟踪源门 | 7份既有4e SDD报告及5a Task1报告/修复报告，共9文件被 `.superpowers/sdd/.gitignore:1:*` 命中 | 本片没有force-add SDD、不删除历史、不自动改ignore |
+| gitignore已跟踪源门 | 7份前批4e SDD报告，加本5a批次Task1报告/修复报告2份，共9文件被 `.superpowers/sdd/.gitignore:1:*` 命中 | 5a两份是本批次留痕问题，不能统称历史失败；它们在Task3 BASE已跟踪，Task3没有force-add SDD。不删除报告、不自动改ignore |
 
-以 `git ls-tree 8eb1fb10 <触发文件>`、`git diff 8eb1fb10..7d624cd4 -- <门和触发源>`（无差异）及 `git check-ignore --no-index -v <SDD报告>` 核实归属；只声明本轮失败及BASE已存在，未额外在main跑门或全量，不能称main全量已验证。相关资格、确认采用、冻结、转换、损耗真值及本片44例库API测试在本次全量通过。以上3门保留待root独立审查/裁决。
+以 `git ls-tree 8eb1fb10 <触发文件>`、`git diff 8eb1fb10..7d624cd4 -- <门和触发源>`（无差异）及 `git check-ignore --no-index -v <SDD报告>` 核实归属；只声明本轮触发、对应报告在Task3 BASE已跟踪，不把本5a两份留痕问题归给更早历史。未额外在main跑门或全量，不能称main全量已验证。相关资格、确认采用、冻结、转换、损耗真值及本片44例库API测试在本次全量通过。以上3门保留待root独立审查/裁决。
 
 输入manifest `task3-inputs-final.sha256` SHA256 `60f44d74d3e40aa71abd7b852b60f63b5c23c22516e1779a085f8e640e6fa439`，全量运行间/结束后 `shasum -c` 均exit0，结束时tracked diff为空。环境Python3.13.14/pytest9.1.1、Nodev26.5.1/npm11.17.0，依赖不变；GUI相关输入未变，build按输入一致复用，不因测试提交号重跑。后续只补dated验证记录和证据，未改测试输入。
 

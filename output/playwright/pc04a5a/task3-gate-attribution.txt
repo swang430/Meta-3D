@@ -1,0 +1,35 @@
+Task3 三门归属核验（实际命令输出摘录，非另一次测试）
+
+git diff --quiet
+tracked_diff_exit=0
+
+shasum -c /tmp/pc04a5a-s1qHHo/test-inputs-final.sha256
+input_recheck_exit=0
+
+git diff --name-only 8eb1fb10..7d624cd4
+api-service/tests/pc04a5a_browser_audit.py
+api-service/tests/test_pc04a2_route_application.py
+
+git ls-tree 8eb1fb10 <触发报告>
+100644 blob a53b03907b6054210ede1ced45a5ae22ec0fa097 .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md
+100644 blob c41dc7656e4a5dc5a433848f2985018dcb7ac276 .superpowers/sdd/2026-10-27-pc04a5a-topology-library/task-1-fix-report.md
+100644 blob fadb3180830b0edf89203e6676ba39b6bfc8901c .superpowers/sdd/2026-10-27-pc04a5a-topology-library/task-1-report.md
+100644 blob 1017db2acaba7415b8442070ab4c0e912f03424d docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md
+
+git check-ignore --no-index -v <SDD报告>
+.superpowers/sdd/.gitignore:1:* .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md
+.superpowers/sdd/.gitignore:1:* .superpowers/sdd/2026-10-27-pc04a5a-topology-library/task-1-report.md
+
+git ls-files .superpowers/sdd/.gitignore
+（无输出；这是既有本地Git元数据，不是假称BASE中已跟踪的规则文件）
+
+git status --ignored --short .superpowers/sdd/.gitignore
+!! .superpowers/sdd/.gitignore
+
+shasum -a 256 .superpowers/sdd/.gitignore
+cdbcae15105d6b781e620813c79c7e868740d4e9cc53ce6f5fcbbc12387adf4b .superpowers/sdd/.gitignore
+
+git diff --quiet 7d624cd4..b9c8d301 -- api-service/app api-service/tests api/openapi.yaml gui/src gui/test gui/package.json gui/package-lock.json gui/vite.config.ts gui/vite.pc04a5a.config.ts
+post_full_input_delta_exit=0
+
+没有在main/BASE另跑测试，没有改门。G8/G11是前批历史引用被现状网命中；gitignore门中的5a两报告属于本批次留痕问题，不能统称历史失败。
