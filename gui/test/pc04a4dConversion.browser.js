@@ -30,6 +30,21 @@ async page => {
   const shot=async label=>{checks.push({label,dom:await page.locator('body').innerText()});await page.screenshot({path:`output/playwright/pc04a4d-${label}.png`,fullPage:true})};
   const preview=async()=>{const wait=page.waitForResponse(r=>r.url().includes('/conversion-preview')&&r.request().method()==='POST');await modal.getByRole('button',{name:'预览转换差异',exact:true}).click();const r=await wait;exchanges.push({request:r.request().postDataJSON(),url:r.url(),status:r.status(),response:await r.json()});eq(r.status(),200,'预览失败');await modal.getByTestId('conversion-preview').waitFor()};
   const save=async(status=200)=>{const wait=page.waitForResponse(r=>r.url().includes(`/switch-topologies/${graph.id}`)&&r.request().method()==='PATCH');await modal.getByRole('button',{name:'确认转换并保存',exact:true}).click();const r=await wait;exchanges.push({request:r.request().postDataJSON(),url:r.url(),status:r.status(),response:await r.json()});eq(r.status(),status,'转换保存状态');if(status===200){await modal.waitFor({state:'hidden'});await page.locator('.mantine-Modal-overlay').waitFor({state:'hidden'})}return read(endpoint)};
+  if(stage==='display'){
+    const before=await read(endpoint);await open();await choose('转换器件','ce');await choose('转换连线','wire-in');
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    const dom=await modal.innerText(),failures=[];
+    if(!dom.includes('GET展示值，原保存声明待核'))failures.push('GET节点/边没有声明证据边界');
+    if(dom.includes('原保存声明：')||dom.includes('原保存端点/旧损耗/来源：'))failures.push('仍把GET模型标成原保存事实');
+    const option=await field('转换连线').inputValue();
+    if(!option.includes('GET展示值，原保存声明待核'))failures.push('端点选择标签未标证据边界');
+    if(!(await field('转换器件').inputValue()).includes('GET展示值，原保存声明待核'))failures.push('器件选择标签未标证据边界');
+    await field('同一物理线缆量值owner原边').click();const ownerOption=await page.getByRole('option').filter({hasText:/^wire-out ·/}).innerText();await field('同一物理线缆量值owner原边').press('Escape');
+    if(!ownerOption.includes('GET展示值，原保存声明待核'))failures.push('owner数值选项未标证据边界');
+    if(await field('显式源端口 source_pin').inputValue()!==''||await field('显式标称损耗 cable_loss_db').inputValue()!=='')failures.push('GET默认值被自动放入显式编辑');
+    await shot(`display-${failures.length?'red':'green'}`);await close();eq(await read(endpoint),before,'只读展示/取消写入');
+    return {stage:failures.length?'RED':'GREEN',failures,dom,option,ownerOption,graph:before,exchanges};
+  }
   if(stage==='reimport'){
     const before=await read(endpoint);await open();await choose('转换器件','sa');await field('显式端口方向 port_directions（JSON对象）').fill('{"IN":"unknown"}');
     const cdp=await page.context().newCDPSession(page);await cdp.send('Network.enable');await cdp.send('Network.emulateNetworkConditions',{offline:false,latency:900,downloadThroughput:-1,uploadThroughput:-1});

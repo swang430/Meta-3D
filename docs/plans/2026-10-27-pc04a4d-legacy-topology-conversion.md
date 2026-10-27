@@ -89,7 +89,7 @@ Task1补充裁决（scope旧占位例外）：`build_calibration_scope(topology_
 
 ### 0.3 明确的null契约
 
-`TopologyConnection.cable_loss_db: float | None = None`；新缺键的运行值None，GET仍exclude_unset保留缺键。原已存数值（含0）和未改字符串表示保持。写入允许有限非负number/null；拒绝bool/NaN/Inf/负数及主动字符串写入，旧未改字符串的4a兼容保留。`calibrated_loss_db`既有有符号值允许负增益，不因本片改其数值域。
+`TopologyConnection.cable_loss_db: float | None = None`；新缺键的运行值None，保形写入保持原已存缺键、数值（含0）及未改字符串表示。GET为经schema处理的读模型（可能默认化或转型），不能用其字段存在性或数值类型证明原保存JSON；GUI依Task3区分GET展示与preview原始证据。写入允许有限非负number/null；拒绝bool/NaN/Inf/负数及主动字符串写入，旧未改字符串的4a兼容保留。`calibrated_loss_db`既有有符号值允许负增益，不因本片改其数值域。
 
 ```python
 def effective_connection_loss(connection: dict) -> float | None:
@@ -241,7 +241,7 @@ assert read_history_hashes() == history_before
 **Interfaces:** Consumes Task2 `previewConversion`与PATCH conversion；Produces `conversionContextKey(labId:string, topologyId:string):string`、`buildConversionRequest(nodeEdits,connectionEdits):TopologyConversionRequest`。预览结果只留当前面板会话，不持久化到图params。
 
 - [ ] 先新库bootstrap/显式Mock/真实API及专用代理；真实浏览器观察“转换旧配置”入口不存在为RED并保留DOM/截图/原始请求，不先改UI。初始fixture包括CAICT原图、旧ce/bse/sa与新声明对照、普通/参考cable、opaque及历史冻结样本，源图ID与展示图ID分栏。
-- [ ] 使用原Mantine抽屉/Modal实现“编辑转换项→预览差异→确认保存”。显示raw保存端点/未声明警告、明确type选择、ports/方向/pair、旧损耗；不提供一键猜测/自动补齐。dirty时不自动覆盖，提示先原保存或关闭转换继续草稿。确认按钮必须有当前成功预览，编辑任一项即使改回也使预览失效；409保留输入供重新预览。
+- [ ] 使用原Mantine抽屉/Modal实现“编辑转换项→预览差异→确认保存”。原保存值/缺键只依据服务器preview差异before/before_present所涉及字段；candidate仅展示为候选原始JSON，不当作原图before。预览前GET节点/边及端点、owner选项统一标“GET展示值，原保存声明待核”，不把默认out/in、0或转换后的数值当原声明，不以GET缺键推断raw缺键；本片不新增raw接口。提供明确type选择、ports/方向/pair、损耗显式输入，不提供一键猜测/自动补齐。dirty时不自动覆盖，提示先原保存或关闭转换继续草稿。确认按钮必须有当前成功预览，编辑任一项即使改回也使预览失效；409保留输入供重新预览。
 - [ ] 每个事件处理先查 `savingRef.current || collectionBusyRef.current`；不是只disabled按钮。预览中context变化丢弃迟到响应；外层换Lab/selectedSwitch/重导入同时清会话，保存成功通过原onSaved更新，失败保留输入与原图。
 - [ ] 原面板新增逐组“同一物理线缆”确认与owner原边选择，不按相等数值自动关联；alias原值只读并能定位owner，解组预览明确恢复参与。无声明保留原样。用户确认不显示实物验证/认证成功。
 - [ ] helper测试明确断言取消/换图清预览但不改原draft，序列化未提交键不补null；null只允许cable清值和owner显式撤销，后者要求确认且落库删除键：

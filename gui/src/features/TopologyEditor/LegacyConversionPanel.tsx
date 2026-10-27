@@ -60,10 +60,10 @@ export function LegacyConversionPanel({opened,topology,labId,dirty,blocked,isBlo
       <Alert color="orange">仅转换应用声明，不证明实物接线、仪器能力或校准资格。空白字段不提交，不猜端口、方向或CE身份。预览候选不覆盖原画布草稿。</Alert>
       <Text size="xs">Lab {labId} · 原图 {topology.id}</Text>
       {dirty&&<Alert color="yellow">原拓扑草稿未保存；请先原保存，或关闭转换继续草稿。转换不会自动覆盖。</Alert>}
-      <Select label="转换器件" searchable value={nodeId} data={topology.nodes.map(n=>({value:n.id,label:`${n.id} · ${n.type} · ${n.label}`}))}
+      <Select label="转换器件" searchable value={nodeId} data={topology.nodes.map(n=>({value:n.id,label:`${n.id} · ${n.type} · ${n.label} · GET展示值，原保存声明待核`}))}
         disabled={blocked} onChange={id=>{if(isBlocked())return;setNodeId(id)}}/>
       {node&&<Paper withBorder p="sm"><Stack gap="xs">
-        <Text size="xs" style={{overflowWrap:'anywhere'}}>原保存声明：{JSON.stringify(node)}；缺少 ports / 方向 / 内部pair 均为旧版未声明，不自动补齐。</Text>
+        <Text size="xs" style={{overflowWrap:'anywhere'}}>GET展示值，原保存声明待核（器件）：{JSON.stringify(node)}；读模型可能默认化或转换格式，不据此判断原JSON缺键；未填写的转换项不提交、不自动补齐。</Text>
         <Select label="显式目标类型" placeholder="不修改类型" value={ne.target_type??null} clearable
           data={(typePairs.find(pair=>pair.includes(node.type))??[]).map(value=>({value,label:value}))}
           disabled={blocked||!typePairs.some(pair=>pair.includes(node.type))} onChange={v=>changeNode('target_type',v??'')}/>
@@ -73,22 +73,23 @@ export function LegacyConversionPanel({opened,topology,labId,dirty,blocked,isBlo
         <Textarea label="显式内部通路 internal_paths（JSON数组）" placeholder='[{"from_port":"IN","to_port":"OUT"}]；[]表示无贯通' value={ne.internal_paths??''} disabled={blocked} onChange={e=>changeNode('internal_paths',e.currentTarget.value)}/>
         <Textarea label="显式CE身份 ce_port" placeholder="不从label猜测" value={ne.ce_port??''} disabled={blocked} onChange={e=>changeNode('ce_port',e.currentTarget.value)}/>
       </Stack></Paper>}
-      <Select label="转换连线" searchable value={edgeId} data={topology.connections.map(e=>({value:e.id,label:`${e.id} · ${e.source}:${e.source_pin??'未声明'} → ${e.target}:${e.target_pin??'未声明'}`}))}
+      <Select label="转换连线" searchable value={edgeId} data={topology.connections.map(e=>({value:e.id,label:`${e.id} · ${e.source}:${e.source_pin??'GET未提供'} → ${e.target}:${e.target_pin??'GET未提供'} · GET展示值，原保存声明待核`}))}
         disabled={blocked} onChange={id=>{if(isBlocked())return;setEdgeId(id)}}/>
       {edge&&<Paper withBorder p="sm"><Stack gap="xs">
-        <Text size="xs" style={{overflowWrap:'anywhere'}}>原保存端点/旧损耗/来源：{JSON.stringify(edge)}</Text>
+        <Text size="xs" style={{overflowWrap:'anywhere'}}>GET展示值，原保存声明待核（端点/损耗/来源）：{JSON.stringify(edge)}；out/in、0及数值格式可能来自读模型，不视为原保存声明。</Text>
         {edge.loss_owner_connection_id&&<Alert>旧值保留、不参与本组计算；owner：{edge.loss_owner_connection_id}<Button size="xs" onClick={()=>{if(!isBlocked())setEdgeId(edge.loss_owner_connection_id!)}}>定位owner原边</Button></Alert>}
         <Textarea label="显式源端口 source_pin" value={String(ee.source_pin??'')} disabled={blocked} onChange={e=>changeEdge('source_pin',e.currentTarget.value)}/>
         <Textarea label="显式目标端口 target_pin" value={String(ee.target_pin??'')} disabled={blocked} onChange={e=>changeEdge('target_pin',e.currentTarget.value)}/>
         <Textarea label="显式标称损耗 cable_loss_db" description="空白不提交；输入 null 清为未知；0 是已知零" value={String(ee.cable_loss_db??'')} disabled={blocked||!!edge.loss_owner_connection_id} onChange={e=>changeEdge('cable_loss_db',e.currentTarget.value)}/>
         <Select label="同一物理线缆量值owner原边" placeholder="不改变归属" clearable value={String(ee.loss_owner_connection_id||'')||null}
-          data={[{value:'__remove__',label:'显式解组：两侧旧值恢复各自参与'},...topology.connections.filter(e=>e.id!==edge.id).map(e=>({value:e.id,label:`${e.id} · cable=${e.cable_loss_db??'未知'} · calibrated=${e.calibrated_loss_db??'未知'}`}))]}
+          data={[{value:'__remove__',label:'显式解组：两侧旧值恢复各自参与'},...topology.connections.filter(e=>e.id!==edge.id).map(e=>({value:e.id,label:`${e.id} · GET cable=${e.cable_loss_db??'未提供数值'} · calibrated=${e.calibrated_loss_db??'未提供数值'} · GET展示值，原保存声明待核`}))]}
           disabled={blocked} onChange={v=>changeEdge('loss_owner_connection_id',v??'')}/>
         <Checkbox label="这两条边表示同一条物理线缆（设置或撤销归属均明确确认）" checked={ee.same_physical_cable_confirmed===true} disabled={blocked} onChange={e=>changeEdge('same_physical_cable_confirmed',e.currentTarget.checked)}/>
         {ee.loss_owner_connection_id==='__remove__'&&<Alert color="orange">解组后两侧保留的原量值恢复各自参与；不是清空或复制损耗。</Alert>}
       </Stack></Paper>}
       {error&&<Alert color="red" data-testid="conversion-error">{error}</Alert>}
       {preview&&<Paper withBorder p="sm" data-testid="conversion-preview"><Text fw={600}>预览差异（尚未保存）</Text>
+        <Text size="xs">以下差异的before_present/缺键判据仅来自本次服务器预览涉及字段；不反向证明上方GET展示值是原保存值。</Text>
         {preview.differences.map((d,i)=><Text size="sm" key={i}>{d.object_kind} {d.object_id} {d.field}：{d.before_present?JSON.stringify(d.before):'缺键'} → {JSON.stringify(d.after)}</Text>)}
         {preview.warnings.map((w,i)=><Text size="sm" key={i}>{w}</Text>)}
         <Text size="xs">候选原始JSON（只读；包含两侧保留值与量值采用源，不回填草稿）</Text><pre style={{whiteSpace:'pre-wrap',maxHeight:220,overflow:'auto'}}>{JSON.stringify(preview.candidate,null,2)}</pre>
