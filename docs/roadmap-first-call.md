@@ -1,5 +1,20 @@
 # MIMO-First — First-Call Roadmap
 
+### 2026-10-27 新增队列：CAICT独立PA与可恢复拓扑管理
+
+用户要求在原F64→probe对应关系中插入独立PA，并提供保存、复制、命名与误保存恢复。以下是新增软件范围，未实现；不重开已交付4a～4e，不代表现场验收。WIP=1，先提供可恢复保护再修改CAICT。
+
+| 顺序 | Feature ID | 功能与验收出口 | 状态/依赖 |
+|---|---|---|---|
+| 1 | **PC-04A-5a** | 拓扑库：同Lab/开关范围内选择、命名、复制/另存为；默认选择与图记录分离，复制不自动改仪器绑定、不复制校准采用资格；重载后可选回原图 | 设计待确认 |
+| 2 | **PC-04A-5b** | 保存前持久化修订、并发冲突拒绝、历史预览与显式恢复；恢复产生新修订，保留旧修订及历史执行/证书；区分放弃草稿与恢复已保存版本 | 依赖5a |
+| 3 | **PC-04A-5c** | CAICT定向改接：先备份并确认准确源图；每条目标F64→probe边改为F64原输出→独立PA.in→PA.out→原probe，声明in/input、out/output及in→out内部通路；保留原对应关系，更新模式/显式路径引用；删除被替代旧边及重复PA标称，不泛删其他器件 | 依赖5b；先预览差异后保存 |
+| 4 | **PC-04A-5d** | 综合验收与操作指南：原图/副本/重命名/默认/误保存恢复/冲突/跨Lab/采集锁；CAICT逐链映射、实际拖动端口连接保存重载、标称和confirmed补偿不重复 | 依赖5c |
+
+现状核查：本页实际走`switch_topologies`，不是通用`topologies`。已有列表/创建/PATCH及name字段，GUI目前以Lab与开关加载图、提供保存和重导入默认模板；模型的version字符串不等于历史修订。设计阶段须追全实际图选择、绑定、转换保存、导入替换、删除和冻结消费方，不能只增加按钮。
+
+边界：旧20dB只能作为有来源的标称迁移，不当实测；未知不填0。不复制旧confirmed资格到新图，不修改历史执行/证书，不自动改绑或发硬件命令。已有线缆损耗的单次归属需明确保留，不能拆边后复制两份。用户库正式更新须有可验证备份/恢复入口，不用模板重导入冒充历史恢复。软件测试使用隔离SQLite及显式Mock绑定；真实CAICT数据变更与软件测试分开留证。每片设计/计划审查、TDD、独立规格质量与累计审查、真实API浏览器及build，按共享后端影响决定唯一全量，Ready PR R1/R2后合并；未验及B/HOLD继续保留。
+
 > **Single source of truth for what we're working on next.** All non-trivial
 > development MUST reference an item on this roadmap. Off-roadmap work needs
 > explicit justification (see [governance rules](#governance-rules) below).
