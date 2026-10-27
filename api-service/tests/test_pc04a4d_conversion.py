@@ -359,3 +359,75 @@ def test_conversion_rejects_half_group_in_any_mode(world):
         'connection_id':'b','loss_owner_connection_id':'a','same_physical_cable_confirmed':True}]})
     assert response.status_code==422 and 'other' in response.text,response.text
     assert raw(world,url)==before
+
+
+def test_preview_repairs_old_unrunnable_source_without_mutation(world):
+    from app.models.switch_topology import SwitchTopology
+    db,lab,client=world
+    url,scope=create(world)
+    row=db.get(SwitchTopology,uuid.UUID(url.rsplit('/',1)[1]))
+    nodes=copy.deepcopy(row.nodes)
+    nodes[1]['params'].pop('ports');nodes[1]['params'].pop('internal_paths')
+    row.nodes=nodes;db.commit()
+    before=raw(world,url)
+    changes={'nodes':[{'node_id':'wire','ports':['IN','OUT'],
+                       'internal_paths':[{'from_port':'IN','to_port':'OUT'}]}]}
+    p=preview(world,url,scope,changes)
+    assert any('旧' in warning and '未知' in warning for warning in p['warnings'])
+    assert any('通用总损耗' in warning and '4' in warning for warning in p['warnings'])
+    assert raw(world,url)==before
+    assert commit(world,url,scope,p).status_code==200
+    response=client.get(url+'/paths/mimo_ota',params=scope)
+    assert response.status_code==200 and len(response.json())==1,response.text
+
+
+@pytest.mark.parametrize('legacy,target', [('ce_port','channel_emulator'),
+    ('bse_port','communication_tester'),('sa_port','signal_analyzer')])
+def test_equivalent_type_conversion_preserves_http_paths_and_matrix(world,legacy,target):
+    data=graph()
+    data['nodes'][0]['type']=legacy
+    data['nodes'][-1]['params'].pop('rf_path_selection')
+    url,scope=create(world,data)
+    client=world[2]
+    before_paths=client.get(url+'/paths/mimo_ota',params=scope)
+    assert before_paths.status_code==200 and len(before_paths.json())==1,before_paths.text
+    p=preview(world,url,scope,{'nodes':[{'node_id':'ce','target_type':target,
+                                        **({'ce_port':'B1.1'} if legacy=='ce_port' else {})}]})
+    assert commit(world,url,scope,p).status_code==200
+    after_paths=client.get(url+'/paths/mimo_ota',params=scope)
+    assert after_paths.status_code==200 and len(after_paths.json())==1,after_paths.text
+    assert any('通用总损耗' in warning and '4' in warning for warning in p['warnings'])
+    assert after_paths.json()[0]['source_node']['type']==target
+    assert after_paths.json()[0]['total_loss_db']==4
+    matrix=client.get(url+'/calibration-matrix/mimo_ota',params=scope)
+    assert matrix.status_code==200 and len(matrix.json()['matrix'])==1,matrix.text
+    assert next(iter(matrix.json()['matrix'].values()))['total_loss_db']==4
+
+
+@pytest.mark.parametrize('explicit_selection',[False,True])
+def test_unknown_legacy_draft_preview_and_commit_remain_valid(world,explicit_selection):
+    from app.models.switch_topology import SwitchTopology
+    db,lab,client=world
+    url,scope=create(world)
+    row=db.get(SwitchTopology,uuid.UUID(url.rsplit('/',1)[1]))
+    nodes=copy.deepcopy(row.nodes);nodes[1]['params']={}
+    if not explicit_selection:nodes[-1]['params'].pop('rf_path_selection')
+    row.nodes=nodes;db.commit()
+    before=raw(world,url)
+    p=preview(world,url,scope,{'connections':[{'connection_id':'a','cable_loss_db':None}]})
+    assert any('未声明' in warning for warning in p['warnings'])
+    assert raw(world,url)==before
+    assert commit(world,url,scope,p).status_code==200
+    assert client.get(url,params=scope).json()['connections'][0]['cable_loss_db'] is None
+
+
+def test_preview_does_not_suppress_unexpected_parser_exception(world,monkeypatch):
+    from app.services.topology_service import TopologyService
+    url,scope=create(world)
+    before=raw(world,url)
+    def unexpected(self,mode):
+        raise RuntimeError('非运行资格的程序错误')
+    monkeypatch.setattr(TopologyService,'resolve_paths',unexpected)
+    with pytest.raises(RuntimeError,match='非运行资格的程序错误'):
+        preview(world,url,scope,{'connections':[{'connection_id':'a','cable_loss_db':None}]})
+    assert raw(world,url)==before

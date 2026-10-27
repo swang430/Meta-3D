@@ -4,6 +4,7 @@ from hashlib import sha256
 import json
 from app.schemas.topology_conversion import TopologyConversionRequest
 from app.schemas.topology_nominal import same_json, MISSING
+from app.schemas.topology_ports import RF_ENDPOINT_TYPE_GROUPS
 from app.services.topology_loss import effective_connection_loss
 
 GRAPH_FIELDS=('nodes','connections','operating_modes')
@@ -28,7 +29,7 @@ def build_conversion(source: dict, changes: TopologyConversionRequest) -> dict:
     candidate={key:deepcopy(source[key]) for key in GRAPH_FIELDS}
     nodes={row['id']:row for row in candidate['nodes']}
     edges={row['id']:row for row in candidate['connections']}
-    groups=({'ce_port','channel_emulator'},{'bse_port','communication_tester'},{'sa_port','signal_analyzer'})
+    groups=RF_ENDPOINT_TYPE_GROUPS
     for edit in changes.nodes:
         if edit.node_id not in nodes:
             raise ValueError(f'未知器件ID：{edit.node_id}')
@@ -102,9 +103,17 @@ def conversion_warnings(source,candidate):
     from app.services.topology_service import TopologyService
     from app.services.topology_loss import loss_source_for_terminal
     before_service,after_service=TopologyService(source),TopologyService(candidate)
+    def preview_paths(service,mode,label):
+        try:
+            return service.resolve_paths(mode)
+        except ValueError as exc:
+            # resolve_paths的声明/通路运行不可用不等于草稿不能保存。
+            # 只在只读比较边界转未知；写前结构/角色/内部通路校验不变。
+            warnings.append(f'模式 {mode} {label}路径不可解析/未知：{exc}')
+            return []
     for mode in candidate['operating_modes']:
-        before={path.path_id:path for path in before_service.resolve_paths(mode['id'])}
-        for path in after_service.resolve_paths(mode['id']):
+        before={path.path_id:path for path in preview_paths(before_service,mode['id'],'旧')}
+        for path in preview_paths(after_service,mode['id'],'候选'):
             old=before.get(path.path_id)
             def terminal_value(graph,item):
                 if item is None or not item.hops:return None

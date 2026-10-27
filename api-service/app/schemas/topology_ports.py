@@ -4,6 +4,12 @@ from .topology_nominal import MISSING, same_json
 
 PORT_DIRECTIONS = {'input', 'output', 'bidirectional', 'unknown'}
 BSE_TYPES = {'communication_tester', 'bse_port'}
+# 应用声明的旧/新等价器件类型；不是仪器能力或执行资格白名单。
+RF_ENDPOINT_TYPE_GROUPS = (
+    frozenset({'ce_port', 'channel_emulator'}),
+    frozenset(BSE_TYPES),
+    frozenset({'sa_port', 'signal_analyzer'}),
+)
 
 
 def resolve_port_direction(node, port):

@@ -15,6 +15,7 @@ from typing import List, Dict, Optional, Any, Set, Tuple
 from dataclasses import dataclass, field
 from collections import defaultdict
 from app.services.topology_loss import effective_connection_loss, loss_sources_for_path
+from app.schemas.topology_ports import RF_ENDPOINT_TYPE_GROUPS
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +173,7 @@ class TopologyService:
             }
 
         # 找到所有源节点 (没有入边的节点 = 信号源)
-        source_types = {"ce_port", "bse_port", "sa_port"}
+        source_types = set().union(*RF_ENDPOINT_TYPE_GROUPS)
         source_nodes = [
             n for n in self._nodes.values()
             if n.type in source_types
