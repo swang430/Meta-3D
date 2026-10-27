@@ -1,0 +1,26 @@
+### Result
+#335 [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=03961141-5ce0-4f01-a7cf-a142031bfa4b&skip=100&limit=100&switch_category_id=d9e9f9a2-dbcb-47ff-9516-05b614f4f243
+
+  General
+    status:    [200] OK
+    duration:  3ms
+    type:      xhr
+    mimeType:  application/json
+
+  Request headers
+    sec-ch-ua-platform: "macOS"
+    referer: http://127.0.0.1:15105/
+    user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36
+    accept: application/json, text/plain, */*
+    sec-ch-ua: "Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"
+    sec-ch-ua-mobile: ?0
+
+  Response headers
+    content-length: 1192
+    date: Tue, 27 Oct 2026 15:39:10 GMT
+    content-type: application/json
+    vary: Origin
+    server: uvicorn
+    connection: close
+
+Run `response-body 335` to read the response body.

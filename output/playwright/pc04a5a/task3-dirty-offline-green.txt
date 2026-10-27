@@ -1,0 +1,10 @@
+### Ran Playwright code
+```js
+await (async (page) => { for(const name of ['射频开关设备','拓扑库（仅编辑选择）']) if(await page.getByRole('textbox',{name,exact:true}).isEnabled()) throw Error('dirty选择未锁:'+name); if(await page.getByRole('button',{name:'复制已保存版本为…',exact:true}).isEnabled()) throw Error('dirty复制未锁'); await page.getByRole('textbox',{name:'当前 LabProfile'}).click(); await page.getByRole('option',{name:'PC04A5a实验室1 / PC04A5a暗室1',exact:true}).click(); if(!(await page.getByRole('textbox',{name:'当前 LabProfile'}).inputValue()).includes('共享暗室')) throw Error('dirty丢Lab'); await page.context().setOffline(true); await page.getByRole('button',{name:'保存拓扑',exact:true}).click(); await page.getByText('保存失败',{exact:true}).waitFor(); if(!(await page.getByRole('button',{name:'放弃未保存改动',exact:true}).isEnabled())) throw Error('失败丢草稿'); await page.screenshot({path:'output/playwright/pc04a5a/task3-dirty-offline.png'}); await page.context().setOffline(false); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 4 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L11

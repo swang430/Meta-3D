@@ -1,0 +1,9 @@
+### Ran Playwright code
+```js
+await (async (page) => { await page.getByRole('button',{name:'设为本浏览器默认编辑图',exact:true}).click(); const key='meta3d.topology-editor.default.v1:90596084-b0bd-456d-a22e-203969474fcf:08fb0b22-7f96-4c70-ae34-858562cb1cf0'; const before=await page.evaluate(k=>localStorage.getItem(k),key); if(!before)throw Error('未写入scope偏好'); await page.route('**/api/v1/switch-topologies?**',r=>r.abort('internetdisconnected')); await page.getByRole('button',{name:'刷新拓扑库',exact:true}).click(); await page.getByText(/加载拓扑失败/).waitFor(); if((await page.evaluate(k=>localStorage.getItem(k),key))!==before)throw Error('GET失败清偏好'); await page.unroute('**/api/v1/switch-topologies?**'); await page.evaluate(()=>{const original=Storage.prototype.getItem;Storage.prototype.getItem=function(k){if(k.startsWith('meta3d.topology-editor.default.v1:'))throw new DOMException('Task3读取故障','SecurityError');return original.call(this,k)}}); await page.getByRole('button',{name:'刷新拓扑库',exact:true}).click(); await page.getByText('本浏览器偏好不可读取；本次仍可选择编辑图',{exact:true}).waitFor(); await page.screenshot({path:'output/playwright/pc04a5a/task3-preference-read-error.png'}); await page.reload(); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L22-L23

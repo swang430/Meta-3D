@@ -1,0 +1,9 @@
+### Ran Playwright code
+```js
+await (async (page) => { await page.evaluate(()=>localStorage.setItem('meta3d.topology-editor.default.v1:d17eecb9-5dcc-49d9-b2ec-58d8c725a32c:08fb0b22-7f96-4c70-ae34-858562cb1cf0','00000000-0000-0000-0000-000000000000')); await page.getByRole('button',{name:'刷新拓扑库',exact:true}).click(); await page.getByText('本浏览器默认编辑图已失效，已回退到当前库中的图',{exact:true}).waitFor(); await page.screenshot({path:'output/playwright/pc04a5a/task3-invalid-preference.png'}); await page.evaluate(()=>{Storage.prototype.setItem=function(){throw new DOMException('Task3配额故障','QuotaExceededError')}}); await page.getByRole('button',{name:'设为本浏览器默认编辑图',exact:true}).click(); await page.getByText('本浏览器偏好未保存；仅保留本次选择',{exact:true}).waitFor(); await page.screenshot({path:'output/playwright/pc04a5a/task3-storage-failure.png'}); await page.reload(); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L7

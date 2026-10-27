@@ -1,0 +1,10 @@
+### Ran Playwright code
+```js
+await (async (page) => { await page.getByRole('option',{name:'B1.1 → 探头0 V · e',exact:true}).click(); await page.getByRole('spinbutton',{name:'采集频率（MHz）',exact:true}).fill('3550'); await page.getByRole('spinbutton',{name:'允许的单音设置功率（dBm，非实测）',exact:true}).fill('-30'); await page.getByRole('textbox',{name:'参考天线身份、极化及位置',exact:true}).fill('Task3隔离软件验收参考，非实物'); await page.getByRole('checkbox',{name:'我已核对所选链的实际接线，开关已固定到该通路',exact:true}).check(); await page.getByRole('checkbox',{name:'我已确认专用校准仿真正在运行、本输出口无其它混入信号，以及设置功率对功放和接收端安全',exact:true}).check(); await page.route('**/fixed-route-acquisitions**',async r=>{if(r.request().method()==='POST'){await r.fetch();await r.abort('timedout')}else await r.abort('internetdisconnected')}); await page.getByRole('button',{name:'开始自动采集',exact:true}).click(); await page.waitForTimeout(600); if(await page.getByRole('button',{name:'复制已保存版本为…',exact:true}).isEnabled())throw Error('采集开始未知解锁copy'); if(await page.getByRole('textbox',{name:'拓扑库（仅编辑选择）'}).isEnabled())throw Error('采集开始未知解锁库'); await page.getByRole('textbox',{name:'当前 LabProfile'}).click(); await page.getByRole('option',{name:'PC04A5a实验室0 / PC04A5a暗室0',exact:true}).click(); if(!(await page.getByRole('textbox',{name:'当前 LabProfile'}).inputValue()).includes('实验室1'))throw Error('采集未知允许切Lab'); await page.screenshot({path:'output/playwright/pc04a5a/task3-collection-unknown.png'}); await page.unroute('**/fixed-route-acquisitions**'); await page.getByRole('button',{name:'读取历史／恢复采集状态',exact:true}).click(); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 4 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L20-L21

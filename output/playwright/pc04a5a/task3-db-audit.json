@@ -1,0 +1,13 @@
+{
+  "database": "/tmp/pc04a5a-s1qHHo/browser.sqlite",
+  "source_id": "7de77bce505040c49803e12d6ded7e4b",
+  "copy_id": "854b0853d0c745e6955ef5a554a52898",
+  "source_raw_graph_unchanged": true,
+  "copy_raw_exception_only": true,
+  "source_updated_at": "2020-01-01 00:00:00.000000",
+  "execution_selected_id": "1cbb90d9e847476fada937d4eb5b56e7",
+  "mock_categories": 8,
+  "mock_bindings": 21,
+  "empty_template_inactive": true,
+  "boundary": "仅软件Mock证据，不证明现场或正式资格"
+}
