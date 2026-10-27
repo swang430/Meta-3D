@@ -1,6 +1,6 @@
 # 拓扑器件参数与物理端口完整性设计
 
-状态：2026-10-26 用户已明确批准4a～4e串行开发；4a PR #539与4b PR #540已交付。4c 已由 [PR #541](https://github.com/swang430/Meta-3D/pull/541) 于 `2026-10-26T22:31:48Z` 合并至 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)于 `22:26:25Z` 覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。主目录 main 已快进同步，用户修改与资料保留。新版最终全后端 **7822 passed /17 skipped /1 历史 G8 failed**（8597 warnings，700.70s，exit1）不称全绿；C07真实鼠标未验和现场B/HOLD边界保留。当前4d Task1～3已完成并独立批准，Task4综合验证完成，最终全后端7941通过/17跳过/1历史G8失败（799.05s，exit1，不称全绿）；[本片验证摘要](../validation/2026-10-27-pc04a4d-legacy-conversion.md)分列实际证据与未验边界。尚未Task4/累计审查、外审或合并；4e未启动，前片统计不代表4d通过。 4d计划见[旧拓扑显式转换](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)。
+状态：2026-10-26 用户已明确批准4a～4e串行开发；4a PR #539与4b PR #540已交付。4c 已由 [PR #541](https://github.com/swang430/Meta-3D/pull/541) 于 `2026-10-26T22:31:48Z` 合并至 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)于 `22:26:25Z` 覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。主目录 main 已快进同步，用户修改与资料保留。新版最终全后端 **7822 passed /17 skipped /1 历史 G8 failed**（8597 warnings，700.70s，exit1）不称全绿；C07真实鼠标未验和现场B/HOLD边界保留。当前4d Task1～4及前累计内审已完成，PR542 R1修复a5013706已独立ADDRESSED；该版全后端7945通过/17跳过/1历史G8失败（9654 warnings，793.12s，exit1，不称全绿），输入起止一致。普通scope/compare恢复保存声明盘点，采集严格门未放宽；旧7941/17/1与未变GUI证据复用边界见[本片验证摘要](../validation/2026-10-27-pc04a4d-legacy-conversion.md)。待文档增量审查、push/R2，尚未合并；4e未启动。 4d计划见[旧拓扑显式转换](../plans/2026-10-27-pc04a4d-legacy-topology-conversion.md)。
 
 ## 故障与目标
 

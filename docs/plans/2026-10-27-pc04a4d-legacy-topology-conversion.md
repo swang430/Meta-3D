@@ -1,6 +1,6 @@
 # PC04A4d 旧拓扑显式转换 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL：使用 `subagent-driven-development` 串行执行 Task 1～4，各任务独立规格/质量审查，最后累计审查；实施者不再派子代理。计划及Task1～3已独立批准，Task4综合验证/最终全后端与审查尚在收尾；不表示已外审、合并或现场通过。
+> **For agentic workers:** REQUIRED SUB-SKILL：使用 `subagent-driven-development` 串行执行 Task 1～4，各任务独立规格/质量审查，最后累计审查；实施者不再派子代理。Task1～4及前累计内审已完成，PR542 R1唯一P2修复a5013706已独立ADDRESSED；新版验证见下，尚待文档增量审查、push/R2，不表示已合并或现场通过。
 
 **Goal:** 旧 CAICT 导入图及已有图由操作员明确补充声明并先看变更预览，原子保存时保留身份和引用；未知线缆损耗不再伪装为零，也不新增重复补偿源。
 
@@ -12,7 +12,7 @@
 
 ## Global Constraints
 
-实施进度（2026-10-27）：Task1～3已实现并独立批准，最终前置SHA为`3c49bdc8`。Task4独立新库浏览器矩阵与真实HTTP/SQL相关集完成，GUI74项/build通过；首轮7条旧测试输入问题经root裁决只显式本地已知0，65/123项相关回归通过。重新冻结1196项输入后，同一责任位最终全后端 **7941 passed /17 skipped /1历史G8 failed /9618 warnings /799.05s，exit1**，不称全绿；首轮7934/17/8完整保留。见[正式摘要](../validation/2026-10-27-pc04a4d-legacy-conversion.md)。尚未Task4独立/累计审查、PR外审或合并，4e未启动。
+当前实施进度（2026-10-27）：Task1～4及前累计内审已完成；R1修复a5013706已独立ADDRESSED。唯一责任位重新冻结1196项源码/测试/契约/依赖及373份跟踪MD后，一次新版全后端 **7945 passed /17 skipped /1历史G8 failed /9654 warnings /793.12s，exit1**，起止输入一致，不称全绿。旧7941/17/1及首轮7934/17/8均保留为旧版；GUI74项/build和浏览器矩阵只复用未变部分，不当成新版历史参考图DOM验收。见[正式摘要](../validation/2026-10-27-pc04a4d-legacy-conversion.md)。待文档增量审查、push/R2，尚未合并，4e未启动。
 
 - 旧记录不批量改写；缺角色/参数显示旧版未声明。用户显式转换前提供变更预览；不更改历史执行或已有证书。正常旧图的无关改名/位置保存不得被新契约误伤。
 - params.ports 继续是端口 ID 清单；端口不是左右接点数量。名称不隐式决定方向。角色独立为 input/output/bidirectional/unknown；unknown 不冒充双向能力。
@@ -86,6 +86,8 @@ git grep -n -E '绝不|不许|禁止|must not|别把' -- api-service/app/api/swi
 **错判代价：** 把两条实物误认为同一条会少计损耗，故绝不自动识别，必须操作员逐组明确；漏声明只保留原值与可见重复风险。owner缺失/半组/循环若兜底可能错误功率补偿，故拒绝/未知，不以alias旧值补救。保存“归属”不等于认证这条物理事实，现场B仍未验。
 
 F4裁决：Task1将实际所选正常及参考路径的显式新归属声明纳入当前scope可比较投影，覆盖active_connections为空时按边modes回退。仅投影存在的新键；无声明不新增null键、不因新归属投影漂移旧scope（下述旧占位纠正除外），不扩大全部参考字段。历史baseline按原payload验证，不回填当前声明。
+
+R1读取职责修正（a5013706，已独立ADDRESSED）：普通scope/compare从resolver选出的正常链保存路径及对应probe可达的保存参考边盘点owner声明，不再以采集严格parser筛掉历史参考段声明；存在模式且active为空才按modes回退，不存在calibration模式则不投影。selected-route保留原明确IDs，显式topology/selected-route和实际采集仍走原严格门；此盘点不证明物理导通或资格，不改历史baseline/摘要算法/identity/补偿。新版全量结果以上方当前实施进度为准。
 
 Task1补充裁决（scope旧占位例外）：`build_calibration_scope(topology_id=...)`与`build_selected_route_calibration_scope`原来仅以四身份字段构造RFChainSpec，默认0不是实际量值。两入口必须复用本片所选路径末边/owner helper读取真实值（非零/0/None），不得为维持错误0造兼容算法。因此此两类当前scope允许0→真实量值/None的纠正差异，仅提示复核；“旧已知摘要不变”不适用于原虚假占位。历史baseline原payload/hash不改、不回填；物理route identity/confirmed不变、不自动撤证。错判代价：保留占位会把未知或非零说成零，必须纠正当前声明；代价仅增加真实的配置复核提示，不改变硬件量值或历史。
 

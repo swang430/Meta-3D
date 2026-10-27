@@ -1,6 +1,20 @@
 # PC-04A-4d 旧拓扑显式转换验证
 
-状态：本片软件综合验证完成（DONE_WITH_CONCERNS）；最终全后端7941通过/17跳过/1历史G8失败，不称全绿。尚未独立Task4/累计审查、外审或合并。唯一最终全后端责任人为Task4；命令、退出码和输入hash见本文收尾记录。4e未启动，现场B/HOLD不解除。
+当前状态：R1修复`a50137061674a2837fef70da6f6221ffdfcc7d30`已独立ADDRESSED；该版全后端 **7945通过/17跳过/1历史G8失败**（793.12s，exit1），不称全绿。Task4及前累计内审已完成，但未发现此前R1组合回归，不能替代本次新版验证。待本文档增量独立审查、push及R2，尚未合并；4e未启动，现场B/HOLD不解除。旧7941/17/1仅为R1前记录。
+
+## R1新版验证（当前输入）
+
+R1修复的是：正常链已解析、历史参考receive_cable缺ports/internal_paths时，显式owner保存成功却使普通scope/compare错误422。普通盘点中的owner投影现只取所选正常链保存路径及从该probe可达的保存参考边声明；存在模式的空active_connections按modes回退，不存在calibration模式则不投影。显式topology、selected-route和实际采集仍走原严格入口；盘点200不授予采集资格，不改物理identity、历史baseline或整链补偿。
+
+唯一责任位于`/tmp/pc04a4d-r1-final-uBsqpf/`执行一次新版全量：**1 failed,7945 passed,17 skipped,9654 warnings in793.12s，exit1**。2026-10-27T04:01:12Z开始、04:14:32Z结束，HEAD起止均a5013706。1196项源码/测试/schema/依赖、373份跟踪Markdown、Python依赖及独立seed脚本运行期间起止全部一致；核对完成后才更新本文。stdout SHA256=`04577744be38b0ce8a4fbc09d977ae36015fe407adf2e531380b4b2e4802aaa2`，stderr为空；stdout/stderr/exit、起止清单及seed记录均保留。9654 warnings未逐条归因，不称全部既有。
+
+初次app导入前full.sqlite不存在，环境显式Mock/default bootstrap；`seed_mock.py`默认bootstrap后将7/7类别设为Mock并核对。默认bootstrap没有Lab，初始bindings清单为空；后续各测试使用其隔离fixture，不声称旧测试始终保持强制Mock字段。随后同库运行（api-service cwd）：
+
+```sh
+env DATABASE_URL=sqlite:////tmp/pc04a4d-r1-final-uBsqpf/full.sqlite USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true LOG_DIR=/tmp/pc04a4d-r1-final-uBsqpf/logs .venv/bin/python -m pytest tests -q
+```
+
+唯一失败精确仍为下文同一历史G8文件第111行同UUID引用；门/历史相对39d4bb0b diff为0，hash仍cb9c219…/57aaf772…。没有其它失败，不改历史或门。本轮未重跑GUI、build或浏览器；R1相对7e8c2270的GUI/OpenAPI diff为空，旧GUI74项/build13.38s及D01～D12浏览器原件仅复用于未变输入，不冒称新的历史参考图组合已做新版DOM验收。R1最终81项相关集属a501输入，较早193项属于无模式收窄前输入；新版完整回归只以上述本轮全量为准。未验证真仪器/PG或解除现场资格，资料与证据全部保留。
 
 ## 已实现入口与量值边界
 
@@ -10,7 +24,7 @@ GET是可能转型/默认化的展示模型，不是数据库原JSON证明。原
 
 同线缆两侧各2，仅在操作员逐组明确确认并选择owner后：通用4→2，正式旧binding仍只取末边（末边alias时换源至同路径owner），不是多段求和；owner0/unknown不回退alias。撤销恢复两侧原值各自参与。正常/参考物理身份不因归属改变，当前scope提示复核；原占位0纠正为真实末边仅改当前scope，不回填历史。独立confirmed整链仍一次，模拟结果不进入正式PASS/资格。
 
-## 本片证据与矩阵
+## R1前综合矩阵（未变部分复用）
 
 调试原件：`/tmp/pc04a4d-OguahX/`；顺序终验新库：`/tmp/pc04a4d-VFJmbm/`。两个库均在app导入前指定新SQLite、USE_MOCK_INSTRUMENTS=true、BOOTSTRAP_ON_STARTUP=true；默认bootstrap后显式修改并核查全部category及Lab binding为Mock，端点仅192.0.2.x。并非现场数据或硬件验收，不碰用户默认库。
 
@@ -49,9 +63,9 @@ D01追加真实Modal源图取消/保存：同补充库服务关闭时仅增加�
 
 ## 未验边界
 
-无真实硬件、RF停发、实物同线缆核验、参考件证书/计量溯源、正式采用或现场B验收。PostgreSQL CAS未实跑。模板原件和历史记录不改写；4c C07历史未验仍保留。六类标称/参考PA来源保形不等于关闭旧4a V1有效参考PA正式身份/冻结的未验边界。Task4独立与累计审查、PR外审/merge均未发生，不能称Ready或交付合并。
+无真实硬件、RF停发、实物同线缆核验、参考件证书/计量溯源、正式采用或现场B验收。PostgreSQL CAS未实跑。模板原件和历史记录不改写；4c C07历史未验仍保留。六类标称/参考PA来源保形不等于关闭旧4a V1有效参考PA正式身份/冻结的未验边界。Task4/前累计及R1修复增量内审已完成；新版仍待文档增量审查、push/R2，不能称合并或现场通过。
 
-## 最终全后端与关闭记录
+## R1前全后端与关闭记录（历史原件保留）
 
 首次冻结输入完整全后端在`/tmp/pc04a4d-final-v4sN3x/`执行，7959项，实际 **7934 passed /17 skipped /8 failed /9616 warnings，802.23s，exit1**。1196项源码/测试/契约/fixture/依赖输入起止完全一致，依赖和HEAD亦一致。stdout SHA256=`46086815a7647965e23597c0e41e03dc5bd306a6583bf177625a934964e83d6a`。不隐去这轮失败。
 
