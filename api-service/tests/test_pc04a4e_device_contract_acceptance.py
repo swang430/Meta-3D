@@ -286,7 +286,11 @@ async def test_e04_e05_selected_reference_pa_http_metadata_owner_and_two_freezes
     first = await launch()
     first_freeze = copy.deepcopy(read_execution_route_compensation(first))
     certificate = {c.name: getattr(legacy, c.name) for c in legacy.__table__.columns}
-    applications = client.get(endpoint + '/route-calibration-applications').json()
+    history_params = {'topology_id': str(topology.id), 'chain_id': 'conn_p0v'}
+    history = client.get(endpoint + '/route-calibration-applications', params=history_params)
+    assert history.status_code == 200, history.text
+    applications = history.json()
+    assert applications == [adopted.json()]
     sql_before = sql_graph(db_session, topology.id)
     url = f'/api/v1/switch-topologies/{topology.id}'
     scope = {'lab_profile_id': str(configured.id)}
@@ -313,12 +317,17 @@ async def test_e04_e05_selected_reference_pa_http_metadata_owner_and_two_freezes
     candidate = application_preview(client, configured, row)
     assert candidate.status_code == 200 and candidate.json()['eligibility']['eligible_for_adoption'], candidate.text
     assert candidate.json()['new_net_loss_db'] == 28
-    assert client.get(endpoint + '/route-calibration-applications').json() == applications
+    history = client.get(endpoint + '/route-calibration-applications', params=history_params)
+    assert history.status_code == 200, history.text
+    assert history.json() == applications
     renewed = confirm(client, configured, payload(client, configured, row))
     assert renewed.status_code == 201, renewed.text
     assert renewed.json()['acquisition_run_id'] == str(row.id)
     assert renewed.json()['selection_snapshot']['calibration_connection_ids'] == selection['calibration_connection_ids']
-    assert all(record in client.get(endpoint + '/route-calibration-applications').json() for record in applications)
+    history = client.get(endpoint + '/route-calibration-applications', params=history_params)
+    assert history.status_code == 200, history.text
+    assert {record['id'] for record in history.json()} == {adopted.json()['id'], renewed.json()['id']}
+    assert all(record in history.json() for record in applications)
     second = await launch()
     assert entries(second)['conn_p0v']['source_kind'] == 'confirmed_route'
     assert entries(second)['conn_p0v']['value_db'] == 28
