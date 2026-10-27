@@ -49,6 +49,7 @@ import { customEdgeTypes, ReadOnlySignalEdge } from './CustomEdges';
 import {NominalPropertyFields} from './NominalPropertyFields';
 import {PortDeclarationFields} from './PortDeclarationFields';
 import {InternalPathFields} from './InternalPathFields';
+import {LegacyConversionPanel} from './LegacyConversionPanel';
 import {validateDraftInternalPaths} from './internalPathHelpers';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
 import { RouteCalibrationPanel } from './RouteCalibrationPanel';
@@ -58,7 +59,7 @@ import type { RouteSelection } from '../../types/api';
 import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts, edgePortPresentation, edgeNeedsReadOnlyGeometry } from './nodePortHelpers';
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, updateDraftConnection, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService, topologyUpdatePayload, mergeConnectionDeclarations } from '../../api/switchTopologyService';
-import type { SwitchTopology, TopologyConnection, TopologyNode, ConnectionNumericField, ConnectionNumericDeclarations } from '../../api/switchTopologyService';
+import type { SwitchTopology, TopologyConnection, TopologyNode, ConnectionNumericField, ConnectionNumericDeclarations, TopologyConversionPreview } from '../../api/switchTopologyService';
 import apiClient from '../../api/client';
 import { logFrontendEvent } from '../../observability/frontendLogger';
 
@@ -85,13 +86,14 @@ const nodeTypeOptions = [
 interface TopologyFlowProps {
   topology: SwitchTopology;
   labProfileId: string;
+  conversionEpoch: number;
   onTopologyUpdated: (t: SwitchTopology) => void;
   /** P1-57：dirty 状态上报给外层，用于注册 LabProfile 切换阻断。 */
   onDirtyChange: (dirty: boolean) => void;
   onBusyChange: (busy:boolean)=>void;
 }
 
-const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange, onBusyChange }: TopologyFlowProps) => {
+const TopologyFlow = ({ topology, labProfileId, conversionEpoch, onTopologyUpdated, onDirtyChange, onBusyChange }: TopologyFlowProps) => {
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
@@ -118,11 +120,14 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
   const savingRef = useRef(false);
   const collectionBusyRef=useRef(false);
   const [collectionBusy,setCollectionBusy]=useState(false);
+  const [conversionOpen,setConversionOpen]=useState(false);
+  useEffect(()=>setConversionOpen(false),[conversionEpoch]);
   const [highlightedRoute,setHighlightedRoute]=useState<RouteSelection|null>(null);
   const editingBlocked=saving||collectionBusy;
   const handleCollectionBusy=useCallback((busy:boolean)=>{
+    // activeWork包含本次保存。busy始终保留为锁；仅保存期间不因回传而关闭转换丢输入。
     collectionBusyRef.current=busy;setCollectionBusy(busy);onBusyChange(busy);
-    if(busy){setDrawerOpen(false);setNodeDrawerOpen(false);setEdgeNumericDeclarations([]);}
+    if(busy){setDrawerOpen(false);setNodeDrawerOpen(false);setEdgeNumericDeclarations([]);if(!savingRef.current)setConversionOpen(false);}
   },[onBusyChange]);
   const handleRunningRoute=useCallback((route:RouteSelection)=>{
     if(route.lab_profile_id===labProfileId && route.topology_id===topology.id){setActiveMode(route.operating_mode);setHighlightedRoute(routeGraphMatchesSaved(topology,route)?route:null)}
@@ -146,6 +151,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     setSelectedConnectionId(null);
     setSelectedNode(null);setNodeDrawerOpen(false);setPortText('');setPortsExplicit(false);
     setHighlightedRoute(null);
+    setConversionOpen(false);
   }, [topology.id,labProfileId]);
 
   // P1-57：dirty 变化上报外层（含卸载复位）—— 外层据此阻断 LabProfile 切换
@@ -342,6 +348,7 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     if (!topology.id || savingRef.current || collectionBusyRef.current) return;
     savingRef.current = true;
     setSaving(true);
+    onBusyChange(true);
     const release = beginWork('topology-save', '拓扑保存尚未结束');
 
     try {
@@ -392,9 +399,23 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
     } finally {
       setSaving(false);
       savingRef.current = false;
+      onBusyChange(collectionBusyRef.current);
       release();
     }
-  }, [topology, draft, numericDeclarations, onTopologyUpdated, labProfileId, beginWork]);
+  }, [topology, draft, numericDeclarations, onTopologyUpdated, labProfileId, beginWork, onBusyChange]);
+
+  const saveConversion=async(preview:TopologyConversionPreview)=>{
+    if(savingRef.current||collectionBusyRef.current||dirty||!topology.id)return;
+    savingRef.current=true;setSaving(true);onBusyChange(true);
+    const release=beginWork('topology-save','拓扑转换保存尚未结束');
+    try{
+      const updated=await switchTopologyService.updateTopology(topology.id,labProfileId,{conversion:{source_digest:preview.source_digest,changes:preview.changes}});
+      // 只用已保存GET模型更新原编辑器，不使用preview.candidate替换草稿。
+      setDraft(updated);setNumericDeclarations({});setEdgeNumericDeclarations([]);setDirty(false);
+      setHighlightedRoute(null);setSaveResult('saved');setConversionOpen(false);onTopologyUpdated(updated);
+    }catch(err){setSaveResult('failed');throw err}
+    finally{savingRef.current=false;setSaving(false);onBusyChange(collectionBusyRef.current);release()}
+  };
 
   const activeModeObj = draft.operating_modes.find(m => m.id === activeMode);
   const addNode = () => {
@@ -468,6 +489,10 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
             )}
           </Group>
           <Group>
+            <Button disabled={editingBlocked} variant="light" onClick={()=>{
+              if(savingRef.current||collectionBusyRef.current)return;
+              setDrawerOpen(false);setNodeDrawerOpen(false);setConversionOpen(true);
+            }}>转换旧配置</Button>
             <Select aria-label="器件列表" placeholder="搜索全部器件（含隐藏）" searchable value={null} w={260}
               data={draft.nodes.map(node=>{
                 const activeConnections=new Set(routeCanvasConnections(draft,activeMode,highlightedRoute));
@@ -600,6 +625,10 @@ const TopologyFlow = ({ topology, labProfileId, onTopologyUpdated, onDirtyChange
           <Group><Button onClick={applyNodeEdit} disabled={editingBlocked||!nodeNominalValid}>应用器件修改</Button><Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>deleteNodes([selectedNode.id])}>删除器件</Button></Group>
         </Stack>}
       </Drawer>
+
+      <LegacyConversionPanel key={conversionEpoch} opened={conversionOpen} topology={topology} labId={labProfileId} dirty={dirty}
+        blocked={editingBlocked} isBlocked={()=>savingRef.current||collectionBusyRef.current}
+        onClose={()=>{if(!savingRef.current&&!collectionBusyRef.current)setConversionOpen(false)}} onSave={saveConversion}/>
 
       {/* ── Edge Parameter Drawer ── */}
       <Drawer
@@ -749,6 +778,8 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   // dirty 时阻断 LabProfile 切换（未保存的接线不能静默丢，也绝不自动改绑）
   const [flowDirty, setFlowDirty] = useState(false);
   const [flowBusy,setFlowBusy]=useState(false);
+  const flowBusyRef=useRef(false);
+  const handleFlowBusy=useCallback((busy:boolean)=>{flowBusyRef.current=busy;setFlowBusy(busy)},[]);
   useOperationalLabSwitchGuard(
     'topology-editor',
     flowBusy?'拓扑通路采集尚未确认结束；请先查看或取消采集':flowDirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null,
@@ -758,6 +789,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [topoLoading, setTopoLoading] = useState(false);
   const [topoError, setTopoError] = useState<string | null>(null);
   const [reimporting, setReimporting] = useState(false);
+  const [conversionEpoch,setConversionEpoch]=useState(0);
 
   // List of topology templates available on this deployment. `null` while
   // we're still asking the backend; `[]` on a commercial image where
@@ -785,7 +817,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   // lab/暗室/模板完整解析成功之后才删同 (switch, 派生暗室) 的旧行。
   // （原先是客户端先删后导：解析失败时行已经白白没了。）
   const handleReimport = useCallback(async () => {
-    if (!selectedSwitchId || !labProfileId) return;
+    if (flowBusyRef.current || !selectedSwitchId || !labProfileId) return;
     const templateId = pickDefaultTemplate();
     if (!templateId) {
       notifications.show({
@@ -797,6 +829,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       return;
     }
     setReimporting(true);
+    setConversionEpoch(value=>value+1);
     try {
       const imported = await switchTopologyService.importFromTemplate(
         selectedSwitchId,
@@ -953,7 +986,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
                 label="射频开关设备"
                 disabled={flowBusy}
                 value={selectedSwitchId}
-                onChange={(val) => val && setSelectedSwitchId(val)}
+                onChange={(val) => {if(!flowBusyRef.current&&val){setConversionEpoch(value=>value+1);setSelectedSwitchId(val)}}}
                 data={availableSwitches}
                 placeholder="选择射频开关设备…"
                 w={260}
@@ -1055,9 +1088,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
             <TopologyFlow
               topology={topology}
               labProfileId={labProfileId}
+              conversionEpoch={conversionEpoch}
               onTopologyUpdated={(updated) => setTopology(updated)}
               onDirtyChange={setFlowDirty}
-              onBusyChange={setFlowBusy}
+              onBusyChange={handleFlowBusy}
             />
           </ReactFlowProvider>
         ) : (
