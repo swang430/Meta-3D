@@ -1,6 +1,6 @@
 # PC04A4e 综合软件验收摘要
 
-结论：已执行的软件分支有证据；不是 E01～E15 全项无保留 PASS。Task1 独立规格/质量通过，Task2 规格有限通过、质量 Approved，附首轮同名截图覆盖 P2。Task3 任务及累计独立内审已通过，无P1或新增阻塞P2，可进入Ready PR；仍待最新HEAD的PR外审，不称已合并。硬件、ASC/CE、PostgreSQL CAS、现场 B/HOLD 均不关闭。
+结论：已执行的软件分支有证据；不是 E01～E15 全项无保留 PASS。Task1 独立规格/质量通过，Task2 规格有限通过、质量 Approved，附首轮同名截图覆盖 P2。Task3任务及累计独立内审、R1/R2已完成；[PR #543](https://github.com/swang430/Meta-3D/pull/543)已于`2026-10-27T10:09:41Z`合并至`c7da8832cd5d513973cb558a871106f9c7245da0`；[R2回执](https://github.com/swang430/Meta-3D/pull/543#issuecomment-6438906866)覆盖`ab434986bcd1233994449d3966c146b474c8c627`无重大问题，批准软件范围交付完成。硬件、ASC/CE、PostgreSQL CAS、现场 B/HOLD 均不关闭。
 
 ## 输入与证据身份
 
