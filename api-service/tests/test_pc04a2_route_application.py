@@ -1,5 +1,6 @@
 """确认采用的真实API/数据库行为；仅外部VISA transport使用合成脚本。"""
 import copy
+import json
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Barrier
@@ -184,7 +185,7 @@ def test_confirmation_write_failure_rolls_back_and_old_history_does_not_drift(cl
 
 @pytest.mark.parametrize('operation',['delete','replace','chamber'])
 def test_topology_with_adoption_history_cannot_be_hard_deleted(client,configured,real_capture,db_session,
-        topology_two_chains,operation):
+        topology_two_chains,operation,monkeypatch):
     from fastapi.testclient import TestClient
     row=real_capture()
     saved=confirm(client,configured,payload(client,configured,row)).json()
@@ -192,6 +193,13 @@ def test_topology_with_adoption_history_cannot_be_hard_deleted(client,configured
     category_id=topology_two_chains.switch_category_id
     lab_id=configured.id
     old_chamber_id=topology_two_chains.chamber_id
+    original_graph=json.dumps([topology_two_chains.nodes,topology_two_chains.connections,
+                               topology_two_chains.operating_modes],sort_keys=True)
+    if operation=='replace':
+        from app.api import switch_topology as api
+        def unexpected_delete_precheck(*args):
+            pytest.fail('已有库模板覆盖应在删除预检前拒绝')
+        monkeypatch.setattr(api,'assert_route_topologies_deletable',unexpected_delete_precheck)
     if operation=='chamber':
         from app.models.chamber import ChamberConfiguration,create_chamber_from_preset
         db_session.get(ChamberConfiguration,old_chamber_id).is_system_preset=False
@@ -213,13 +221,16 @@ def test_topology_with_adoption_history_cannot_be_hard_deleted(client,configured
         else:
             response=http.delete(f'/api/v1/chambers/{old_chamber_id}')
         assert response.status_code==409,response.text
-        assert '采用' in response.json()['detail']
+        assert ('不能覆盖导入' if operation=='replace' else '采用') in response.json()['detail']
     finally:
         http.close()
         db_session.rollback()
     assert counts(db_session)==(1,1)
     from app.models.switch_topology import SwitchTopology
-    assert db_session.get(SwitchTopology,topology_id) is not None
+    preserved=db_session.get(SwitchTopology,topology_id)
+    assert preserved is not None
+    if operation=='replace':
+        assert json.dumps([preserved.nodes,preserved.connections,preserved.operating_modes],sort_keys=True)==original_graph
     history=client.get(f'/api/v1/lab-profiles/{lab_id}/route-calibration-applications',
         params={'topology_id':str(topology_id),'chain_id':'conn_p0v'})
     assert history.json()==[saved]
@@ -272,6 +283,8 @@ def test_delete_race_and_unrelated_constraint_are_distinguished(client,configure
     topology_id=topology_two_chains.id
     category_id=topology_two_chains.switch_category_id
     lab_id=configured.id
+    original_graph=json.dumps([topology_two_chains.nodes,topology_two_chains.connections,
+                               topology_two_chains.operating_modes],sort_keys=True)
     # 启用整个临时连接池，避免负例DDL提交换连接后意外关闭外键检查。
     def foreign_keys_on(connection,record,proxy):
         connection.execute('PRAGMA foreign_keys=ON')
@@ -298,6 +311,10 @@ def test_delete_race_and_unrelated_constraint_are_distinguished(client,configure
         db_session.execute(text('CREATE TABLE other_reference (topology_id UUID REFERENCES switch_topologies(id))'))
         db_session.execute(text('INSERT INTO other_reference VALUES (:id)'),{'id':topology_id.hex})
         db_session.commit()
+        if operation=='replace':
+            def unexpected_delete_precheck(*args):
+                pytest.fail('已有库模板覆盖不应进入删除预检或外键删除')
+            monkeypatch.setattr(api,'assert_route_topologies_deletable',unexpected_delete_precheck)
     http=TestClient(app,raise_server_exceptions=False)
     try:
         if operation=='delete':
@@ -306,7 +323,12 @@ def test_delete_race_and_unrelated_constraint_are_distinguished(client,configure
             response=http.post('/api/v1/switch-topologies/import/from-template',params={
                 'lab_profile_id':str(lab_id),'switch_category_id':str(category_id),
                 'template_id':'caict_v4','replace_existing':True})
-        if constraint=='adoption_after_precheck':
+        if operation=='replace':
+            # PC04A5a：现有库在删除前统一拒绝；这里不再声称验证删除竞态/FK500。
+            assert response.status_code==409,response.text
+            assert '不能覆盖导入' in response.json()['detail']
+            assert not winner
+        elif constraint=='adoption_after_precheck':
             assert winner
             assert response.status_code==409,response.text
             assert '采用' in response.json()['detail']
@@ -314,7 +336,10 @@ def test_delete_race_and_unrelated_constraint_are_distinguished(client,configure
             assert response.status_code==500,response.text
     finally:
         http.close();db_session.rollback()
-    assert db_session.get(SwitchTopology,topology_id) is not None
+    preserved=db_session.get(SwitchTopology,topology_id)
+    assert preserved is not None
+    if operation=='replace':
+        assert json.dumps([preserved.nodes,preserved.connections,preserved.operating_modes],sort_keys=True)==original_graph
     assert counts(db_session)==((1,1) if winner else (0,0))
     if winner:
         history=client.get(f'/api/v1/lab-profiles/{lab_id}/route-calibration-applications',
