@@ -166,6 +166,7 @@ assert.equal(requestMatches({scope:'a',generation:1},{scope:'a',generation:2}), 
 - [ ] 外层加入库Select、重命名Modal、复制Modal、“设为本浏览器默认编辑图”。所有选项标短ID/active状态；成功copy选择新inactive副本，但不自动设默认。新库选择传入Flow key=`lab/category/topologyId`并递增conversionEpoch；先通过dirty/busy guard再改key，防卸载丢草稿。
 - [ ] 用同步ref整合flowDirty/flowBusy/libraryBusy；锁定切Lab/category/图、复制、命名、导入。请求捕获scope/generation/id，只在匹配时setState；取消/失败finally只释放自己持有的操作状态。保存中不能另存，采集未知结束状态不能解锁。
 - [ ] 去掉列表effect中的自动import；旧“重导入默认拓扑”改显式“从模板新增副本”，不传replaceExisting=true。模板查询失败显示“模板加载失败”与重试，不当作模板为空。显式导入也受同一锁与迟到响应规则保护。
+- [ ] 实施核对修订：原组件无放弃按钮，按主任务裁决补最小“放弃未保存改动”；显式确认后仅恢复当前scope/ID已知保存快照，不发写请求；busy/采集结束未知拒绝，取消不丢草稿。真实组件先RED，再验证取消/确认GREEN，不扩到5b历史恢复。
 - [ ] 编辑器默认写localStorage try/catch；成功才通知保存，失败只保留当次选择。无效UUID/过期偏好仅在列表成功且全集已知后清除并通知。旧is_default只作读取回退，不PATCH它。
 - [ ] `npm run openapi:generate`、`node --experimental-strip-types --test test/topologyLibraryState.test.ts test/topologyDraft.test.ts test/topologyNominalTransport.test.ts test/topologyOperationalLabContext.test.ts`、`npm run build`；记录GREEN统计。
 - [ ] 提交 `feat: 增加作用域拓扑库与独立编辑器默认选择`；规格/质量两阶段审查，重点看真实组件是否消费guard，而非只测纯函数。

@@ -1,0 +1,6 @@
+### Result
+"confirm PASS; saved snapshot restored"
+### Ran Playwright code
+```js
+await (async (page) => { await page.getByText('拓扑编辑器无未保存改动',{exact:true}).waitFor(); if (await page.getByRole('textbox',{name:'拓扑库（仅编辑选择）',exact:true}).isDisabled()) throw Error('放弃未解锁'); if (!await page.getByText('节点: 2 · 连接: 1',{exact:true}).count()) throw Error('未还原保存图'); return 'confirm PASS; saved snapshot restored'; })(page);
+```

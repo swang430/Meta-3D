@@ -88,6 +88,72 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/switch-topologies/templates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Topology Templates
+         * @description List topology template ids loadable via /import/from-template.
+         *
+         *     On a commercial deploy without ``scripts/dev-fixtures/`` shipped, this
+         *     returns ``[]`` — operators are expected to build via the GUI editor.
+         */
+        get: operations["list_topology_templates_api_v1_switch_topologies_templates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}/copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Copy Switch Topology
+         * @description 复制已保存的原始图为inactive、非default新UUID；不复制采用记录/证书。
+         *
+         *     仅副本连线已有calibrated_loss_db/calibrated_phase_deg置null，缺键保留；
+         *     原图不改，不改变正式执行选择。未来显式激活仍受既有旧证书兼容政策约束。
+         */
+        post: operations["copy_switch_topology_api_v1_switch_topologies__topology_id__copy_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}/validate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Validate Topology
+         * @description Validate a topology for broken links and issues
+         */
+        get: operations["validate_topology_api_v1_switch_topologies__topology_id__validate_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/switch-topologies": {
         parameters: {
             query?: never;
@@ -126,7 +192,11 @@ export interface paths {
         get: operations["get_switch_topology_api_v1_switch_topologies__topology_id__get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Switch Topology
+         * @description 删除本lab暗室内拓扑；已有校准采用历史时409，保留测量追溯。
+         */
+        delete: operations["delete_switch_topology_api_v1_switch_topologies__topology_id__delete"];
         options?: never;
         head?: never;
         /**
@@ -150,7 +220,8 @@ export interface paths {
          * @description Import a topology structure from a named template file.
          *
          *     导入目标暗室 = lab_profile_id 派生（不再收裸 chamber_id 当真值）。
-         *     解析顺序是硬约束：lab → chamber → 模板全部成功之后才碰任何既有行。
+         *     解析顺序是硬约束：lab → chamber → 模板全部成功之后核对已有行。
+         *     只追加inactive、非default草稿；replace遇已有行409，不删除原图或历史。
          *
          *     Templates are loaded dynamically from
          *     ``api-service/scripts/dev-fixtures/topology-templates/<template_id>.py``
@@ -3489,9 +3560,20 @@ export interface components {
              */
             color: string;
         };
+        /** SwitchTopologyCopy */
+        SwitchTopologyCopy: {
+            /**
+             * Name
+             * @description 复制已保存版本的名称；去首尾空白、禁止控制字符，允许重名。
+             */
+            name: string;
+        };
         /** SwitchTopologyCreate */
         SwitchTopologyCreate: {
-            /** Name */
+            /**
+             * Name
+             * @description 去首尾空白后1–200字符；禁止控制字符，允许重名。
+             */
             name: string;
             /** Description */
             description?: string | null;
@@ -3547,8 +3629,11 @@ export interface components {
             connection_numeric_declarations?: {
                 [key: string]: ("cable_loss_db" | "cable_length_m" | "calibrated_loss_db" | "calibrated_phase_deg")[];
             };
-            /** Name */
-            name?: string | null;
+            /**
+             * Name
+             * @description 仅改名称不改变执行选图更新时间；禁止null/控制字符，允许重名。
+             */
+            name?: string;
             /** Description */
             description?: string | null;
             /** Version */
@@ -6548,6 +6633,96 @@ export interface operations {
             };
         };
     };
+    list_topology_templates_api_v1_switch_topologies_templates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": string[];
+                };
+            };
+        };
+    };
+    copy_switch_topology_api_v1_switch_topologies__topology_id__copy_post: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SwitchTopologyCopy"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchTopologyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    validate_topology_api_v1_switch_topologies__topology_id__validate_get: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_switch_topologies_api_v1_switch_topologies_get: {
         parameters: {
             query: {
@@ -6652,6 +6827,37 @@ export interface operations {
             };
         };
     };
+    delete_switch_topology_api_v1_switch_topologies__topology_id__delete: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     update_switch_topology_api_v1_switch_topologies__topology_id__patch: {
         parameters: {
             query: {
@@ -6699,7 +6905,7 @@ export interface operations {
                 template_id: string;
                 /** @description 兼容参数：如提供必须等于 LabProfile 派生的暗室，否则 422。 */
                 chamber_id?: string | null;
-                /** @description 重导入：先删除同一 (switch_category_id, 派生暗室) 的既有行再导入。已有校准采用历史的拓扑拒绝替换（409），保留原图和历史。P1-57 之前这个删除在 GUI 客户端做（先删后验 —— lab/模板解析失败时行已经没了）；收进服务端后保证完整解析成功才动行。 */
+                /** @description 已有同一 (switch_category_id, 派生暗室) 的行时拒绝覆盖（409）。导入只追加inactive、非default草稿，不清旧默认位，不自动用于正式执行。 */
                 replace_existing?: boolean;
             };
             header?: never;

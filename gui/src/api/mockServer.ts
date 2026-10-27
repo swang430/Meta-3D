@@ -40,6 +40,19 @@ export function setupMockServer() {
   if (mock) return
 
   mock = new MockAdapter(client, { delayResponse: DELAY_MS })
+  // 拓扑库复制只由服务器读取原始JSON、核验Lab范围并清除旧实测值。
+  // 页面演示没有权威保存图或Lab/chamber解析，不以typed GET重建副本冒充201。
+  mock.onPost(/\/switch-topologies\/[^/?]+\/copy(?:\?.*)?$/).reply((config) => {
+    const params = new URLSearchParams((config.url || '').split('?')[1] || '')
+    const labId = config.params?.lab_profile_id || params.get('lab_profile_id')
+    let body: ApiComponents['schemas']['SwitchTopologyCopy']
+    try { body = JSON.parse(config.data || '{}') } catch {
+      return [422, {detail:'复制请求必须为JSON对象'}]
+    }
+    if (!labId || typeof body?.name !== 'string' || !body.name.trim())
+      return [422, {detail:'复制已保存图需要lab_profile_id与非空name'}]
+    return [422, {detail:'页面演示不复制服务器保存图；请连接真实API核验暗室范围和非活跃副本'}]
+  })
   mock.onGet(/\/lab-profiles\/[^/]+\/route-calibration-paths$/).reply(()=>[200,mockDatabase.getRouteCalibrationPaths()])
   mock.onGet(/\/lab-profiles\/[^/]+\/fixed-route-acquisitions$/).reply(()=>[200,mockDatabase.getRouteAcquisitions()])
   mock.onGet(/\/lab-profiles\/[^/]+\/route-calibration-applications$/).reply(()=>[200,mockDatabase.getRouteApplications()])

@@ -1,0 +1,2 @@
+305e1146c67540e9ba9fe8a347095c42|Task2真实GUI命名副本|0|0|2026-10-27 15:12:31|[{"id": "e", "source": "ce", "source_pin": "out", "target": "probe", "target_pin": "in", "cable_loss_db": "1.25", "calibrated_loss_db": null, "calibrated_phase_deg": null, "opaque": {"missing_preserved": true}}]
+a6e2087c71d1454eab99598ee759ee0b|隔离原图-0-1-000|1|1|2020-01-01 00:00:00.000000|[{"id": "e", "source": "ce", "source_pin": "out", "target": "probe", "target_pin": "in", "cable_loss_db": "1.25", "calibrated_loss_db": 2.5, "calibrated_phase_deg": null, "opaque": {"missing_preserved": true}}]

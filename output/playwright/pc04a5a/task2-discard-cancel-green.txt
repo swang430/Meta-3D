@@ -1,0 +1,6 @@
+### Result
+"cancel PASS; draft retained"
+### Ran Playwright code
+```js
+await (async (page) => { if (!await page.getByText('拓扑草稿未保存',{exact:true}).count()) throw Error('取消丢草稿'); if (!await page.getByRole('textbox',{name:'拓扑库（仅编辑选择）',exact:true}).isDisabled()) throw Error('取消解锁库'); return 'cancel PASS; draft retained'; })(page);
+```

@@ -124,8 +124,8 @@ export const switchTopologyService = {
   // P1-57：每个数据方法都携带 lab_profile_id —— 后端由它派生暗室，
   // 不再相信客户端自由提交的 chamber_id（那正是"拓扑写进错暗室"的口子）。
 
-  async getTopologies(labProfileId: string, categoryId?: string) {
-    const params = new URLSearchParams({ lab_profile_id: labProfileId });
+  async getTopologies(labProfileId: string, categoryId?: string, skip = 0, limit = 100): Promise<{items: SwitchTopology[]; total: number}> {
+    const params = new URLSearchParams({ lab_profile_id: labProfileId, skip: String(skip), limit: String(limit) });
     if (categoryId) params.append('switch_category_id', categoryId);
     const response = await apiClient.get(`/switch-topologies?${params.toString()}`);
     return response.data;
@@ -134,6 +134,13 @@ export const switchTopologyService = {
   async getTopology(id: string, labProfileId: string) {
     const response = await apiClient.get(`/switch-topologies/${id}`, {
       params: { lab_profile_id: labProfileId },
+    });
+    return response.data;
+  },
+
+  async copyTopology(id: string, labProfileId: string, name: string): Promise<SwitchTopology> {
+    const response = await apiClient.post(`/switch-topologies/${id}/copy`, {name}, {
+      params: {lab_profile_id: labProfileId},
     });
     return response.data;
   },
@@ -163,8 +170,7 @@ export const switchTopologyService = {
     templateId: string,
     replaceExisting = false,
   ) {
-    // replace_existing=true 时由服务端先完整解析 lab/暗室/模板、成功后才
-    // 删除同 (switch, 派生暗室) 的旧行 —— 取代原来 GUI 的先删后导。
+    // 仅显式追加inactive副本；已有行时服务端拒绝replace_existing=true。
     const params = new URLSearchParams({
       switch_category_id: switchCategoryId,
       lab_profile_id: labProfileId,
