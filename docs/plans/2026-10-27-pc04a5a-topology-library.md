@@ -2,19 +2,20 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development（仅用户授权时）或 superpowers:executing-plans，逐任务执行。步骤以复选框跟踪。
 
-**Goal:** 让操作员能复制已保存拓扑、命名、选回原图并记住编辑器默认图，而不切换执行图、不继承校准资格。
+**Goal:** 让操作员能复制已保存拓扑、命名、选回原图并记住编辑器默认图，而不切换执行图、不复制旧采用记录或内嵌测量值。
 
 **Architecture:** 服务端从 SwitchTopology 原始 JSON 复制 inactive 副本；GUI 保持同 Lab/category 库和独立浏览器偏好。名称更新不影响执行选图的 updated_at；模板导入只追加非活跃图，禁止已有库覆盖。
 
 **Tech Stack:** 现有 FastAPI/Pydantic/SQLAlchemy、React/Mantine/ReactFlow、node:test、pytest；不新增依赖或数据库表。
 
-**Spec:** [总体设计](../design/2026-10-27-topology-library-pa-recovery.md)。状态：**配套实施计划草案，执行锁定**；必须先取得该设计第6节四项书面审阅结论，不能把方向批准代替详细设计批准。
+**Spec:** [总体设计](../design/2026-10-27-topology-library-pa-recovery.md)。状态：**用户已明确授权审清两风险后按流程实施、不改原CAICT配置；待独立增量审查门确认**。该门通过即串行执行，无需重复索取同一授权。
 
 ## Global Constraints
 
 - WIP=1，仅5a，不执行5b修订/5c用户库改接/5d综合验收，不重做4a–4e。
 - 复制直接读ORM原始图；仅副本已有 calibrated_loss_db/calibrated_phase_deg 置null，缺键仍缺键；其余原始JSON保形；源图及历史/confirmed不变。
 - 副本 inactive、非default；偏好只按Lab/category存本浏览器；不改执行解析器/仪器绑定、不发硬件命令、未知不补0。
+- 不复制旧采用/内嵌测量且inactive不自动执行，不承诺永久排除旧证书；未来显式激活时NULL topology_id旧证书兼容仍需执行绑定片审查。首次模板导入也是inactive草稿，5a不提供激活按钮。
 - 名称trim后1–200字符、禁控制字符，允许重名但显示短ID；name-only PATCH不得改updated_at。
 - dirty/busy阻断上下文及库写操作；错误保留输入；迟到响应不能覆盖新作用域；超时写操作不自动重试。
 - 新SQLite隔离必须早于app导入；bootstrap后所有类别和Lab binding显式mock并核对。不读写用户DB，不停止用户服务。
@@ -22,7 +23,7 @@
 
 ## 0. 开工、文件边界与安全环境
 
-- [ ] 读AGENTS、CLAUDE、roadmap、设计；运行skillctl resolve并读取当前PROJECT/handoff。执行者认领，编制代理不释放主claim。确认设计书面批准证据和HEAD；未批准停止生产改动。
+- [ ] 读AGENTS、CLAUDE、roadmap、设计；运行skillctl resolve并读取当前PROJECT/handoff。执行者认领，编制代理不释放主claim。确认用户最新授权、独立增量审查结论和HEAD；审查门未通过停止生产改动，不重复询问同一授权。
 - [ ] 运行设计第2节三条全集检索，记录新增命中及消费关系。核对所有计划路径存在；以下Create文件为本片新文件，不把计划函数当成已存在。
 
 | 单元 | 文件职责 |
@@ -42,6 +43,8 @@ env DATABASE_URL="sqlite:///$pc04a5a_test_dir/test.sqlite" USE_MOCK_INSTRUMENTS=
 ```
 
 首次文件尚未创建时不以“找不到文件”冒充有效RED；每任务先写对应行为断言，再运行捕捉预期失败。
+
+- [ ] **Task1生产实现前完成真实浏览器RED前置**：先执行Task3中fixture安全检查、ORM seed、隔离API/Vite启动与RED步骤。RED seed仅ORM建立原有多图，不调用尚不存在的copy API；记录基线SHA、浏览器多图无选择入口及真实copy请求404/405。随后回Task1实施；Task3只复用这份RED证据并做GREEN，不能在新实现上追认原始RED。专用测试fixture/代理配置是此前置的测试准备，不是生产功能实现。
 
 ## Task 1：原始图复制、命名与安全导入 API
 
@@ -117,11 +120,20 @@ db.refresh(copy)
 return copy
 ```
 
-字段校验捕获ValidationError转422；异常必须rollback。名称校验用 `unicodedata.category(char)=='Cc'`，不把可见Unicode字符错误禁掉；Create/Update/copy共用相同函数。PATCH恰好仅name时显式保持旧updated_at；其他PATCH仍沿原流程，不借本片改变description/状态等更新语义。不要通过临时置is_active绕过选图。
+字段校验捕获ValidationError转422；异常必须rollback。名称校验用 `unicodedata.category(char)=='Cc'`，不把可见Unicode字符错误禁掉；Create/Update/copy共用相同函数。PATCH恰好仅name时采用以下SQL表达式，使UPDATE的SET包含列自赋值；禁止Python旧datetime赋回（相同值可被忽略，强制旧值又可能回退并发时间）。其他PATCH仍沿原流程，不借本片改变description/状态等更新语义。不要通过临时置is_active绕过选图。
+
+```python
+# 在现有ORM赋值完成后、commit之前；update_data为本次实际字段
+if set(update_data) == {'name'}:
+    topology.updated_at = SwitchTopology.updated_at
+# SQL: UPDATE switch_topologies SET name=?, updated_at=switch_topologies.updated_at ...
+```
+
+生产PATCH测试须用两active图重读时间与resolver ID，不能仅复用独立内存ORM实验；并发场景不得将已提交图保存的新时间回写为旧时间。
 
 - [ ] 模板处理在生成/验证后、任何delete或默认位修改前核对已有行：replace且已有行返回409；无论replace参数，新增图inactive/非default并不清旧默认。源模板数据中的布尔值先显式覆盖，避免重复kwargs异常。此为保护原库的有意契约改变，同步OpenAPI描述/旧测试/GUI文案。
 - [ ] GREEN运行本文件及scope、chamber binding、4a/4b/4c/4d相关保存与转换测试；同进程无新增硬件调用。记录通过/失败原文；失败按实际影响修，不盲改fixture。
-- [ ] `git diff --check` 后只暂存本任务文件，提交 `feat: 增加保形拓扑副本和库元数据保护`。先规格审查再代码质量审查；未批准设计不得执行本步。
+- [ ] `git diff --check` 后只暂存本任务文件，提交 `feat: 增加保形拓扑副本和库元数据保护`。先规格审查再代码质量审查；独立计划增量审查门未通过不得执行本步。
 
 ## Task 2：库选择、默认偏好与异步交互
 
@@ -176,7 +188,7 @@ assert os.environ.get('BOOTSTRAP_ON_STARTUP') == 'true'
 # 只有以上通过后才能导入app/main、database、bootstrap。
 ```
 
-- [ ] 构造两个暗室、共享暗室的第二Lab、两个category；每范围多图、超过50图验证分页、两旧active图、新inactive图、原始缺键和旧数值字符串图；通过真实copy API产生副本。manifest写stdout，包含数据库绝对路径、Lab/category/topology UUID与Mock核验，不输出凭据。
+- [ ] 构造两个暗室、共享暗室的第二Lab、两个category；每范围多图、至少101图（超过实际page size=100）验证分页、两旧active图、原始缺键和旧数值字符串图。RED初始化只用ORM seed原有多图，不依赖copy API；GREEN才通过真实copy API产生inactive副本。manifest写stdout，包含数据库绝对路径、Lab/category/topology UUID与Mock核验，不输出凭据。
 - [ ] 专用 `gui/vite.pc04a5a.config.ts` 用mergeConfig导入原配置并只覆写 `/api` 与 `/api/v1/ws` 到127.0.0.1:18105；不用用户8000。启动前检查端口空闲，占用则停止并选未占端口同步配置，不杀用户进程。命令：
 
 ```bash
@@ -188,8 +200,8 @@ env DATABASE_URL="sqlite:///$pc04a5a_browser_dir/browser.sqlite" USE_MOCK_INSTRU
 npm run dev -- --config vite.pc04a5a.config.ts --host 127.0.0.1 --port 15105 --strictPort
 ```
 
-- [ ] 在改GUI前捕捉真实API/浏览器RED：多图无选择入口、无法选回非首图；对API的copy请求失败。使用当轮可用浏览器技能、连隔离端口，保留真实请求，不用拦截伪造成功响应。UI竞态故障可用浏览器网络节流/断网，记录手法。
-- [ ] GREEN逐项：选原图→改名→复制→确认两个旧校准字段不继承→选择副本→设浏览器默认→重载→回原图；API重读确认原图JSON不变、source解析ID不变。共享暗室不同Lab偏好独立，跨category偏好不串；第51张可选；不存在偏好正常提示；网络失败不自动导入。
+- [ ] **本项在Task1实现前执行**：捕捉真实API/浏览器RED，多图无选择入口、无法选回非首图；对API的copy请求404/405。使用当轮可用浏览器技能、连隔离端口，保留真实请求，不用拦截伪造成功响应。进入Task3时只核验此前基线证据，不在已实现版本重复宣称RED。UI竞态故障可用浏览器网络节流/断网，记录手法。
+- [ ] GREEN逐项：选原图→改名→复制→确认两个旧校准字段不继承→选择副本→设浏览器默认→重载→回原图；API重读确认原图JSON不变、source解析ID不变。共享暗室不同Lab偏好独立，跨category偏好不串；第101张可选且实际发生第二页请求；不存在偏好正常提示；网络失败不自动导入。空库首次模板导入明确显示inactive库草稿，未改变正式执行选择，不出现“已用于正式测试”成功文案。
 - [ ] 浏览器改一节点为dirty后切Lab/category/图/复制均阻断；保存中双击不二次copy；采集锁保持；切换时迟到GET不回滚新作用域；断网保存失败保留草稿；写超时提示核查，不自动重试。验证过程不得触发真实仪器连接，Mock读数不作为正式实测。
 - [ ] 原有图保存/转换/校准资格和冻结定点回归，至少包括 `test_pc04a2_route_selection.py`、`test_pc04a2_route_eligibility.py`、`test_pc04a2_route_application.py`、`test_pc04a2_route_freeze.py`、`test_pc04a4d_conversion.py`、`test_pc04a4d_loss_truth.py`。旧confirmed、证书、历史执行内容保持原始快照，不重算历史。
 - [ ] 稳定HEAD由本片指定执行者执行唯一最终全量（api-service）：
@@ -212,4 +224,4 @@ env DATABASE_URL="sqlite:///$pc04a5a_full_dir/full.sqlite" USE_MOCK_INSTRUMENTS=
 | 非破坏导入、未新增删除、历史与confirmed不变 | Task1导入/历史断言 + Task3回归 |
 | 后续恢复与PA改接 | 仅设计接口边界；本片无实现任务，防止越界 |
 
-编制阶段只进行文档自查，不称独立代码内审，不声称测试已跑。详细设计审阅后，由用户选择授权的SDD或同会话executing-plans；无书面批准不得推进上述任何生产步骤。
+编制阶段只进行文档自查，不称独立代码内审，不声称测试已跑。用户已授权按流程实施；独立计划增量审查确认两风险处理后按主代理既定串行SDD执行，不重复索取授权，不改原CAICT配置，不提前进入5b/5c。

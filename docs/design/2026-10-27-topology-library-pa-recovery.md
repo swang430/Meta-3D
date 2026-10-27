@@ -1,6 +1,6 @@
 # PC-04A-5：可恢复拓扑库与 CAICT 独立 PA 设计
 
-状态：**详细设计待用户书面审阅；不是已批准实施规范**。用户已批准 5a → 5b → 5c → 5d 顺序和“先保护、后改图”的方向。本文件列出的默认存储、复制例外和执行选择隔离细节仍需审阅。当前仅文档，不访问用户数据库，不运行硬件。
+状态：**用户已授权审清复制/改名与校准两项风险后按流程实施；当前等待独立审查增量确认**。用户已批准 5a → 5b → 5c → 5d 顺序和“先保护、后改图”的方向，无需重复索取同一授权。本次修订只改文档，不访问用户数据库，不运行硬件；后续5a也不得修改原CAICT配置。
 
 ## 1. 故障与切片
 
@@ -54,7 +54,7 @@ git grep -n 'importFromTemplate\|replace_existing\|updated_at.desc' -- api-servi
 | B：复用 is_default 或最新更新作为默认 | 少一个偏好存储 | Lab共享暗室、category与执行选图不一致，元数据修改可能切执行图；不推荐 |
 | C：服务端每Lab默认与显式执行拓扑绑定/历史一并重构 | 跨浏览器统一，能彻底解除更新时间选图 | 增表迁移、执行/冻结消费者变更，超出5a保护性增量；单独批准后另片 |
 
-推荐 A 不代表用户已批准。不能悄悄以 B 实现 A 的界面。如果用户要求跨浏览器默认或副本直接用于正式执行，暂停并审 C，而非自动激活副本。
+采用 A，按用户最新授权先完成两项风险的独立审查门再实施。不能悄悄以 B 实现 A 的界面。如果用户要求跨浏览器默认或副本直接用于正式执行，暂停并审 C，而非自动激活副本。
 
 ## 4. 5a 契约
 
@@ -66,15 +66,17 @@ git grep -n 'importFromTemplate\|replace_existing\|updated_at.desc' -- api-servi
 
 新增 `POST /api/v1/switch-topologies/{id}/copy?lab_profile_id=...`，body仅 `{name: string}`，201返回新图；不接收图内容、状态、category或校准记录。源不存在404、跨暗室409、Lab无法解析422。同暗室category从源继承。复制的是点击前已保存版本，不是未保存草稿。
 
-另存为的准确文案为“复制已保存版本为…”；dirty时先保存或放弃再复制，不能偷偷先覆盖原图。原图只读不改；新 UUID、created/updated 时间、inactive、非default。名称 PATCH 仅提交 name，不发送图数组，不更新 `updated_at`（该列目前影响执行选图）。若与图数组一起提交，则仍按图保存语义处理并更新时间；GUI不得混合。
+另存为的准确文案为“复制已保存版本为…”；dirty时先保存或放弃再复制，不能偷偷先覆盖原图。原图只读不改；新 UUID、created/updated 时间、inactive、非default。名称 PATCH 仅提交 name，不发送图数组，SQL UPDATE必须包含 `updated_at=SwitchTopology.updated_at` 列自赋值（该列目前影响执行选图），不能将Python已读旧datetime赋回：相同标量可能被ORM忽略并触发onupdate，强制写旧值又可能回退并发新时间。若与图数组一起提交，则仍按图保存语义处理并更新时间；GUI不得混合。
 
 ### 4.2 原始 JSON 保形与校准边界
 
 深拷贝 ORM `nodes/connections/operating_modes`：保留顺序、缺键/null区别、number/string/bool类型、opaque字段、ID、坐标、端口、模式、显式路径和loss owner引用；不调用 typed GET 的 model_dump 重建，不重新自动声明端口或补0。复制不是“修图”，旧声明不因复制被升级成新硬件能力。
 
-**唯一图内容例外（待书面确认）：** 新副本的每条 connection 中，已存在的 `calibrated_loss_db`、`calibrated_phase_deg` 置 null；缺键保持缺键。原因：真实消费者会优先使用旧 calibrated 数值，并可显示 valid，不能只靠新UUID承诺“不继承校准”。原图原值完整保留。复制确认框须披露这两个字段不沿用，保留标称值不等于实测。不能把旧数值改写成 nominal 再冒充声明。
+**唯一图内容例外：** 新副本的每条 connection 中，已存在的 `calibrated_loss_db`、`calibrated_phase_deg` 置 null；缺键保持缺键。原因：真实消费者会优先使用旧 calibrated 数值，并可显示 valid，不能只靠新UUID承诺“不继承校准”。原图原值完整保留。复制确认框须披露这两个字段不沿用，保留标称值不等于实测。不能把旧数值改写成 nominal 再冒充声明。
 
 不复制 Application、Selection、采集 run、证书、confirmed记录或历史执行；副本无新采用记录。保形断言应明确排除上述两个字段，而不是虚称全量字节相等。源本身含无法被现有Response序列化的数据时，应在事务提交前检测并422，避免“已创建但响应500”；原始复制仍从ORM取值。
+
+准确承诺是“不复制旧采用记录/内嵌测量值，inactive副本不自动用于正式执行”，不是全系统永久禁止沿用旧证书。`route_calibration_freeze.py` 仍兼容 `certificate.topology_id is None`：未来经既有PATCH显式激活且chain/CE/probe/polarization相同的副本可能使用该旧证书。5a无激活入口、不改冻结政策；未来执行绑定片须独立审查此兼容边界。
 
 ### 4.3 编辑器默认与执行分离
 
@@ -92,6 +94,8 @@ dirty阻断切图、切category、切Lab、复制和导入，提供现有保存/
 
 5a不增加删除按钮。不把删除当撤销，不移除现有Application/Selection外键保护。已有行的 `replace_existing=true` 在任何删除前409，提示另存/后续恢复；显式模板导入为追加 inactive/非default，不清其他默认位。原自动导入effect改只读，避免跨Lab迟到写入和意外激活。
 
+兼容代价：空库首次模板导入也只有inactive库草稿，不再自动获得执行拓扑；5a不提供激活按钮，不能显示“已用于正式测试”。这是有意行为变化，不为恢复便利自动激活，也不改动既有原CAICT配置。
+
 历史证书、执行冻结和原有活跃图的全面删除政策不在5a扩做；现有直接DELETE仍有仅保护采用记录的局限，必须明确披露。5a副本保护依靠“不暴露删除”和“禁止覆盖式模板替换”，不能声称已解决全系统任意删除。5b持久修订设计必须重新枚举这些历史引用，不能凭外键不存在放行。
 
 ## 5. 后续接口边界（不施工）
@@ -108,4 +112,4 @@ dirty阻断切图、切category、切Lab、复制和导入，提供现有保存/
 
 所有app导入前指定新SQLite及显式Mock；bootstrap后再次设置并核对全部类别和Lab binding为mock。真实浏览器连隔离API，不修改用户8000服务，不用默认Vite代理误连。保存命令、SHA、退出码、统计、请求/响应和截图；旧验证数字不可当本片证据。
 
-用户书面审阅需要裁决：①本浏览器默认足够，还是需要服务端跨浏览器偏好；②同意副本inactive且改名不改变执行排序；③同意两个旧calibrated字段的保形例外；④5a不新增删除界面、禁止已有库模板覆盖、另存为只复制已保存版本。任一否定均先修设计，不由实现者猜。
+用户最新授权为审清两风险后按流程实施、不改原CAICT配置。独立审查门应确认：①本浏览器默认与执行分离；②副本inactive且name-only通过SQL列自赋值不改变执行排序；③两旧calibrated字段例外及NULL topology_id旧证书边界；④不新增删除界面、禁止已有库模板覆盖、首次模板导入也只为inactive草稿、另存只复制已保存版本。增量审查确认后按5a计划执行，不重复请求同一授权。
