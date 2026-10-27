@@ -181,10 +181,38 @@ def _build_scope_payload(db,lab_id,mode,resolution,*,selected_route=None):
         graph['required_instruments'] = sorted(selected_mode.get('required_instruments') or [])
         # 仅新增显式归属投影；不补null、不重建历史baseline，也不改变旧图摘要。
         if any('loss_owner_connection_id' in c for c in topology.connections or []):
-            from app.services.calibration.route_calibration import list_route_selections
-            routes = [selected_route] if selected_route is not None else list_route_selections(db,lab_id,topology.id,mode)
-            selected_ids = {ident for route in routes for ident in
-                [*route.connection_ids, *route.calibration_connection_ids]}
+            if selected_route is not None:
+                selected_ids = set([*selected_route.connection_ids, *selected_route.calibration_connection_ids])
+            else:
+                from app.services.declared_rf_routes import resolve_saved_rf_path
+                def effective_edges(mode_id):
+                    saved_mode = next((m for m in topology.operating_modes or [] if m.get('id') == mode_id), None)
+                    if saved_mode is None:
+                        return []
+                    ids = set(saved_mode.get('active_connections') or [c['id'] for c in topology.connections or []
+                        if mode_id in c.get('modes', [])])
+                    return [c for c in topology.connections or [] if c['id'] in ids]
+
+                normal = effective_edges(mode)
+                reference = effective_edges('calibration')
+                selected_ids, probe_ids = set(), set()
+                for chain in resolution.chains:
+                    nodes, edges = resolve_saved_rf_path(topology.nodes or [], normal, chain.chain_id,
+                        check_internal_paths=False)
+                    selected_ids.update(c['id'] for c in edges)
+                    probe_ids.add(nodes[-1]['id'])
+                # 只盘点所选探头可达的保存参考边；不以内部贯通/采集资格门筛掉声明。
+                frontier = list(probe_ids)
+                seen = set(probe_ids)
+                while frontier:
+                    parent = frontier.pop()
+                    for edge in reference:
+                        if edge.get('source') != parent:
+                            continue
+                        selected_ids.add(edge['id'])
+                        if edge['target'] not in seen:
+                            seen.add(edge['target'])
+                            frontier.append(edge['target'])
             declarations = [{ 'id': c['id'], 'loss_owner_connection_id': c['loss_owner_connection_id'] }
                 for c in topology.connections or [] if c['id'] in selected_ids and 'loss_owner_connection_id' in c]
             if declarations:

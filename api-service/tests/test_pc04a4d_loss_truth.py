@@ -147,9 +147,10 @@ def test_effective_loss_contract():
     assert effective_connection_loss({}) is None
 
 
+@pytest.mark.parametrize('legacy_reference', [False,True])
 @pytest.mark.parametrize('location', ['normal','reference'])
 @pytest.mark.parametrize('fallback', [False,True])
-def test_ownership_changes_scope_not_route_or_physical_identity(world,location,fallback):
+def test_ownership_changes_scope_not_route_or_physical_identity(world,location,fallback,legacy_reference):
     from app.services.calibration.route_calibration import list_route_selections
     from app.services.calibration.configuration_scope import build_selected_route_calibration_scope
     from app.services.calibration.rf_chain_resolver import resolve_rf_chains
@@ -168,28 +169,62 @@ def test_ownership_changes_scope_not_route_or_physical_identity(world,location,f
         for mode in data['operating_modes']:mode['active_connections']=[]
     url,scope=create(world,data)
     ident=uuid.UUID(url.rsplit('/',1)[1])
-    before=list_route_selections(db,lab.id,ident,'mimo_ota')[0]
+    if legacy_reference:
+        # 历史原行缺声明；不能用当前POST凭空制造可采集资格。
+        data['nodes'][-2]['params']={'connection_scope':'calibration'}
+        saved=db.get(SwitchTopology,ident)
+        saved.nodes=copy.deepcopy(data['nodes'])
+        db.commit()
+    if not legacy_reference:
+        before=list_route_selections(db,lab.id,ident,'mimo_ota')[0]
     identity=resolve_rf_chains(db,lab.id).chains[0].execution_route_identity
     endpoint=f'/api/v1/lab-profiles/{lab.id}/calibration-scope'
     baseline=client.get(endpoint).json()
-    selected_before=build_selected_route_calibration_scope(db,lab.id,'mimo_ota',topology_id=ident,chain_id='b')
+    assert 'payload' in baseline,baseline
+    if not legacy_reference:
+        selected_before=build_selected_route_calibration_scope(db,lab.id,'mimo_ota',topology_id=ident,chain_id='b')
     assert 'loss_ownership' not in baseline['payload']['topology']
     data['connections'][1 if location=='normal' else 3]['loss_owner_connection_id']='a' if location=='normal' else 'r1'
-    response=client.patch(url,params=scope,json={'connections':data['connections']})
+    changes={'nodes':[], 'connections':[{'connection_id':'b' if location=='normal' else 'r2',
+        'loss_owner_connection_id':'a' if location=='normal' else 'r1','same_physical_cable_confirmed':True}]}
+    preview=client.post(url+'/conversion-preview',params=scope,json=changes)
+    assert preview.status_code==200,preview.text
+    response=client.patch(url,params=scope,json={'conversion':{
+        'source_digest':preview.json()['source_digest'],'changes':preview.json()['changes']}})
     assert response.status_code==200,response.text
     db.expire_all()
-    after=list_route_selections(db,lab.id,ident,'mimo_ota')[0]
-    assert after.route_digest==before.route_digest
+    if legacy_reference:
+        with pytest.raises(ValueError,match='内部通路未声明'):
+            list_route_selections(db,lab.id,ident,'mimo_ota')
+        strict=client.get(f'/api/v1/lab-profiles/{lab.id}/route-calibration-paths',params={
+            'topology_id':str(ident),'operating_mode':'mimo_ota'})
+        assert strict.status_code==422,strict.text
+    else:
+        after=list_route_selections(db,lab.id,ident,'mimo_ota')[0]
+        assert after.route_digest==before.route_digest
     assert resolve_rf_chains(db,lab.id).chains[0].execution_route_identity==identity
+    baseline_json=json.dumps(baseline,sort_keys=True)
     current=client.get(endpoint)
-    assert current.status_code==200,current.text
-    assert current.json()['digest']!=baseline['digest']
     comparison=client.post(endpoint+'/compare',json={'baseline':baseline})
+    assert current.status_code==200,current.text
     assert comparison.status_code==200,comparison.text
+    assert current.json()['digest']!=baseline['digest']
+    expected=[{'id':'b' if location=='normal' else 'r2','loss_owner_connection_id':'a' if location=='normal' else 'r1'}]
+    assert current.json()['payload']['topology']['loss_ownership']==expected
     assert comparison.json()['requires_review'] is True
-    selected_after=build_selected_route_calibration_scope(db,lab.id,'mimo_ota',topology_id=ident,chain_id='b')
-    assert selected_after.digest!=selected_before.digest
-    assert selected_after.payload.topology['loss_ownership']==[{'id':'b' if location=='normal' else 'r2','loss_owner_connection_id':'a' if location=='normal' else 'r1'}]
+    assert json.dumps(baseline,sort_keys=True)==baseline_json
+    if legacy_reference and location=='reference':
+        # 没有保存参考模式时，孤立的边modes不是所选参考路径。
+        saved=db.get(SwitchTopology,ident)
+        saved.operating_modes=[m for m in saved.operating_modes if m['id']!='calibration']
+        db.commit()
+        no_mode=client.get(endpoint)
+        assert no_mode.status_code==200,no_mode.text
+        assert 'loss_ownership' not in no_mode.json()['payload']['topology']
+    if not legacy_reference:
+        selected_after=build_selected_route_calibration_scope(db,lab.id,'mimo_ota',topology_id=ident,chain_id='b')
+        assert selected_after.digest!=selected_before.digest
+        assert selected_after.payload.topology['loss_ownership']==expected
 
 
 @pytest.mark.parametrize('value', [None,'missing',0])
