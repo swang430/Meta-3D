@@ -38,6 +38,7 @@ from app.services.chamber_resolution import (
 )
 from app.services.lab_resolution import LabResolutionError, resolve_lab_profile
 from app.services.calibration.route_calibration import assert_route_topologies_deletable, RouteApplicationConflict
+from app.services.topology_revisions import lock_chamber, assert_revision_deletable, topology_write
 
 router = APIRouter(prefix="/chambers", tags=["Chamber Configuration"])
 
@@ -359,6 +360,7 @@ def activate_chamber(
 
 
 @router.delete("/{chamber_id}")
+@topology_write
 def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
     """删除暗室配置 (连同其探头 + RF 拓扑一起删, 单事务)。
 
@@ -366,12 +368,14 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
     - 系统预设 → 409 (不可删)
     - 被 lab profile 引用 → 409 (先改指向/删除该 lab, 避免 orphan 掉 lab 的暗室关联)
     - 所含拓扑已被校准采用历史引用 → 409 (不可随配置删除历史)
+    - 所含拓扑已有不可变修订历史 → 409 (不可删除修订原件)
 
     依赖清理 (避免 orphan / FK 报错):
     - switch_topologies.chamber_id 是 RESTRICT 外键 → 必须先删该暗室的拓扑, 否则 500
     - probes.chamber_config_id 是 SET NULL → 直接删暗室会把探头 orphan 成 NULL, 故显式删除
     """
-    chamber = db.query(ChamberConfiguration).filter(
+    lock_chamber(db, chamber_id)
+    chamber = db.query(ChamberConfiguration).populate_existing().filter(
         ChamberConfiguration.id == chamber_id
     ).first()
 
@@ -416,6 +420,7 @@ def delete_chamber(chamber_id: UUID, db: Session = Depends(get_db)):
         assert_route_topologies_deletable(db,topology_ids)
     except RouteApplicationConflict as exc:
         raise HTTPException(409,detail=str(exc)) from exc
+    assert_revision_deletable(db, topology_ids)
 
     # 清理依赖后删暗室 (单事务)
     deleted_topos = db.query(SwitchTopology).filter(

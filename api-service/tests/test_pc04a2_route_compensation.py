@@ -1,4 +1,5 @@
 """真实采集→确认→冻结→实际端口补偿，不用认证/来源替身。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import pytest
 from tests.test_pc04a2_route_freeze import (db_session,chamber,topology_two_chains,lab_profile,client,
     configured,real_capture,legacy,launch,confirm,payload)
@@ -183,7 +184,7 @@ async def test_metadata_only_http_edit_preserves_adoption_history_and_execution_
     nodes=copy.deepcopy(raw['nodes'])
     next(n for n in nodes if n['type']=='probe')['params']['nominal_metadata']={
         'gain_dbi':{'unit':'dBi','source_note':'新增来源说明，不是实测','frequency_range_mhz':None}}
-    response=client.patch(url,params=scope,json={'nodes':nodes})
+    response=client.patch(url,params=scope,json={**({'nodes':nodes}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code==200,response.text
     candidate=preview(client,configured,run)
     assert candidate.status_code==200,candidate.text

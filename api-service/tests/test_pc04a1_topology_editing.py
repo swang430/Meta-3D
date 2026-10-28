@@ -1,4 +1,5 @@
 """本片结构校验通过真实 API 和数据库验证，不触及硬件。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 
 import pytest
@@ -33,7 +34,7 @@ def saved(world):
 ])
 def test_patch_rejects_invalid_merged_graph_without_mutation(world, saved, change):
     before = copy.deepcopy(saved.nodes), copy.deepcopy(saved.connections), copy.deepcopy(saved.operating_modes)
-    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json=change)
+    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={**(change), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{saved.id}', {'lab_profile_id': str(world['lab_a'].id)})})
     assert response.status_code == 422, response.text
     world['db'].refresh(saved)
     assert (saved.nodes, saved.connections, saved.operating_modes) == before
@@ -42,10 +43,10 @@ def test_patch_rejects_invalid_merged_graph_without_mutation(world, saved, chang
 def test_patch_allows_atomic_delete_and_valid_partial_update(world, saved):
     url = f'/api/v1/switch-topologies/{saved.id}'
     params = {'lab_profile_id': str(world['lab_a'].id)}
-    response = client.patch(url, params=params, json={'name': '局部修改'})
+    response = client.patch(url, params=params, json={**({'name': '局部修改'}), 'expected_revision': _saved_revision(client, url, params)})
     assert response.status_code == 200, response.text
     assert response.json()['connections'][0]['id'] == 'ab'
-    response = client.patch(url, params=params, json={'nodes': [graph()['nodes'][1]], 'connections': [], 'operating_modes': []})
+    response = client.patch(url, params=params, json={**({'nodes': [graph()['nodes'][1]], 'connections': [], 'operating_modes': []}), 'expected_revision': _saved_revision(client, url, params)})
     assert response.status_code == 200, response.text
     assert [n['id'] for n in response.json()['nodes']] == ['b']
 
@@ -67,9 +68,9 @@ def test_import_rejects_bad_template_before_replacement(world, saved, monkeypatc
 def test_calibration_scope_cannot_enter_normal_active_connections(world, saved):
     nodes = graph()['nodes']
     nodes[0]['params']['connection_scope'] = 'calibration'
-    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={'nodes': nodes})
+    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{saved.id}', {'lab_profile_id': str(world['lab_a'].id)})})
     assert response.status_code == 422, response.text
-    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={'nodes': nodes, 'operating_modes': [{'id': 'calibration', 'name': '校准接线', 'active_connections': ['ab']}]})
+    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={**({'nodes': nodes, 'operating_modes': [{'id': 'calibration', 'name': '校准接线', 'active_connections': ['ab']}]}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{saved.id}', {'lab_profile_id': str(world['lab_a'].id)})})
     assert response.status_code == 200, response.text
     assert response.json()['operating_modes'][0]['active_connections'] == ['ab']
 
@@ -95,7 +96,7 @@ def test_calibration_scope_rejected_in_effective_connection_mode_fallback(world,
     assert len(service.resolve_paths('mimo_ota')) == 1
     assert service.get_calibration_matrix('mimo_ota')
     before = copy.deepcopy(saved.nodes), copy.deepcopy(saved.connections), copy.deepcopy(saved.operating_modes)
-    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={'nodes': nodes, 'connections': connections, 'operating_modes': modes})
+    response = client.patch(f'/api/v1/switch-topologies/{saved.id}', params={'lab_profile_id': str(world['lab_a'].id)}, json={**({'nodes': nodes, 'connections': connections, 'operating_modes': modes}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{saved.id}', {'lab_profile_id': str(world['lab_a'].id)})})
     assert response.status_code == 422, response.text
     world['db'].refresh(saved)
     assert (saved.nodes, saved.connections, saved.operating_modes) == before
@@ -110,7 +111,7 @@ def test_calibration_only_fallback_remains_available_without_normal_paths(world,
     modes = [{'id': ident, 'name': ident, 'active_connections': []} for ident in ('mimo_ota', 'calibration')]
     url = f'/api/v1/switch-topologies/{saved.id}'
     params = {'lab_profile_id': str(world['lab_a'].id)}
-    response = client.patch(url, params=params, json={'nodes': nodes, 'connections': connections, 'operating_modes': modes})
+    response = client.patch(url, params=params, json={**({'nodes': nodes, 'connections': connections, 'operating_modes': modes}), 'expected_revision': _saved_revision(client, url, params)})
     assert response.status_code == 200, response.text
     normal_paths = client.get(f'{url}/paths/mimo_ota', params=params)
     normal_matrix = client.get(f'{url}/calibration-matrix/mimo_ota', params=params)
@@ -132,7 +133,7 @@ def test_patch_uses_schema_default_pins_without_accepting_explicit_bad_pin(world
         payload = {'connections': [connection]}
     url = f'/api/v1/switch-topologies/{saved.id}'
     params = {'lab_profile_id': str(world['lab_a'].id)}
-    response = client.patch(url, params=params, json=payload)
+    response = client.patch(url, params=params, json={**(payload), 'expected_revision': _saved_revision(client, url, params)})
     assert response.status_code == 200, response.text
     # 4a稀疏传输契约不补存储缺键；有效结构校验仍采用原schema默认端口。
     from app.schemas.switch_topology import TopologyConnection
@@ -143,7 +144,7 @@ def test_patch_uses_schema_default_pins_without_accepting_explicit_bad_pin(world
     world['db'].refresh(saved)
     assert saved.connections == [connection]
     assert client.get(url, params=params).json()['connections'][0] == connection
-    invalid = client.patch(url, params=params, json={'connections': [{**connection, 'source_pin': 'missing'}]})
+    invalid = client.patch(url, params=params, json={**({'connections': [{**connection, 'source_pin': 'missing'}]}), 'expected_revision': _saved_revision(client, url, params)})
     assert invalid.status_code == 422, invalid.text
     world['db'].refresh(saved)
     assert saved.connections == [connection]

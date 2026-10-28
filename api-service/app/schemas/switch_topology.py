@@ -1,4 +1,4 @@
-from typing import List, Dict, Any, Optional, Literal
+from typing import Annotated, List, Dict, Any, Optional, Literal
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, field_serializer, field_validator
 import unicodedata
 from uuid import UUID
@@ -122,7 +122,11 @@ class SwitchTopologyCopy(BaseModel):
         return validate_topology_name(value)
 
 
+Revision = Annotated[int, Field(strict=True, ge=0)]
+
+
 class SwitchTopologyUpdate(BaseModel):
+    expected_revision: Revision
     conversion: TopologyConversionCommit | None = None
     connection_numeric_declarations: Dict[str, List[Literal[
         'cable_loss_db', 'cable_length_m', 'calibrated_loss_db', 'calibrated_phase_deg'
@@ -148,6 +152,7 @@ class SwitchTopologyUpdate(BaseModel):
 
 
 class SwitchTopologyResponse(SwitchTopologyBase):
+    revision: Revision
     id: UUID
     switch_category_id: UUID
     chamber_id: Optional[UUID] = None
@@ -169,6 +174,47 @@ class SwitchTopologyResponse(SwitchTopologyBase):
 class SwitchTopologyListResponse(BaseModel):
     total: int
     items: List[SwitchTopologyResponse]
+
+
+class TopologyRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: Revision
+    expected_revision: Revision
+
+
+class TopologyRevisionSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    revision: Revision
+    operation: Literal['baseline', 'create', 'copy', 'import', 'update', 'conversion', 'restore']
+    created_at: UTCDateTime
+    restored_from_revision: Revision | None
+    recorded_metadata: dict[str, JsonValue]
+
+
+class TopologyRevisionDetail(TopologyRevisionSummary):
+    snapshot: dict[str, JsonValue]
+
+
+class TopologyRevisionList(BaseModel):
+    total: int
+    items: list[TopologyRevisionSummary]
+
+
+class TopologyFieldDifference(BaseModel):
+    field: str
+    before_present: bool
+    after_present: bool
+    before: JsonValue = None
+    after: JsonValue = None
+
+
+class TopologyRestorePreview(BaseModel):
+    current_revision: Revision
+    target_revision: Revision
+    snapshot: dict[str, JsonValue]
+    candidate: dict[str, JsonValue]
+    differences: list[TopologyFieldDifference]
+    warnings: list[str]
 
 
 # ==========================================

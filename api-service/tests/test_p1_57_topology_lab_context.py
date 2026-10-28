@@ -49,6 +49,12 @@ def override_get_db():
 client = TestClient(app)
 
 
+def saved_revision(row, lab):
+    detail = client.get(f'/api/v1/switch-topologies/{row.id}', params={'lab_profile_id':str(lab.id)})
+    assert detail.status_code == 200, detail.text
+    return detail.json()['revision']
+
+
 @pytest.fixture(autouse=True)
 def setup_database():
     Base.metadata.create_all(bind=engine)
@@ -217,7 +223,7 @@ class TestCrossChamberScope:
         r = client.patch(
             f"/api/v1/switch-topologies/{row.id}",
             params={"lab_profile_id": str(world["lab_a"].id)},
-            json={"name": "hijacked"},
+            json={"name": "hijacked", "expected_revision":saved_revision(row,world['lab_b'])},
         )
         assert r.status_code == 409
         world["db"].refresh(row)
@@ -248,7 +254,7 @@ class TestCrossChamberScope:
         r = client.patch(
             f"/api/v1/switch-topologies/{row.id}",
             params={"lab_profile_id": str(world["lab_a"].id)},
-            json={"chamber_id": str(world["chamber_b"].id)},
+            json={"chamber_id": str(world["chamber_b"].id), "expected_revision":saved_revision(row,world['lab_a'])},
         )
         assert r.status_code == 422
         db.refresh(row)
@@ -260,7 +266,7 @@ class TestCrossChamberScope:
         r = client.patch(
             f"/api/v1/switch-topologies/{row.id}",
             params={"lab_profile_id": str(world["lab_a"].id)},
-            json={"name": "renamed"},
+            json={"name": "renamed", "expected_revision":saved_revision(row,world['lab_a'])},
         )
         assert r.status_code == 200, r.text
         db.refresh(row)
@@ -436,7 +442,7 @@ class TestChamberScopeOfWrites:
         r = client.patch(
             f"/api/v1/switch-topologies/{a_row.id}",
             params={"lab_profile_id": str(world["lab_a"].id)},
-            json={"is_default": True},
+            json={"is_default": True, "expected_revision":saved_revision(a_row,world['lab_a'])},
         )
         assert r.status_code == 200, r.text
         db.refresh(b_default)

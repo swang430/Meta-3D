@@ -3,14 +3,15 @@ import {Modal,Stack,Alert,Select,Text,Textarea,Button,Group,Checkbox,Paper} from
 import {switchTopologyService} from '../../api/switchTopologyService';
 import type {SwitchTopology,ConversionNodeEdit,ConversionConnectionEdit,TopologyConversionPreview} from '../../api/switchTopologyService';
 import {buildConversionRequest,conversionContextKey,clearConversionSession} from './legacyConversionState';
+import {revisionFailure} from './topologyRevisionState';
 
 type Props={opened:boolean;topology:SwitchTopology;labId:string;dirty:boolean;blocked:boolean;
-  isBlocked:()=>boolean;onClose:()=>void;onSave:(preview:TopologyConversionPreview)=>Promise<void>};
+  isBlocked:()=>boolean;onClose:()=>void;onSave:(preview:TopologyConversionPreview)=>Promise<void>;onInspectLatest:()=>Promise<void>};
 const jsonFields=['ports','port_directions','port_roles','internal_paths'] as const;
 const typePairs=[['ce_port','channel_emulator'],['bse_port','communication_tester'],['sa_port','signal_analyzer']];
 const failure=(err:any)=>{const detail=err.response?.data?.detail??err.message;return typeof detail==='string'?detail:JSON.stringify(detail)};
 
-export function LegacyConversionPanel({opened,topology,labId,dirty,blocked,isBlocked,onClose,onSave}:Props){
+export function LegacyConversionPanel({opened,topology,labId,dirty,blocked,isBlocked,onClose,onSave,onInspectLatest}:Props){
   const [nodeId,setNodeId]=useState<string|null>(null),[edgeId,setEdgeId]=useState<string|null>(null);
   const [nodeEdits,setNodeEdits]=useState<Record<string,Record<string,string>>>({});
   const [edgeEdits,setEdgeEdits]=useState<Record<string,Record<string,string|boolean>>>({});
@@ -54,7 +55,7 @@ export function LegacyConversionPanel({opened,topology,labId,dirty,blocked,isBlo
     finally{if(live.current&&serial.current===ticket)setPending(false)}
   };
   const confirm=async()=>{if(isBlocked()||dirty||!preview)return;const ticket=++serial.current;
-    try{await onSave(preview)}catch(err){if(live.current&&serial.current===ticket){setPreview(null);setError(`${failure(err)}；输入已保留，请重新预览。`)}}};
+    try{await onSave(preview)}catch(err){if(live.current&&serial.current===ticket){setPreview(null);setError(`${revisionFailure((err as any).response?.status).message} ${failure(err)}；输入已保留，重新预览须显式操作。`)}}};
   return <Modal opened={opened} onClose={()=>{if(isBlocked())return;invalidate();onClose()}} title="转换旧配置" size="xl" closeOnClickOutside={false}>
     <Stack>
       <Alert color="orange">仅转换应用声明，不证明实物接线、仪器能力或校准资格。空白字段不提交，不猜端口、方向或CE身份。预览候选不覆盖原画布草稿。</Alert>
@@ -87,7 +88,7 @@ export function LegacyConversionPanel({opened,topology,labId,dirty,blocked,isBlo
         <Checkbox label="这两条边表示同一条物理线缆（设置或撤销归属均明确确认）" checked={ee.same_physical_cable_confirmed===true} disabled={blocked} onChange={e=>changeEdge('same_physical_cable_confirmed',e.currentTarget.checked)}/>
         {ee.loss_owner_connection_id==='__remove__'&&<Alert color="orange">解组后两侧保留的原量值恢复各自参与；不是清空或复制损耗。</Alert>}
       </Stack></Paper>}
-      {error&&<Alert color="red" data-testid="conversion-error">{error}</Alert>}
+      {error&&<Alert color="red" data-testid="conversion-error">{error}<Button variant="light" onClick={()=>void onInspectLatest()}>刷新查看服务器最新</Button></Alert>}
       {preview&&<Paper withBorder p="sm" data-testid="conversion-preview"><Text fw={600}>预览差异（尚未保存）</Text>
         <Text size="xs">以下差异的before_present/缺键判据仅来自本次服务器预览涉及字段；不反向证明上方GET展示值是原保存值。</Text>
         {preview.differences.map((d,i)=><Text size="sm" key={i}>{d.object_kind} {d.object_id} {d.field}：{d.before_present?JSON.stringify(d.before):'缺键'} → {JSON.stringify(d.after)}</Text>)}

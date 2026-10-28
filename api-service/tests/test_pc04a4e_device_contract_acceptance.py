@@ -1,4 +1,5 @@
 """4e组合验收：真实HTTP/SQL/正式冻结；量值均为隔离验收输入，非硬件证据。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import hashlib
 import json
@@ -71,8 +72,8 @@ def test_e01_combined_post_patch_get_and_real_template_conversion(world, evidenc
     before = sql_graph(db, ident)
     fetched = http.get(url, params=scope).json()
     fetched['nodes'][1]['position'] = {'x': 17, 'y': 29}
-    result = http.patch(url, params=scope, json={'name': '组合声明', 'nodes': fetched['nodes'],
-                                              'connections': fetched['connections']})
+    result = http.patch(url, params=scope, json={**({'name': '组合声明', 'nodes': fetched['nodes'],
+                                              'connections': fetched['connections']}), 'expected_revision': _saved_revision(http, url, scope)})
     assert result.status_code == 200, result.text
     persisted = db.get(SwitchTopology, ident)
     db.refresh(persisted)
@@ -82,7 +83,7 @@ def test_e01_combined_post_patch_get_and_real_template_conversion(world, evidenc
     original = sql_graph(db, ident)
     bad = copy.deepcopy(result.json()['nodes'])
     bad[1]['params']['internal_paths'][0]['to_port'] = 'MISSING'
-    assert http.patch(url, params=scope, json={'nodes': bad}).status_code == 422
+    assert http.patch(url, params=scope, json={**({'nodes': bad}), 'expected_revision': _saved_revision(http, url, scope)}).status_code == 422
     assert sql_graph(db, ident) == original
     from app.api.switch_topology import _TEMPLATES_DIR
     template = _TEMPLATES_DIR / 'caict_v4.py'
@@ -147,7 +148,7 @@ def test_e02_cross_mode_references_atomic(world, evidence, entry, mutation):
                 {k: v for k, v in edits.items() if k != 'node_id'})
         else:
             updated['connections'] = updated['connections'][1:]
-        result = http.patch(url, params=scope, json=updated)
+        result = http.patch(url, params=scope, json={**(updated), 'expected_revision': _saved_revision(http, url, scope)})
     assert result.status_code == 422, result.text
     assert raw(world, url) == before
     if mutation in ('remove_port', 'rename_port'):
@@ -162,11 +163,11 @@ def test_e02_legal_rewire_and_unknown_do_not_grant_capability(world):
     data['nodes'][1]['params'].update(ports=['IN', 'NEW'], port_directions={'IN': 'input', 'NEW': 'output'},
         internal_paths=[{'from_port': 'IN', 'to_port': 'NEW'}])
     data['connections'][1]['source_pin'] = 'NEW'
-    response = http.patch(url, params=scope, json=data)
+    response = http.patch(url, params=scope, json={**(data), 'expected_revision': _saved_revision(http, url, scope)})
     assert response.status_code == 200, response.text
     for directions in ({}, {'IN': 'unknown', 'NEW': 'unknown'}):
         data['nodes'][1]['params']['port_directions'] = directions
-        response = http.patch(url, params=scope, json=data)
+        response = http.patch(url, params=scope, json={**(data), 'expected_revision': _saved_revision(http, url, scope)})
         assert response.status_code == 200, response.text
         actual = next(n for n in response.json()['nodes'] if n['id'] == 'wire')['params']['port_directions']
         assert not any(v == 'bidirectional' for v in actual.values())
@@ -214,9 +215,9 @@ def test_e03_http_group_undo_zero_unknown_and_terminal(world, evidence, kind):
         edges[0]['calibrated_loss_db'] = value
         if value is None:
             edges[0]['cable_loss_db'] = None
-        assert http.patch(url, params=scope, json={'connections': edges}).status_code == 200
+        assert http.patch(url, params=scope, json={**({'connections': edges}), 'expected_revision': _saved_revision(http, url, scope)}).status_code == 200
         assert values() == (value, value if kind == 'cable' else None)
-    assert http.patch(url, params=scope, json=data).status_code == 200
+    assert http.patch(url, params=scope, json={**(data), 'expected_revision': _saved_revision(http, url, scope)}).status_code == 200
     assert values() == (4, terminal)
     for modes in ([dict(id=mode, name='半组', active_connections=['b'])],
                   [dict(id=mode, name='半组', active_connections=['a']), dict(id='other', name='另一模式', active_connections=['b'])]):
@@ -224,7 +225,7 @@ def test_e03_http_group_undo_zero_unknown_and_terminal(world, evidence, kind):
         bad['connections'][1]['loss_owner_connection_id'] = 'a'
         bad['operating_modes'] = modes
         before = raw(world, url)
-        response = http.patch(url, params=scope, json=bad)
+        response = http.patch(url, params=scope, json={**(bad), 'expected_revision': _saved_revision(http, url, scope)})
         assert response.status_code == 422, response.text
         assert raw(world, url) == before
     evidence('通用与末边', dict(kind=kind, topology_url=url, restored=values()))
@@ -298,7 +299,7 @@ async def test_e04_e05_selected_reference_pa_http_metadata_owner_and_two_freezes
     for edge in fetched['connections']:
         if edge['id'] == pa_edge_id:
             edge['nominal_metadata'] = {'pa_gain_db': metadata()}
-    saved = client.patch(url, params=scope, json={'connections': fetched['connections']})
+    saved = client.patch(url, params=scope, json={**({'connections': fetched['connections']}), 'expected_revision': _saved_revision(client, url, scope)})
     assert saved.status_code == 200, saved.text
     sql_after = sql_graph(db_session, topology.id)
     raw_pa = next(e for e in json.loads(sql_after['connections']) if e['id'] == pa_edge_id)
@@ -312,7 +313,7 @@ async def test_e04_e05_selected_reference_pa_http_metadata_owner_and_two_freezes
     # PA元数据单独保存后，再用HTTP声明正常线owner，分别验证两种不变性。
     edges = copy.deepcopy(saved.json()['connections'])
     next(e for e in edges if e['id'] == 'conn_p0v')['loss_owner_connection_id'] = 'owner'
-    saved = client.patch(url, params=scope, json={'connections': edges})
+    saved = client.patch(url, params=scope, json={**({'connections': edges}), 'expected_revision': _saved_revision(client, url, scope)})
     assert saved.status_code == 200, saved.text
     candidate = application_preview(client, configured, row)
     assert candidate.status_code == 200 and candidate.json()['eligibility']['eligible_for_adoption'], candidate.text
@@ -360,7 +361,7 @@ async def test_e04_e05_selected_reference_pa_http_metadata_owner_and_two_freezes
     wire['params']['internal_paths'] = [{'from_port': 'in', 'to_port': 'other'}]
     edges = copy.deepcopy(saved.json()['connections'])
     next(e for e in edges if e['id'] == 'conn_p0v')['source_pin'] = 'other'
-    response = client.patch(url, params=scope, json={'nodes': changed, 'connections': edges})
+    response = client.patch(url, params=scope, json={**({'nodes': changed, 'connections': edges}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     assert not application_preview(client, configured, row).json()['eligibility']['eligible_for_adoption']
     third = await launch()
@@ -383,8 +384,8 @@ def test_e06_legacy_reference_scope_not_capture_permission(client, configured, d
                                 'same_physical_cable_confirmed': True}]}
     p = client.post(url + '/conversion-preview', params=scope, json=changes)
     assert p.status_code == 200, p.text
-    saved = client.patch(url, params=scope, json={'conversion': {
-        'source_digest': p.json()['source_digest'], 'changes': p.json()['changes']}})
+    saved = client.patch(url, params=scope, json={**({'conversion': {
+        'source_digest': p.json()['source_digest'], 'changes': p.json()['changes']}}), 'expected_revision': p.json()['revision']})
     assert saved.status_code == 200, saved.text
     current = client.get(endpoint + '/calibration-scope')
     comparison = client.post(endpoint + '/calibration-scope/compare', json={'baseline': baseline})

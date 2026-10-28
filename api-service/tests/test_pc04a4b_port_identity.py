@@ -1,4 +1,5 @@
 """方向声明沿现有摘要；旧快照不回写，Mock/缺绑定不因此获得资格。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import json
 
@@ -32,7 +33,7 @@ def test_explicit_direction_changes_digest_rejects_old_selection_and_keeps_snaps
     raw = client.get(url, params=scope).json()
     stored = json.dumps(graph.connections)
     payload = {key: copy.deepcopy(raw[key]) for key in ('nodes', 'connections', 'operating_modes')}
-    unchanged = client.patch(url, params=scope, json=payload)
+    unchanged = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
     assert unchanged.status_code == 200, unchanged.text
     assert paths(client, configured, graph).json()[0]['route_digest'] == before['route_digest']
 
@@ -46,7 +47,7 @@ def test_explicit_direction_changes_digest_rejects_old_selection_and_keeps_snaps
     ident = 'pad1' if location == 'normal' else 'reference1'
     node = next(node for node in payload['nodes'] if node['id'] == ident)
     node['params']['port_directions'] = {'in': 'input', 'out': 'output'}
-    saved = client.patch(url, params=scope, json=payload)
+    saved = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
     assert saved.status_code == 200, saved.text
     after = paths(client, configured, graph).json()[0]
     assert after['route_digest'] != before['route_digest']
@@ -74,7 +75,7 @@ def test_legacy_missing_declarations_get_patch_keeps_route_and_configuration_dig
     scope = {'lab_profile_id': str(configured.id)}
     raw = client.get(url, params=scope).json()
     for payload in ({'name': '仅改名'}, {key: raw[key] for key in ('nodes', 'connections', 'operating_modes')}):
-        saved = client.patch(url, params=scope, json=payload)
+        saved = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
         assert saved.status_code == 200, saved.text
         after = paths(client, configured, graph).json()[0]
         assert after['route_digest'] == before['route_digest']
@@ -98,7 +99,7 @@ def test_explicit_directions_cannot_replace_missing_instrument_bindings(
     for node in nodes:
         node['params']['port_directions'] = {'in': 'input', 'out': 'output'}
     saved = client.patch(f'/api/v1/switch-topologies/{graph.id}',
-        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes})
+        params={'lab_profile_id': str(configured.id)}, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{graph.id}', {'lab_profile_id': str(configured.id)})})
     assert saved.status_code == 200, saved.text
     after = paths(client, configured, graph).json()[0]
     assert after['route_digest'] != before['route_digest']

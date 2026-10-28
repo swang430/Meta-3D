@@ -1,4 +1,5 @@
 """内部通路写入必须经真实 HTTP 校验，且拒绝前不改变原图。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import json
 
@@ -110,7 +111,7 @@ def test_patch_rejects_invalidated_selected_pair_without_name_or_default_change(
     elif edit == 'ports': params['ports'].remove('IN')
     elif edit == 'type': changed['nodes'][1]['type'] = 'termination'
     else: changed['connections'][0]['target_pin'] = 'OUT'
-    response = client.patch(url, params=scope, json={**changed, 'name': '不能写', 'is_default': True})
+    response = client.patch(url, params=scope, json={**({**changed, 'name': '不能写', 'is_default': True}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     assert 'a' in str(response.json()['detail'])
     assert client.get(url, params=scope).json()['nodes'] == saved_before
@@ -171,7 +172,7 @@ def test_unrelated_legacy_roundtrip_keeps_sparse_pins_and_missing_declaration(wo
     elif edit == 'nominal':
         body = {'nodes': copy.deepcopy(data['nodes'])}
         body['nodes'][1]['params']['gain_db'] = None
-    response = client.patch(url, params=scope, json=body)
+    response = client.patch(url, params=scope, json={**(body), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     world['db'].refresh(row)
     assert 'internal_paths' not in row.nodes[1]['params']
@@ -185,7 +186,7 @@ def test_all_modes_protect_selected_pair_even_when_current_mode_unrelated(world,
         dict(id='normal', name='非当前', active_connections=[] if fallback else ['ca', 'ap'])]
     row, url, scope = seed(world, data)
     nodes = copy.deepcopy(data['nodes']); nodes[1]['params']['internal_paths'] = []
-    response = client.patch(url, params=scope, json={'nodes': nodes})
+    response = client.patch(url, params=scope, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     assert 'p' in str(response.json()['detail']) and 'a' in str(response.json()['detail'])
     world['db'].refresh(row)
@@ -196,8 +197,8 @@ def test_enabling_mode_or_probe_selection_cannot_borrow_legacy_exemption(world):
     data = declared_graph(); data['nodes'][1]['params'].pop('internal_paths')
     data['operating_modes'][0]['active_connections'] = ['ca']
     row, url, scope = seed(world, data)
-    response = client.patch(url, params=scope, json={'operating_modes': [
-        dict(id='normal', name='启用', active_connections=['ca', 'ap'])]})
+    response = client.patch(url, params=scope, json={**({'operating_modes': [
+        dict(id='normal', name='启用', active_connections=['ca', 'ap'])]}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
     assert row.operating_modes == data['operating_modes']
@@ -206,7 +207,7 @@ def test_enabling_mode_or_probe_selection_cannot_borrow_legacy_exemption(world):
 def test_original_legacy_selected_route_unrelated_edit_preserves_declaration(world):
     data = declared_graph(); data['nodes'][1]['params'].pop('internal_paths')
     row, url, scope = seed(world, data)
-    response = client.patch(url, params=scope, json={'name': '兼容旧图'})
+    response = client.patch(url, params=scope, json={**({'name': '兼容旧图'}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     world['db'].refresh(row)
     assert row.nodes == data['nodes'] and row.connections == data['connections']
@@ -217,7 +218,7 @@ def test_nonbse_opaque_role_extension_does_not_redeclare_legacy_path(world):
     row, url, scope = seed(world, data)
     nodes = copy.deepcopy(data['nodes'])
     nodes[1]['params']['port_roles'] = {'opaque': {'keep': True}}
-    response = client.patch(url, params=scope, json={'nodes': nodes})
+    response = client.patch(url, params=scope, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     world['db'].refresh(row)
     assert row.nodes[1]['params']['port_roles'] == {'opaque': {'keep': True}}
@@ -262,7 +263,7 @@ def test_new_incident_branch_rechecks_only_same_mode_legacy_selection(world, sam
     changed['connections'].append(dict(id='aq', source='a', source_pin='OUT', target='q', target_pin='in',
         modes=['normal' if same_mode else 'other']))
     changed['operating_modes'].append(dict(id='other', name='其它模式', active_connections=[]))
-    response = client.patch(url, params=scope, json=changed)
+    response = client.patch(url, params=scope, json={**(changed), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == (422 if same_mode else 200), response.text
     world['db'].refresh(row)
     assert row.connections == (data if same_mode else changed)['connections']

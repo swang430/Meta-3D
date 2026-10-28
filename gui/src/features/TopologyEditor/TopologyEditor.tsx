@@ -51,6 +51,9 @@ import {NominalPropertyFields} from './NominalPropertyFields';
 import {PortDeclarationFields} from './PortDeclarationFields';
 import {InternalPathFields} from './InternalPathFields';
 import {LegacyConversionPanel} from './LegacyConversionPanel';
+import {TopologyHistoryPanel} from './TopologyHistoryPanel';
+import {canRestore,ownsRevisionRequest,ownsLibraryInspection,ownsSavedInspection,revisionFailure} from './topologyRevisionState';
+import type {RevisionContext,SavedInspectionContext} from './topologyRevisionState';
 import {validateDraftInternalPaths} from './internalPathHelpers';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
 import { RouteCalibrationPanel } from './RouteCalibrationPanel';
@@ -95,9 +98,10 @@ interface TopologyFlowProps {
   /** P1-57：dirty 状态上报给外层，用于注册 LabProfile 切换阻断。 */
   onDirtyChange: (dirty: boolean) => void;
   onBusyChange: (busy:boolean)=>void;
+  onWriteStart: ()=>void;
 }
 
-const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, isLibraryBusy, onTopologyUpdated, onDirtyChange, onBusyChange }: TopologyFlowProps) => {
+const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, isLibraryBusy, onTopologyUpdated, onDirtyChange, onBusyChange, onWriteStart }: TopologyFlowProps) => {
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
@@ -125,15 +129,41 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
   const [selectedConnectionId,setSelectedConnectionId]=useState<string|null>(null);
   const [catalog, setCatalog] = useState<{value:string;label:string}[]>([]);
   const savingRef = useRef(false);
+  const unknownWriteRef=useRef(false);
+  const [unknownWrite,setUnknownWrite]=useState(false);
+  const [revisionError,setRevisionError]=useState('');
+  const [historyOpen,setHistoryOpen]=useState(false);
+  const [latest,setLatest]=useState<SwitchTopology|null>(null);
+  const [latestHistory,setLatestHistory]=useState<unknown>(null);
+  const [inspecting,setInspecting]=useState(false);
+  const inspectGeneration=useRef(0);
+  const scope=JSON.stringify([labProfileId,topology.switch_category_id]);
+  const requestGeneration=useRef(0);
+  const liveRequest=useRef<RevisionContext>({scope,topologyId:topology.id??'',generation:0});
+  const latestIdentity=useRef<SavedInspectionContext|null>(null);
+  const savedModel=useRef({topology,libraryBusy});
+  // 同图库写开始或保存模型更换，即刻失效在途/已展示核查；读代数不能改变父写ticket。
+  if(savedModel.current.topology!==topology||(!savedModel.current.libraryBusy&&libraryBusy)){
+    inspectGeneration.current++;latestIdentity.current=null;
+  }
+  savedModel.current={topology,libraryBusy};
+  useEffect(()=>{
+    if(!latestIdentity.current){setLatest(null);setLatestHistory(null);setInspecting(false)}
+  },[topology,libraryBusy]);
+  if(liveRequest.current.scope!==scope||liveRequest.current.topologyId!==(topology.id??'')){
+    liveRequest.current={scope,topologyId:topology.id??'',generation:++requestGeneration.current};
+    inspectGeneration.current++;
+  }
   const collectionBusyRef=useRef(false);
   const [collectionBusy,setCollectionBusy]=useState(false);
   const [conversionOpen,setConversionOpen]=useState(false);
   useEffect(()=>setConversionOpen(false),[conversionEpoch]);
   const [highlightedRoute,setHighlightedRoute]=useState<RouteSelection|null>(null);
-  const editingBlocked=saving||collectionBusy||libraryBusy;
+  const editingBlocked=saving||collectionBusy||libraryBusy||unknownWrite;
+  const isWriteBlocked=()=>savingRef.current||collectionBusyRef.current||isLibraryBusy()||unknownWriteRef.current;
   const handleCollectionBusy=useCallback((busy:boolean)=>{
     // activeWork包含本次保存。busy始终保留为锁；仅保存期间不因回传而关闭转换丢输入。
-    collectionBusyRef.current=busy;setCollectionBusy(busy);onBusyChange(busy||savingRef.current);
+    collectionBusyRef.current=busy;setCollectionBusy(busy);onBusyChange(busy||savingRef.current||unknownWriteRef.current);
     if(busy){setDrawerOpen(false);setNodeDrawerOpen(false);setEdgeNumericDeclarations([]);if(!savingRef.current)setConversionOpen(false);}
   },[onBusyChange]);
   const handleRunningRoute=useCallback((route:RouteSelection)=>{
@@ -162,6 +192,8 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
     setActiveMode(current=>topology.operating_modes.some(mode=>mode.id===current)?current:topology.operating_modes[0]?.id??'');
   };
   useEffect(resetToSaved, [topology.id,labProfileId]);
+  // 库改名/显式采用最新沿同一图ID回传；仅无草稿时同步保存模型，绝不换令牌重放旧草稿。
+  useEffect(()=>{if(!dirty&&!saving&&!unknownWrite)setDraft(topology)},[topology,dirty,saving,unknownWrite]);
 
   // P1-57：dirty 变化上报外层（含卸载复位）—— 外层据此阻断 LabProfile 切换
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
@@ -242,7 +274,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
 
   const openNode = (id: string) => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (isWriteBlocked()) return;
     const item=draft.nodes.find(node=>node.id===id);
     if (item) {
       setSelectedNode({...item,params:{...item.params}});
@@ -259,7 +291,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
   }, [initialNodes, initialEdges, setNodes, setEdges]);
 
   const changeDraft = useCallback((change: (current: SwitchTopology) => SwitchTopology): boolean => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return false;
+    if (isWriteBlocked()) return false;
     try {
       const next = change(draft);
       validateDraftInternalPaths(next,draft);
@@ -274,7 +306,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
     }
   }, [draft]);
   const onConnect = useCallback((params: Connection) => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (isWriteBlocked()) return;
     try {
       const next = addDraftConnection(draft, {id:crypto.randomUUID(),source:params.source,target:params.target,
         source_pin:params.sourceHandle || undefined,target_pin:params.targetHandle || undefined}, activeMode);
@@ -285,7 +317,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
   }, [draft, activeMode, changeDraft]);
 
   const deleteNodes = useCallback((ids: string[]) => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (isWriteBlocked()) return;
     const count = draft.connections.filter(c=>ids.includes(c.source)||ids.includes(c.target)).length;
     if (window.confirm(`删除 ${ids.length} 个拓扑器件及 ${count} 条关联连线？不会删除仪器资源或历史记录。`)) {
       if (changeDraft(current=>removeDraftNodes(current,ids))) setNodeDrawerOpen(false);
@@ -294,7 +326,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
 
   // ── Node drag → update position in ref, mark dirty ──
   const handleNodesChange = useCallback((changes: NodeChange[]) => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (isWriteBlocked()) return;
     const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
     if (removed.length) deleteNodes(removed);
     onNodesChange(changes.filter(c=>c.type!=='remove'));
@@ -306,7 +338,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
   }, [onNodesChange, deleteNodes, changeDraft]);
 
   const handleEdgesChange = useCallback((changes: EdgeChange[]) => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (isWriteBlocked()) return;
     const removed = changes.filter(c=>c.type==='remove').map(c=>c.id);
     if (removed.length) changeDraft(current=>removeDraftConnections(current,removed));
     onEdgesChange(changes.filter(c=>c.type!=='remove'));
@@ -314,7 +346,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
 
   // ── Edge click → open parameter drawer ──
   const openConnection = useCallback((id: string) => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (isWriteBlocked()) return;
     const conn = draft.connections.find(c => c.id === id);
     if (conn) {
       setSelectedEdge({ ...conn });
@@ -328,7 +360,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
 
   // ── Update connection parameter ──
   const updateConnectionParam = useCallback((field: keyof TopologyConnection, value: any) => {
-    if (!selectedEdge || savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (!selectedEdge || isWriteBlocked()) return;
     setSelectedEdge(prev => prev ? { ...prev, [field]: value } : null);
     if(field==='cable_loss_db'||field==='cable_length_m') {
       setEdgeNumericDeclarations(current=>[...new Set([...current,field])]);
@@ -349,12 +381,59 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
     }
   }, [selectedEdge, changeDraft, edgeNumericDeclarations, edgeNominalValid, cableNominalValid]);
 
+  const ownsWrite=(ticket:RevisionContext)=>mounted.current&&ownsRevisionRequest(liveRequest.current,ticket);
+  const startWrite=()=>{
+    onWriteStart();
+    const ticket={scope,topologyId:topology.id??'',generation:++requestGeneration.current};
+    liveRequest.current=ticket;inspectGeneration.current++;setInspecting(false);
+    savingRef.current=true;setSaving(true);setRevisionError('');setLatest(null);onBusyChange(true);
+    return ticket;
+  };
+  const finishWrite=(ticket:RevisionContext)=>{
+    if(!ownsWrite(ticket))return;
+    savingRef.current=false;setSaving(false);onBusyChange(collectionBusyRef.current||unknownWriteRef.current);
+  };
+  const writeFailed=(err:any,ticket:RevisionContext,writeConfirmed=false)=>{
+    if(!ownsWrite(ticket))return;
+    const failure=revisionFailure(writeConfirmed?undefined:err.response?.status);
+    setSaveResult('failed');setRevisionError(`${failure.message} ${errorText(err)}`);
+    if(failure.kind==='unknown'){
+      unknownWriteRef.current=true;setUnknownWrite(true);onBusyChange(true);
+    }
+  };
+  const adoptSaved=(current:SwitchTopology)=>{
+    setDraft(current);setNumericDeclarations({});setEdgeNumericDeclarations([]);
+    setSelectedNode(null);setSelectedEdge(null);setSelectedConnectionId(null);
+    setDrawerOpen(false);setNodeDrawerOpen(false);setHighlightedRoute(null);
+    setPortText('');setPortsExplicit(false);setConversionOpen(false);
+    setActiveMode(mode=>current.operating_modes.some(item=>item.id===mode)?mode:current.operating_modes[0]?.id??'');
+    updateDirty(false);onTopologyUpdated(current);
+  };
+  // 显式 GET 核查不借用写 ticket，不接纳令牌覆盖仍在编辑的旧草稿。
+  const inspectLatest=async()=>{
+    if(savingRef.current||collectionBusyRef.current||isLibraryBusy()||!topology.id)return;
+    const ticket={...liveRequest.current},read=++inspectGeneration.current;setInspecting(true);setLatest(null);setLatestHistory(null);
+    const captured={...ticket,inspectionGeneration:read,savedRevision:topology.revision};
+    const ownsInspection=()=>ownsWrite(ticket)&&!isLibraryBusy()&&ownsSavedInspection(
+      {...liveRequest.current,inspectionGeneration:inspectGeneration.current,savedRevision:savedModel.current.topology.revision},captured);
+    try{
+      const current=await switchTopologyService.getTopology(topology.id,labProfileId);
+      const history=await switchTopologyService.listRevisions(topology.id,labProfileId,0,50);
+      if(ownsInspection()){latestIdentity.current=captured;setLatest(current);setLatestHistory(history)}
+    }catch(err){if(ownsInspection())setRevisionError(`核查读取失败，原草稿和未知状态保留。 ${errorText(err)}`)}
+    finally{if(ownsInspection())setInspecting(false)}
+  };
+  const adoptLatest=()=>{
+    if(!latest||!latestIdentity.current||savingRef.current||collectionBusyRef.current||isLibraryBusy()||!ownsSavedInspection(
+      {...liveRequest.current,inspectionGeneration:inspectGeneration.current,savedRevision:topology.revision},latestIdentity.current))return;
+    adoptSaved(latest);setLatest(null);setLatestHistory(null);setRevisionError('');setSaveResult('idle');
+    unknownWriteRef.current=false;setUnknownWrite(false);onBusyChange(collectionBusyRef.current||savingRef.current);
+  };
+
   // ── Save: validate then PATCH ──
   const handleSave = useCallback(async () => {
-    if (!topology.id || savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
-    savingRef.current = true;
-    setSaving(true);
-    onBusyChange(true);
+    if (!topology.id || isWriteBlocked()) return;
+    const ticket=startWrite();
     const release = beginWork('topology-save', '拓扑保存尚未结束');
 
     try {
@@ -366,7 +445,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
 
       // 3. PATCH to backend
       const updated = await switchTopologyService.updateTopology(topology.id, labProfileId, payload);
-      if (!mounted.current) return;
+      if (!ownsWrite(ticket)) return;
       setDraft(updated);
       setNumericDeclarations({});
       setEdgeNumericDeclarations([]);
@@ -388,12 +467,12 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
         message: `topology=${topology.id} lab=${labProfileId} nodes=${draft.nodes.length} conns=${draft.connections.length}`,
       });
     } catch (err: any) {
-      if (!mounted.current) return;
-      setSaveResult('failed');
+      if (!ownsWrite(ticket)) return;
+      writeFailed(err,ticket);
       const detail = err.response?.data?.detail || err.message;
       notifications.show({
         title: '保存失败',
-        message: typeof detail === 'string' ? detail : JSON.stringify(detail),
+        message: `${revisionFailure(err.response?.status).message} ${typeof detail === 'string' ? detail : JSON.stringify(detail)}`,
         color: 'red',
         icon: <IconX size={16} />,
         autoClose: 5000,
@@ -405,29 +484,43 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
         error: typeof detail === 'string' ? detail : JSON.stringify(detail),
       });
     } finally {
-      savingRef.current = false;
-      if (mounted.current) {setSaving(false);onBusyChange(collectionBusyRef.current);}
+      finishWrite(ticket);
       release();
     }
-  }, [topology, draft, numericDeclarations, onTopologyUpdated, labProfileId, beginWork, onBusyChange]);
+  }, [topology, draft, numericDeclarations, onTopologyUpdated, labProfileId, beginWork, onBusyChange,onWriteStart]);
 
   const saveConversion=async(preview:TopologyConversionPreview)=>{
-    if(savingRef.current||collectionBusyRef.current||isLibraryBusy()||dirty||!topology.id)return;
-    savingRef.current=true;setSaving(true);onBusyChange(true);
+    if(isWriteBlocked()||dirty||!topology.id)return;
+    const ticket=startWrite();
     const release=beginWork('topology-save','拓扑转换保存尚未结束');
     try{
-      const updated=await switchTopologyService.updateTopology(topology.id,labProfileId,{conversion:{source_digest:preview.source_digest,changes:preview.changes}});
-      if(!mounted.current)return;
+      const updated=await switchTopologyService.updateTopology(topology.id,labProfileId,{expected_revision:preview.revision,conversion:{source_digest:preview.source_digest,changes:preview.changes}});
+      if(!ownsWrite(ticket))return;
       // 只用已保存GET模型更新原编辑器，不使用preview.candidate替换草稿。
       setDraft(updated);setNumericDeclarations({});setEdgeNumericDeclarations([]);updateDirty(false);
       setHighlightedRoute(null);setSaveResult('saved');setConversionOpen(false);onTopologyUpdated(updated);
-    }catch(err){if(mounted.current)setSaveResult('failed');throw err}
-    finally{savingRef.current=false;if(mounted.current){setSaving(false);onBusyChange(collectionBusyRef.current);}release()}
+    }catch(err){writeFailed(err,ticket);throw err}
+    finally{finishWrite(ticket);release()}
+  };
+
+  const restoreRevision=async(targetRevision:number,expectedRevision:number)=>{
+    if(!topology.id||!canRestore({dirty,writing:savingRef.current||isLibraryBusy(),collectionBusy:collectionBusyRef.current,unknownWrite:unknownWriteRef.current}))return;
+    const ticket=startWrite(),release=beginWork('topology-save','拓扑历史恢复尚未结束');
+    let writeConfirmed=false;
+    try{
+      await switchTopologyService.restoreTopology(topology.id,labProfileId,targetRevision,expectedRevision);
+      writeConfirmed=true;
+      const current=await switchTopologyService.getTopology(topology.id,labProfileId);
+      if(!ownsWrite(ticket))return;
+      adoptSaved(current);setSaveResult('saved');setHistoryOpen(false);
+      notifications.show({color:'green',message:`已恢复为新的保存修订 r${current.revision}；未恢复校准资格`});
+    }catch(err){writeFailed(err,ticket,writeConfirmed);if(writeConfirmed)throw new Error(`恢复写入已确认，但当前详情读取失败；${errorText(err)}`);throw err}
+    finally{finishWrite(ticket);release()}
   };
 
   const activeModeObj = draft.operating_modes.find(m => m.id === activeMode);
   const addNode = () => {
-    if (savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (isWriteBlocked()) return;
     const calibrationOnly = ['reference_antenna','signal_analyzer','air_path','receive_cable'].includes(newNodeType);
     const mode = calibrationOnly ? CALIBRATION_MODE : activeMode || 'mimo_ota';
     let current = draft;
@@ -446,7 +539,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
     void setCenter(node.position.x+90,node.position.y+40,{zoom:1,duration:200});
   };
   const applyNodeEdit = () => {
-    if (!selectedNode || !nodeNominalValid || savingRef.current || collectionBusyRef.current || isLibraryBusy()) return;
+    if (!selectedNode || !nodeNominalValid || isWriteBlocked()) return;
     const ports = portText.split(/[,，\n]/).map(p=>p.trim()).filter(Boolean);
     if (!selectedNode.label.trim() || (portsExplicit&&(!ports.length || new Set(ports).size!==ports.length))) {
       notifications.show({color:'red',message:'请填写器件名称，以及不重复的端口名称'}); return;
@@ -473,10 +566,13 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
       {/* Toolbar */}
       <Paper p="sm" withBorder style={{ borderBottom: 'none', borderBottomLeftRadius: 0, borderBottomRightRadius: 0 }}>
         <Text size="sm" data-testid="topology-save-stage">
-          {saving ? '正在校验并保存拓扑' : saveResult === 'failed' ? '拓扑保存失败；草稿未保存'
+          {saving ? '正在校验并保存拓扑' : unknownWrite ? '保存结果未知；请显式核对服务器修订' : saveResult === 'failed' ? '拓扑保存失败；草稿未保存'
             : dirty ? '拓扑草稿未保存' : saveResult === 'saved' ? '拓扑已保存到服务器；不自动同步仪器绑定'
             : '拓扑编辑器无未保存改动'}
         </Text>
+        {revisionError&&<Alert color="red" data-testid="topology-revision-error">{revisionError}</Alert>}
+        <Group mt="xs"><Button variant="light" onClick={()=>setHistoryOpen(true)}>保存修订历史</Button>
+          <Button variant="light" loading={inspecting} disabled={saving||collectionBusy||libraryBusy} onClick={()=>void inspectLatest()}>刷新查看服务器最新</Button></Group>
         <Text size="xs" c="dimmed">
           插入线缆：添加并核对A/B → 拖两条新边 → 探头属性按CE→探头重声明完整路径 → 删除旧边 → 保存后重新选择服务器路径。
           旧边校准值不自动复制；改端口名请先加新端口、建替代边、重声明、删旧边，再删旧端口。
@@ -498,7 +594,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
           </Group>
           <Group>
             <Button disabled={editingBlocked} variant="light" onClick={()=>{
-              if(savingRef.current||collectionBusyRef.current||isLibraryBusy())return;
+              if(isWriteBlocked())return;
               setDrawerOpen(false);setNodeDrawerOpen(false);setConversionOpen(true);
             }}>转换旧配置</Button>
             <Select aria-label="器件列表" placeholder="搜索全部器件（含隐藏）" searchable value={null} w={260}
@@ -513,14 +609,14 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
             <Select aria-label="新增器件类型" value={newNodeType} onChange={v=>v&&setNewNodeType(v)} data={nodeTypeOptions} disabled={editingBlocked} w={150} />
             <Button onClick={addNode} disabled={editingBlocked}>添加器件</Button>
             <Button variant="light" disabled={editingBlocked} onClick={()=>{
-              if(savingRef.current||collectionBusyRef.current||isLibraryBusy())return;
+              if(isWriteBlocked())return;
               if (!draft.operating_modes.some(m=>m.id===CALIBRATION_MODE)) changeDraft(current=>({...current,operating_modes:[...current.operating_modes,{id:CALIBRATION_MODE,name:'校准接线',active_connections:[]}]}));
               setActiveMode(CALIBRATION_MODE);
             }}>校准接线</Button>
             <Select 
               aria-label="操作模式"
               value={activeMode} 
-              onChange={(v) => {if(!savingRef.current&&!collectionBusyRef.current&&!isLibraryBusy()&&v)setActiveMode(v)}}
+              onChange={(v) => {if(!isWriteBlocked()&&v)setActiveMode(v)}}
               data={draft.operating_modes.map(m => ({ value: m.id, label: m.name }))}
               disabled={editingBlocked}
               placeholder="操作模式"
@@ -536,7 +632,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
               保存拓扑
             </Button>
             <Button variant="default" disabled={!dirty||editingBlocked} onClick={()=>{
-              if(savingRef.current||collectionBusyRef.current||isLibraryBusy()||!dirty)return;
+              if(isWriteBlocked()||!dirty)return;
               if(window.confirm(`放弃当前图 ${topology.name} · ${topology.id?.slice(0,8)} 的未保存改动？仅恢复已保存快照，不写入或删除服务器图。`))resetToSaved();
             }}>放弃未保存改动</Button>
           </Group>
@@ -570,7 +666,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
       </div>
       <aside style={{width:410,maxWidth:'45%',minWidth:300,minHeight:0}}>
         {topology.id?<RouteCalibrationPanel key={`${labProfileId}:${topology.id}`} labId={labProfileId} topologyId={topology.id}
-          mode={activeMode} dirty={dirty} saving={saving||libraryBusy} revision={JSON.stringify([topology.nodes,topology.connections,topology.operating_modes])}
+          mode={activeMode} dirty={dirty} saving={saving||libraryBusy||unknownWrite} revision={JSON.stringify([topology.nodes,topology.connections,topology.operating_modes])}
           graph={topology}
           onSelectRoute={setHighlightedRoute} onRunningRoute={handleRunningRoute} onBusyChange={handleCollectionBusy}/>:<Alert>请先保存拓扑再读取完整路径。</Alert>}
       </aside>
@@ -594,21 +690,21 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
           <Text size="xs" c="dimmed">{selectedNode.id}</Text>
           <TextInput label="器件名称" value={selectedNode.label} disabled={editingBlocked} onChange={event=>setSelectedNode({...selectedNode,label:event.currentTarget.value})} />
           <PortDeclarationFields node={selectedNode} text={portText} disabled={editingBlocked}
-            onTextChange={value=>{if(!savingRef.current&&!collectionBusyRef.current&&!isLibraryBusy())setPortText(value)}}
-            onChange={delta=>{if(savingRef.current||collectionBusyRef.current||isLibraryBusy())return;setPortsExplicit(true);setSelectedNode(current=>current?{...current,params:{...current.params,...delta}}:null)}}
-            onRestore={()=>{if(savingRef.current||collectionBusyRef.current||isLibraryBusy())return;const original=draft.nodes.find(n=>n.id===selectedNode.id);if(!original)return;
+            onTextChange={value=>{if(!isWriteBlocked())setPortText(value)}}
+            onChange={delta=>{if(isWriteBlocked())return;setPortsExplicit(true);setSelectedNode(current=>current?{...current,params:{...current.params,...delta}}:null)}}
+            onRestore={()=>{if(isWriteBlocked())return;const original=draft.nodes.find(n=>n.id===selectedNode.id);if(!original)return;
               const params={...selectedNode.params};for(const key of ['ports','port_directions',...(['communication_tester','bse_port'].includes(selectedNode.type)?['port_roles']:[])]){
                 if(Object.hasOwn(original.params,key))params[key]=original.params[key];else delete params[key];
               }setSelectedNode({...selectedNode,params});setPortText(getNodePorts(original).join(', '));setPortsExplicit(false)}}/>
           <InternalPathFields node={selectedNode} disabled={editingBlocked}
-            onChange={paths=>{if(savingRef.current||collectionBusyRef.current||isLibraryBusy())return;setSelectedNode(current=>current?{...current,params:{...current.params,internal_paths:paths}}:null)}}
-            onRestore={()=>{if(savingRef.current||collectionBusyRef.current||isLibraryBusy())return;const original=draft.nodes.find(n=>n.id===selectedNode.id);if(!original)return;
+            onChange={paths=>{if(isWriteBlocked())return;setSelectedNode(current=>current?{...current,params:{...current.params,internal_paths:paths}}:null)}}
+            onRestore={()=>{if(isWriteBlocked())return;const original=draft.nodes.find(n=>n.id===selectedNode.id);if(!original)return;
               const params={...selectedNode.params};if(Object.hasOwn(original.params,'internal_paths'))params.internal_paths=original.params.internal_paths;else delete params.internal_paths;
               setSelectedNode({...selectedNode,params})}}/>
           {['cable','receive_cable'].includes(selectedNode.type)&&<Text size="xs">A/B是同一物理线缆两端，可按实际名称修改；须点击应用才成为端口声明。损耗仅在相邻连线编辑，不在器件重复计入。</Text>}
           <NominalPropertyFields key={selectedNode.id} fields={nominalFieldsForNode(selectedNode.type)} values={selectedNode.params}
             metadata={selectedNode.params.nominal_metadata} disabled={editingBlocked} onValidityChange={setNodeNominalValid}
-            onChange={(key,value,metadata)=>{if(!savingRef.current&&!collectionBusyRef.current&&!isLibraryBusy())setSelectedNode(current=>current?setNodeNominal(current,key,value,metadata):null)}}/>
+            onChange={(key,value,metadata)=>{if(!isWriteBlocked())setSelectedNode(current=>current?setNodeNominal(current,key,value,metadata):null)}}/>
           <Text size="xs" c="dimmed">数值修改可能触发原通路一致性复核；保存标称不等于采用校准。</Text>
           <Text size="xs">画布左为连入、右为连出，同名左右接点是同一个物理端口，不是两根线。</Text>
           <MultiSelect label="显示模式" data={draft.operating_modes.map(m=>({value:m.id,label:m.name}))} value={selectedNode.params.visible_modes || draft.operating_modes.map(m=>m.id)} disabled={editingBlocked || selectedNode.params.connection_scope==='calibration'} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:value}})} />
@@ -639,8 +735,22 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
       </Drawer>
 
       <LegacyConversionPanel key={conversionEpoch} opened={conversionOpen} topology={topology} labId={labProfileId} dirty={dirty}
-        blocked={editingBlocked} isBlocked={()=>savingRef.current||collectionBusyRef.current||isLibraryBusy()}
-        onClose={()=>{if(!savingRef.current&&!collectionBusyRef.current&&!isLibraryBusy())setConversionOpen(false)}} onSave={saveConversion}/>
+        blocked={editingBlocked} isBlocked={isWriteBlocked}
+        onClose={()=>{if(!isWriteBlocked())setConversionOpen(false)}} onSave={saveConversion} onInspectLatest={inspectLatest}/>
+      <TopologyHistoryPanel opened={historyOpen} topology={topology} labId={labProfileId} dirty={dirty}
+        blocked={editingBlocked} isBlocked={isWriteBlocked} onClose={()=>setHistoryOpen(false)}
+        onRestore={restoreRevision} onInspectLatest={inspectLatest}/>
+      <Modal opened={latest!==null} onClose={()=>setLatest(null)} title="核对服务器最新保存修订" size="xl" closeOnClickOutside={false}>
+        <Stack>
+          <Alert color="orange">读取不改变草稿或解除未知状态。请核对修订、操作与内容；只有显式采用才放弃旧草稿和转换输入，不会自动重试写请求。</Alert>
+          <Text>本地保存令牌 r{topology.revision} · 服务器 r{latest?.revision}</Text>
+          <Text fw={600}>服务器当前详情（GET）</Text><pre style={{whiteSpace:'pre-wrap',maxHeight:240,overflow:'auto'}}>{JSON.stringify(latest,null,2)}</pre>
+          <Text fw={600}>服务器历史操作</Text><pre style={{whiteSpace:'pre-wrap',maxHeight:180,overflow:'auto'}}>{JSON.stringify(latestHistory,null,2)}</pre>
+          <Text fw={600}>保留中的本地草稿</Text><pre style={{whiteSpace:'pre-wrap',maxHeight:180,overflow:'auto'}}>{JSON.stringify(draft,null,2)}</pre>
+          <Group><Button variant="default" onClick={()=>setLatest(null)}>保留草稿，取消核对</Button>
+            <Button color="orange" disabled={saving||collectionBusy||libraryBusy} onClick={adoptLatest}>确认放弃旧草稿并采用服务器最新</Button></Group>
+        </Stack>
+      </Modal>
 
       {/* ── Edge Parameter Drawer ── */}
       <Drawer
@@ -734,7 +844,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
 
             <NominalPropertyFields key={`cable-${selectedEdge.id}`} fields={cableNominalFields} values={selectedEdge as unknown as Record<string,unknown>}
               metadata={selectedEdge.nominal_metadata} disabled={editingBlocked} metadataOnly onValidityChange={setCableNominalValid}
-              onChange={(key,value,metadata)=>{if(!savingRef.current&&!collectionBusyRef.current&&!isLibraryBusy())setSelectedEdge(current=>{
+              onChange={(key,value,metadata)=>{if(!isWriteBlocked())setSelectedEdge(current=>{
                 if(!current)return null;const updated=setEdgeNominal(current,key,value,metadata);
                 // 来源编辑不声明新电缆数值，特别是存量参考边的缺键。
                 if(Object.hasOwn(current,key))return {...updated,[key]:current[key as keyof TopologyConnection]};
@@ -742,7 +852,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
               })}}/>
             <NominalPropertyFields key={`pa-${selectedEdge.id}`} fields={edgeNominalFields} values={selectedEdge as unknown as Record<string,unknown>}
               metadata={selectedEdge.nominal_metadata} disabled={editingBlocked} onValidityChange={setEdgeNominalValid}
-              onChange={(key,value,metadata)=>{if(!savingRef.current&&!collectionBusyRef.current&&!isLibraryBusy())setSelectedEdge(current=>current?setEdgeNominal(current,key,value,metadata):null)}}/>
+              onChange={(key,value,metadata)=>{if(!isWriteBlocked())setSelectedEdge(current=>current?setEdgeNominal(current,key,value,metadata):null)}}/>
             <Text size="xs" c="dimmed">旧PA按精确边ID定位，不自动创建PA器件或切换模式。标称净值仅供显示，非实测；保存标称不等于采用校准，数值修改可能触发原通路一致性复核。</Text>
             <Divider label="校准数据 (只读)" labelPosition="center" />
 
@@ -788,20 +898,29 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [flowDirty,setFlowDirty] = useState(false);
   const [flowBusy,setFlowBusy] = useState(false);
   const [libraryBusy,setLibraryBusy] = useState(false);
-  const lock = useRef({dirty:false,flow:false,library:false});
+  const [libraryUnknown,setLibraryUnknown]=useState(false);
+  const [libraryRevisionError,setLibraryRevisionError]=useState('');
+  const [libraryInspection,setLibraryInspection]=useState<{items:SwitchTopology[];saved:SwitchTopology|null;history:unknown;
+    token:{scope:string;generation:number};sourceId:string|null;inspectionGeneration:number}|null>(null);
+  const [libraryInspecting,setLibraryInspecting]=useState(false);
+  const libraryInspectSerial=useRef(0);
+  const invalidateLibraryInspection=useCallback(()=>{
+    libraryInspectSerial.current++;setLibraryInspection(null);setLibraryInspecting(false);
+  },[]);
+  const lock = useRef({dirty:false,flow:false,library:false,unknown:false});
   const syncGuard = useCallback(() => {
     const value=lock.current;
-    registerSwitchGuard('topology-editor',value.flow||value.library
+    registerSwitchGuard('topology-editor',value.flow||value.library||value.unknown
       ? '拓扑操作尚未结束或采集尚未确认结束，请先查看当前操作'
       : value.dirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null);
   },[registerSwitchGuard]);
   const handleFlowDirty=useCallback((dirty:boolean)=>{if(!editorMounted.current)return;lock.current.dirty=dirty;setFlowDirty(dirty);syncGuard()},[syncGuard]);
   const handleFlowBusy=useCallback((busy:boolean)=>{if(!editorMounted.current)return;lock.current.flow=busy;setFlowBusy(busy);syncGuard()},[syncGuard]);
-  const isLibraryBusy=useCallback(()=>lock.current.library,[]);
-  useOperationalLabSwitchGuard('topology-editor',flowBusy||libraryBusy ? '拓扑操作尚未结束或采集尚未确认结束'
+  const isLibraryBusy=useCallback(()=>lock.current.library||lock.current.unknown,[]);
+  useOperationalLabSwitchGuard('topology-editor',flowBusy||libraryBusy||libraryUnknown ? '拓扑操作尚未结束或采集尚未确认结束'
     : flowDirty ? '拓扑编辑器有未保存的改动 —— 请先保存或放弃再切换 LabProfile' : null);
-  const canLeave=()=>canLeaveTopology(lock.current.dirty,lock.current.flow||lock.current.library);
-  const blocked=flowDirty||flowBusy||libraryBusy;
+  const canLeave=()=>canLeaveTopology(lock.current.dirty,lock.current.flow||lock.current.library||lock.current.unknown);
+  const blocked=flowDirty||flowBusy||libraryBusy||libraryUnknown;
 
   const scope=JSON.stringify([labProfileId,selectedSwitchId]);
   const request=useRef({scope,generation:0});
@@ -860,7 +979,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   useEffect(()=>{
     const token={scope,generation:request.current.generation+1};request.current=token;
     setTopology(null);setSelectedId(null);currentId.current=null;setLibrary([]);setLoadedScope('');
-    setModal(null);setTopoError(null);
+    setModal(null);setTopoError(null);invalidateLibraryInspection();
     if(!labProfileId||!selectedSwitchId||!chamberId){setTopoLoading(false);return}
     setTopoLoading(true);
     fetchLibrary(labProfileId,selectedSwitchId).then(items=>{
@@ -890,14 +1009,17 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     if(kind!=='import'&&!id)return;
     if(kind==='import'&&!template)return;
     const token={...request.current};
+    invalidateLibraryInspection();
     const owner={};operation.current=owner;
-    lock.current.library=true;setLibraryBusy(true);syncGuard();setModalError(null);
+    lock.current.library=true;setLibraryBusy(true);syncGuard();setModalError(null);setLibraryRevisionError('');
     const release=beginWork('topology-library','拓扑库写操作尚未结束');
+    let writeConfirmed=false;
     try{
       let result:SwitchTopology;
       if(kind==='import') result=await switchTopologyService.importFromTemplate(selectedSwitchId,labProfileId,template!);
       else if(kind==='copy') result=await switchTopologyService.copyTopology(id!,labProfileId,name);
-      else result=await switchTopologyService.updateTopology(id!,labProfileId,{name});
+      else result=await switchTopologyService.updateTopology(id!,labProfileId,{name,expected_revision:topology!.revision});
+      writeConfirmed=true;
       if(!owns(token,id))return;
       // 写成功后从服务器重读全集，不把客户端草稿或POST载荷当当前图。
       const items=await fetchLibrary(labProfileId,selectedSwitchId);
@@ -910,7 +1032,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       notifications.show({color:'green',message:kind==='name'?'名称已保存；执行选择未改变':'已新增非活跃副本；未修改本浏览器默认或正式执行选择'});
     }catch(err){
       if(!owns(token,id))return;
-      const message=`${errorText(err)}。请求失败或超时时请刷新列表核查，勿自动重试写请求。`;
+      const failure=revisionFailure(writeConfirmed?undefined:(err as any).response?.status);
+      const message=`${failure.message} ${errorText(err)}`;
+      setLibraryRevisionError(message);
+      if(failure.kind==='unknown'){lock.current.unknown=true;setLibraryUnknown(true);syncGuard()}
       if(kind==='import')notifications.show({color:'red',title:'模板导入失败',message});
       else setModalError(message);
     }finally{
@@ -920,8 +1045,33 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       }
     }
   };
+  const inspectLibrary=async()=>{
+    if(lock.current.library||lock.current.flow||!labProfileId)return;
+    const token={...request.current},id=currentId.current,serial=++libraryInspectSerial.current;
+    const captured={...token,topologyId:id??'',inspectionGeneration:serial};
+    const ownsInspection=()=>ownsLibraryInspection({...request.current,topologyId:currentId.current??'',inspectionGeneration:libraryInspectSerial.current},captured);
+    setLibraryInspecting(true);setLibraryInspection(null);
+    try{
+      const items=await fetchLibrary(labProfileId,selectedSwitchId);
+      const selected=id??chooseTopology(items,null);
+      const saved=selected?await switchTopologyService.getTopology(selected,labProfileId):null;
+      const history=selected?await switchTopologyService.listRevisions(selected,labProfileId,0,50):null;
+      if(ownsInspection())setLibraryInspection({items,saved,history,token,sourceId:id,inspectionGeneration:serial});
+    }catch(err){if(ownsInspection())setLibraryRevisionError(`核查失败；未知锁和输入保留。 ${errorText(err)}`)}
+    finally{if(ownsInspection())setLibraryInspecting(false)}
+  };
+  const adoptLibraryLatest=()=>{
+    if(!libraryInspection||!ownsLibraryInspection(
+      {...request.current,topologyId:currentId.current??'',inspectionGeneration:libraryInspectSerial.current},
+      {...libraryInspection.token,topologyId:libraryInspection.sourceId??'',inspectionGeneration:libraryInspection.inspectionGeneration}
+    )||lock.current.library||lock.current.flow)return;
+    const {items,saved}=libraryInspection;
+    selectLoaded(saved?items.map(item=>item.id===saved.id?saved:item):items,saved?.id??null);
+    lock.current.unknown=false;setLibraryUnknown(false);setLibraryRevisionError('');setLibraryInspection(null);setModal(null);syncGuard();
+  };
   const handleSelection=(id:string|null)=>{
     if(!id||id===currentId.current||!canLeave())return;
+    invalidateLibraryInspection();
     selectLoaded(currentLibrary,id);
   };
   const openModal=(kind:'name'|'copy')=>{
@@ -969,7 +1119,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           onClick={()=>void runWrite('import')}>从模板新增副本</Button>}
       </Group>
       <Text size="xs" c="dimmed" mt="xs">库选择和本浏览器默认不改变正式执行绑定。复制/模板新增均为非活跃图，不自动用于正式测试。</Text>
+      <Text size="xs" c="dimmed">进入页面从服务器读取保存基线；如曾离开结果未知的写操作，请核查服务器最新修订，页面不会自动重发。</Text>
       {blocked&&<Alert mt="sm" color="yellow">{flowDirty?'请先保存或放弃未保存草稿，再切换范围、复制、命名或导入。':'操作尚未结束；保存、转换或采集结束未确认时禁止切换和另存。'}</Alert>}
+      {libraryRevisionError&&<Alert mt="sm" color="red">{libraryRevisionError}</Alert>}
+      {!!libraryRevisionError&&<Button mt="xs" variant="light" loading={libraryInspecting} disabled={libraryBusy||flowBusy} onClick={()=>void inspectLibrary()}>核查服务器最新拓扑库（只读）</Button>}
       {templateError&&<Alert mt="sm" color="red" title="模板加载失败"><Button size="xs" variant="light" onClick={()=>setTemplateReload(value=>value+1)}>重试模板加载</Button></Alert>}
       {catalogError&&<Alert mt="sm" color="red">{catalogError}</Alert>}
     </Card>
@@ -981,9 +1134,16 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         {modal==='copy'&&<Alert color="yellow">只复制已保存版本。副本非活跃、非默认；不复制旧采用记录、证书或历史执行。已有 calibrated_loss_db 和 calibrated_phase_deg 将置空，标称值不等于实测校准。</Alert>}
         <TextInput label="拓扑名称" value={name} disabled={libraryBusy} onChange={event=>setName(event.currentTarget.value)} required/>
         {modalError&&<Alert color="red">{modalError}</Alert>}
+        {modalError&&<Button variant="light" loading={libraryInspecting} disabled={libraryBusy||flowBusy} onClick={()=>void inspectLibrary()}>核查服务器最新拓扑库（只读）</Button>}
         <Group justify="end"><Button variant="default" disabled={libraryBusy} onClick={()=>setModal(null)}>取消</Button>
-          <Button loading={libraryBusy} disabled={!name.trim()||flowDirty||flowBusy} onClick={()=>void runWrite(modal==='copy'?'copy':'name')}>确认{modal==='copy'?'复制':'命名'}</Button></Group>
+          <Button loading={libraryBusy} disabled={!name.trim()||flowDirty||flowBusy||libraryUnknown} onClick={()=>void runWrite(modal==='copy'?'copy':'name')}>确认{modal==='copy'?'复制':'命名'}</Button></Group>
       </Stack>
+    </Modal>
+    <Modal opened={libraryInspection!==null} onClose={()=>setLibraryInspection(null)} title="核对服务器拓扑库" size="xl" closeOnClickOutside={false}>
+      <Stack><Alert color="orange">请核对修订、历史操作与图内容。读取不会解除未知写锁，也不会自动重发命名、复制或导入。</Alert>
+        <pre style={{whiteSpace:'pre-wrap',maxHeight:380,overflow:'auto'}}>{JSON.stringify(libraryInspection,null,2)}</pre>
+        <Group><Button variant="default" onClick={()=>setLibraryInspection(null)}>保留输入，取消</Button>
+          <Button color="orange" onClick={adoptLibraryLatest}>确认采用服务器最新并结束核查</Button></Group></Stack>
     </Modal>
     <div style={{height:'calc(100vh - 350px)',minHeight:500}}>
       {!labProfileId?<Center h="100%"><Text>请选择当前 LabProfile。</Text></Center>
@@ -993,8 +1153,8 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         :topoError?<Center h="100%"><Alert color="red" title="拓扑加载失败">{topoError}</Alert></Center>
         :currentTopology?<ReactFlowProvider key={`${labProfileId}/${selectedSwitchId}/${currentTopology.id}`}>
           <TopologyFlow topology={currentTopology} labProfileId={labProfileId} conversionEpoch={conversionEpoch}
-            libraryBusy={libraryBusy} isLibraryBusy={isLibraryBusy}
-            onDirtyChange={dirtyCallback} onBusyChange={busyCallback}
+            libraryBusy={libraryBusy||libraryUnknown} isLibraryBusy={isLibraryBusy}
+            onDirtyChange={dirtyCallback} onBusyChange={busyCallback} onWriteStart={invalidateLibraryInspection}
             onTopologyUpdated={updated=>{if(liveFlow.current===flowIdentity&&updated.id===currentId.current){setTopology(updated);setLibrary(items=>items.map(item=>item.id===updated.id?updated:item))}}}/>
         </ReactFlowProvider>
         :<Center h="100%"><Text c="dimmed">此范围尚无拓扑配置；可显式从模板新增非活跃副本，不会自动导入。</Text></Center>}

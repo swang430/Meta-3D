@@ -1,4 +1,5 @@
 """真实HTTP和实际解析器：未知不是零，归属不是另一份量值。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import hashlib
 import json
@@ -72,7 +73,7 @@ def test_http_clear_and_zero_roundtrip(world,value):
     _,_,client=world
     url,scope=create(world)
     edges=graph()['connections']; edges[0]['cable_loss_db']=value
-    response=client.patch(url,params=scope,json={'connections':edges})
+    response=client.patch(url,params=scope,json={**({'connections':edges}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code==200,response.text
     assert client.get(url,params=scope).json()['connections'][0]['cable_loss_db']==value
     assert next(x for x in client.get('/api/v1/switch-topologies',params=scope).json()['items'] if url.endswith(x['id']))['connections'][0]['cable_loss_db']==value
@@ -91,7 +92,7 @@ def test_http_owner_keeps_alias_and_terminal_changes_source(world,owner_value,ex
     url,scope=create(world)
     data=graph(); data['connections'][0]['cable_loss_db']=owner_value
     data['connections'][1]['loss_owner_connection_id']='a'
-    response=client.patch(url,params=scope,json=data)
+    response=client.patch(url,params=scope,json={**(data), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code==200,response.text
     saved=client.get(url,params=scope).json()
     assert saved['connections'][1]['loss_owner_connection_id']=='a'
@@ -127,7 +128,7 @@ def test_http_invalid_ownership_is_atomic(world,bad):
         data['connections'].append({**data['connections'][1],'id':'c'})
         data['operating_modes'][0]['active_connections'].append('c')
     before=client.get(url,params=scope).json()
-    response=client.patch(url,params=scope,json=data)
+    response=client.patch(url,params=scope,json={**(data), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code==422,response.text
     after=client.get(url,params=scope).json()
     assert after==before
@@ -189,8 +190,8 @@ def test_ownership_changes_scope_not_route_or_physical_identity(world,location,f
         'loss_owner_connection_id':'a' if location=='normal' else 'r1','same_physical_cable_confirmed':True}]}
     preview=client.post(url+'/conversion-preview',params=scope,json=changes)
     assert preview.status_code==200,preview.text
-    response=client.patch(url,params=scope,json={'conversion':{
-        'source_digest':preview.json()['source_digest'],'changes':preview.json()['changes']}})
+    response=client.patch(url,params=scope,json={**({'conversion':{
+        'source_digest':preview.json()['source_digest'],'changes':preview.json()['changes']}}), 'expected_revision': preview.json()['revision']})
     assert response.status_code==200,response.text
     db.expire_all()
     if legacy_reference:
@@ -347,7 +348,7 @@ def test_explicit_ungroup_restores_both_original_values(world):
     url,scope=create(world,data)
     assert TopologyService(client.get(url,params=scope).json()).get_end_to_end_loss('ce','probe')==2
     data['connections'][1].pop('loss_owner_connection_id')
-    response=client.patch(url,params=scope,json={'connections':data['connections']})
+    response=client.patch(url,params=scope,json={**({'connections':data['connections']}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code==200,response.text
     assert TopologyService(response.json()).get_end_to_end_loss('ce','probe')==4
     assert [e['cable_loss_db'] for e in response.json()['connections']]==[2,2]

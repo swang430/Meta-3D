@@ -1,4 +1,5 @@
 """内部通路必须在真实保存图的三类运行查询生效，不访问仪器。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 
 import pytest
@@ -209,7 +210,7 @@ def test_real_post_patch_selects_only_declared_combiner_branch(client, configure
     changed = copy.deepcopy(data)
     changed['nodes'][4]['params']['rf_path_selection']['connection_ids'] = ['other', 'd']
     patched = client.patch(f'/api/v1/switch-topologies/{graph_id}', params=params,
-        json={'nodes': changed['nodes']})
+        json={**({'nodes': changed['nodes']}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{graph_id}', params)})
     assert patched.status_code == 200, patched.text
     public = client.get(f'/api/v1/switch-topologies/{graph_id}/paths/mimo_ota', params=params)
     assert [r['path_id'] for r in public.json()] == ['ce2_to_p']
@@ -341,7 +342,7 @@ def test_changed_pair_invalidates_old_request_and_batch_preview_and_mock_reenter
         internal_paths=[{'from_port': 'new', 'to_port': 'out'}])
     edges[edge_index]['target_pin'] = 'new'
     changed = client.patch(f'/api/v1/switch-topologies/{graph.id}',
-        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes, 'connections': edges})
+        params={'lab_profile_id': str(configured.id)}, json={**({'nodes': nodes, 'connections': edges}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{graph.id}', {'lab_profile_id': str(configured.id)})})
     assert changed.status_code == 200, changed.text
     route_after = paths(client, configured, graph).json()[0]
     assert route_after['route_digest'] != route['route_digest']

@@ -271,7 +271,7 @@ def test_interleaved_idempotent_confirmation_rechecks_after_business_conflict(cl
 
 
 @pytest.mark.parametrize('operation',['delete','replace'])
-@pytest.mark.parametrize('constraint',['adoption_after_precheck','unrelated_dependency'])
+@pytest.mark.parametrize('constraint',['adoption_before_locked_precheck','unrelated_dependency'])
 def test_delete_race_and_unrelated_constraint_are_distinguished(client,configured,real_capture,db_session,
         topology_two_chains,monkeypatch,operation,constraint):
     from fastapi.testclient import TestClient
@@ -293,11 +293,11 @@ def test_delete_race_and_unrelated_constraint_are_distinguished(client,configure
     db_session.execute(text('PRAGMA foreign_keys=ON'))
     assert db_session.execute(text('PRAGMA foreign_keys')).scalar()==1
     winner=[]
-    if constraint=='adoption_after_precheck':
-        original=api.assert_route_topologies_deletable
+    if constraint=='adoption_before_locked_precheck':
+        original=api.lock_chamber
         factory=sessionmaker(bind=db_session.get_bind(),expire_on_commit=False)
-        def interleave(db,ids):
-            original(db,ids)  # 实际预检为空，不mock查询或真实来源评估。
+        def interleave(db,chamber_id):
+            # PC04A5b锁后SQLite其它写者不能先提交；真实采用先赢，再锁内预检拒删除。
             assert not winner
             with factory() as second:
                 second.execute(text('PRAGMA foreign_keys=ON'))
@@ -305,7 +305,13 @@ def test_delete_race_and_unrelated_constraint_are_distinguished(client,configure
                     ConfirmRouteApplication.model_validate(request),actor=None)
                 assert created is True
                 winner.append(record.model_dump(mode='json'))
-        monkeypatch.setattr(api,'assert_route_topologies_deletable',interleave)
+            return original(db,chamber_id)
+        if operation=='delete':
+            monkeypatch.setattr(api,'lock_chamber',interleave)
+        else:
+            def unexpected_delete_precheck(*args):
+                pytest.fail('已有库模板覆盖不应进入删除预检')
+            monkeypatch.setattr(api,'assert_route_topologies_deletable',unexpected_delete_precheck)
     else:
         # 另一种真实外键约束，不属于采用记录；不得被转成采用冲突。
         db_session.execute(text('CREATE TABLE other_reference (topology_id UUID REFERENCES switch_topologies(id))'))
@@ -328,8 +334,8 @@ def test_delete_race_and_unrelated_constraint_are_distinguished(client,configure
             assert response.status_code==409,response.text
             assert '不能覆盖导入' in response.json()['detail']
             assert not winner
-        elif constraint=='adoption_after_precheck':
-            assert winner
+        elif constraint=='adoption_before_locked_precheck':
+            assert len(winner)==1
             assert response.status_code==409,response.text
             assert '采用' in response.json()['detail']
         else:

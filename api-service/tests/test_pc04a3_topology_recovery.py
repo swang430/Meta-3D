@@ -1,4 +1,5 @@
 """PC04A3：真实保存入口拒绝损坏显式声明，历史读取保持不变。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 
 import pytest
@@ -26,7 +27,7 @@ def save_graph(world, graph=None):
 
 def patch(world, row, changed):
     return client.patch(f'/api/v1/switch-topologies/{row.id}',
-        params={'lab_profile_id': str(world['lab_a'].id)}, json=changed)
+        params={'lab_profile_id': str(world['lab_a'].id)}, json={**(changed), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{row.id}', {'lab_profile_id': str(world['lab_a'].id)})})
 
 
 @pytest.mark.parametrize('remove_middle', [False, True])

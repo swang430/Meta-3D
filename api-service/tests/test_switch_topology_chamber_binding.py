@@ -202,7 +202,8 @@ class TestActiveTopologyRequiresChamber:
         resp = client.patch(
             f"/api/v1/switch-topologies/{topo.id}",
             params={"lab_profile_id": str(lab.id)},
-            json={"chamber_id": None},
+            json={"chamber_id": None, "expected_revision":client.get(
+                f'/api/v1/switch-topologies/{topo.id}', params={'lab_profile_id':str(lab.id)}).json()['revision']},
         )
         assert resp.status_code == 422
         assert "chamber_id" in resp.json()["detail"]
@@ -226,7 +227,8 @@ class TestActiveTopologyRequiresChamber:
         resp = client.patch(
             f"/api/v1/switch-topologies/{topo.id}",
             params={"lab_profile_id": str(lab.id)},
-            json={"name": "renamed"},
+            # NULL-scope旧行没有可达GET；保留直接ORM令牌及原跨scope拒绝断言。
+            json={"name": "renamed", "expected_revision":topo.revision},
         )
         assert resp.status_code == 409
         db.refresh(topo)
@@ -251,7 +253,7 @@ class TestActiveTopologyRequiresChamber:
         resp = client.patch(
             f"/api/v1/switch-topologies/{topo.id}",
             params={"lab_profile_id": str(lab.id)},
-            json={"chamber_id": str(chamber.id)},
+            json={"chamber_id": str(chamber.id), "expected_revision":topo.revision},
         )
         assert resp.status_code == 409
         db.refresh(topo)
