@@ -362,9 +362,8 @@ class TestChamberScopeOfWrites:
         db.add(b_row); db.commit(); db.refresh(b_row)
         return a_row, b_row
 
-    def test_replace_existing_only_deletes_own_chamber_rows(self, world, monkeypatch):
-        """M2（数据删除路径）：replace 只删同 (switch, 派生暗室) 的行 ——
-        去掉 chamber 过滤会把别的暗室同类目行全删。"""
+    def test_replace_existing_refuses_and_preserves_both_chambers(self, world, monkeypatch):
+        """PC04A5a：覆盖式导入拒绝，本暗室和别的暗室原图均不删除。"""
         import app.api.switch_topology as topology_api
 
         db = world["db"]
@@ -390,24 +389,23 @@ class TestChamberScopeOfWrites:
                 "replace_existing": "true",
             },
         )
-        assert r.status_code == 200, r.text
-        # 本暗室旧行没了，新行落在派生暗室
-        # （列查询绕开 identity map —— 实体查询会对已删行抛 ObjectDeletedError）
+        assert r.status_code == 409, r.text
         db.expire_all()
         assert db.query(SwitchTopology.id).filter(
-            SwitchTopology.id == a_id).first() is None
-        assert r.json()["chamber_id"] == str(world["chamber_a"].id)
+            SwitchTopology.id == a_id).first() is not None
         # ⭐ 别的暗室的行一根手指都没碰
         assert db.query(SwitchTopology.id).filter(
             SwitchTopology.id == b_id).first() is not None
 
-    def test_import_default_demote_is_chamber_scoped(self, world, monkeypatch):
-        """M1：import 的 is_default 让位不许波及别的暗室。"""
+    def test_import_preserves_defaults_in_both_chambers(self, world, monkeypatch):
+        """PC04A5a：模板仅追加草稿，不再让位任一暗室默认行。"""
         import app.api.switch_topology as topology_api
 
         db = world["db"]
         switch_id = world["switch_id"]
         _a, b_default = self._seed_two_chambers(world, switch_id)
+        _a.is_default = True
+        db.commit()
         monkeypatch.setattr(
             topology_api, "_load_template",
             lambda _tid: (lambda: {
@@ -424,6 +422,9 @@ class TestChamberScopeOfWrites:
             },
         )
         assert r.status_code == 200, r.text
+        assert r.json()['is_active'] is False and r.json()['is_default'] is False
+        db.refresh(_a)
+        assert _a.is_default is True
         db.refresh(b_default)
         assert b_default.is_default is True, "import 的默认位让位波及了别的暗室"
 

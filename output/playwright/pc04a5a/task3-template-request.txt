@@ -1,0 +1,28 @@
+### Result
+#1510 [POST] http://127.0.0.1:15105/api/v1/switch-topologies/import/from-template?switch_category_id=08fb0b22-7f96-4c70-ae34-858562cb1cf0&lab_profile_id=0658efac-8bca-43f7-86bb-196d11f010ac&template_id=caict_v4&replace_existing=false
+
+  General
+    status:    [200] OK
+    duration:  11ms
+    type:      xhr
+    mimeType:  application/json
+
+  Request headers
+    sec-ch-ua-platform: "macOS"
+    referer: http://127.0.0.1:15105/
+    user-agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36
+    accept: application/json, text/plain, */*
+    sec-ch-ua: "Not:A-Brand";v="8", "Chromium";v="156", "Google Chrome";v="156"
+    sec-ch-ua-mobile: ?0
+
+  Response headers
+    connection: close
+    access-control-allow-credentials: true
+    access-control-allow-origin: http://127.0.0.1:15105
+    content-length: 52520
+    date: Tue, 27 Oct 2026 15:43:53 GMT
+    content-type: application/json
+    vary: Origin
+    server: uvicorn
+
+Run `response-body 1510` to read the response body.

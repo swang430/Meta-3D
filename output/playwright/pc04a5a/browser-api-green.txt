@@ -1,0 +1,19 @@
+### Result
+{
+  "copyStatus": 201,
+  "patchStatus": 200,
+  "sourceId": "1b0a0d18-c969-4796-a72e-7149ea589a66",
+  "copiedId": "4ba6f3a7-e5b8-4e90-9da7-05d3d0dca93b",
+  "copiedName": "浏览器API GREEN副本",
+  "inactive": true,
+  "nonDefault": true,
+  "clearedCalibration": true,
+  "timestampUnchanged": true,
+  "renamed": "原图仅改名称",
+  "sourceGraphUnchanged": true,
+  "sourceCalibrationRetained": 2.5
+}
+### Ran Playwright code
+```js
+await page.evaluate('async () => { const lab="b4ebd670-cb0a-48e7-89da-90d88b0323c4", id="1b0a0d18-c969-4796-a72e-7149ea589a66", url=`/api/v1/switch-topologies/${id}`, suffix=`?lab_profile_id=${lab}`; const before=await (await fetch(url+suffix)).json(); const response=await fetch(url+"/copy"+suffix,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:"  浏览器API GREEN副本  "})});const copied=await response.json();const patch=await fetch(url+suffix,{method:"PATCH",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:"  原图仅改名称  "})});const renamed=await patch.json();const after=await (await fetch(url+suffix)).json();return {copyStatus:response.status,patchStatus:patch.status,sourceId:id,copiedId:copied.id,copiedName:copied.name,inactive:copied.is_active===false,nonDefault:copied.is_default===false,clearedCalibration:copied.connections.every(e=>e.calibrated_loss_db==null&&e.calibrated_phase_deg==null),timestampUnchanged:before.updated_at===after.updated_at,renamed:renamed.name,sourceGraphUnchanged:JSON.stringify([before.nodes,before.connections,before.operating_modes])===JSON.stringify([after.nodes,after.connections,after.operating_modes]),sourceCalibrationRetained:after.connections[0].calibrated_loss_db}; }');
+```

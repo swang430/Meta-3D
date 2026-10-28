@@ -1,0 +1,24 @@
+
+> gui@0.9.0 build
+> npx tsc -b && npx vite build
+
+vite v7.3.0 building client environment for production...
+transforming...
+✓ 7841 modules transformed.
+[plugin vite:reporter]
+(!) /Users/simon/Tools/MIMO-First/gui/node_modules/axios/index.js is dynamically imported by /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/components/OTAMapper/ProbeArraySelector.tsx but also statically imported by /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/api/calibrationClient.ts, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/api/client.ts, dynamic import will not move module into another chunk.
+
+[plugin vite:reporter]
+(!) /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/api/service.ts is dynamically imported by /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/App.tsx but also statically imported by /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/App.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/components/ChamberConfigCard.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/components/Commissioning/index.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/components/F64RuntimeSnapshotCard.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/components/LabProfile/LabProfileWizard.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/components/OTAMapper/ProbeArraySelector.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/components/TestCaseConfig/MIMOOTAConfigForm.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/ChannelWorkbench/ChannelAssetForm.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/ChannelWorkbench/ChannelWorkbench.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/Dashboard/ZoneActiveRun.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/Dashboard/ZoneLogsAlerts.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/Dashboard/ZoneReadiness.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/Diagnostics/PositionerControlPanel.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/LabWorkspace/LabOverview.tsx, /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/gui/src/features/TopologyProfileEditor/TopologyProfileEditor.tsx, dynamic import will not move module into another chunk.
+
+rendering chunks...
+computing gzip size...
+dist/index.html                     0.45 kB │ gzip:     0.29 kB
+dist/assets/index-QRtNx4r9.css    234.12 kB │ gzip:    35.48 kB
+dist/assets/index-DC4f0I-_.js   7,439.61 kB │ gzip: 2,222.33 kB
+
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.
+✓ built in 11.49s

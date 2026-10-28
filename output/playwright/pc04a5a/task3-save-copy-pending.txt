@@ -1,0 +1,4 @@
+### Error
+TimeoutError: locator.waitFor: Timeout 30000ms exceeded.
+Call log:
+[2m  - waiting for getByText('操作尚未结束；保存、转换或采集结束未确认时禁止切换和另存。', { exact: true }) to be visible[22m

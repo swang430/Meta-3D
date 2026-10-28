@@ -1,0 +1,10 @@
+### Ran Playwright code
+```js
+await (async (page) => { let copies=0; await page.route('**/api/v1/switch-topologies/*/copy?**',async r=>{copies++;const response=await r.fetch();await new Promise(resolve=>setTimeout(resolve,2000));await r.fulfill({response})}); await page.getByRole('button',{name:'复制已保存版本为…',exact:true}).click(); await page.getByRole('textbox',{name:'拓扑名称'}).fill('Task3双击只复制一次'); const b=await page.getByRole('button',{name:'确认复制',exact:true}).boundingBox(); await page.mouse.click(b.x+b.width/2,b.y+b.height/2,{clickCount:2}); if(!(await page.getByRole('textbox',{name:'拓扑名称'}).isDisabled()))throw Error('copy pending未锁'); await page.screenshot({path:'output/playwright/pc04a5a/task3-copy-pending.png'}); await page.getByRole('dialog').waitFor({state:'hidden'}); if(copies!==1)throw Error('重复copy'); await page.unroute('**/api/v1/switch-topologies/*/copy?**'); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 3 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L14-L15

@@ -1,0 +1,10 @@
+### Ran Playwright code
+```js
+await (async (page) => { await page.getByRole('option',{name:'射频开关矩阵',exact:true}).click(); await page.getByRole('textbox',{name:'拓扑库（仅编辑选择）',exact:true}).click(); await page.getByRole('textbox',{name:'拓扑库（仅编辑选择）',exact:true}).fill('隔离原图-0-0-000'); await page.getByRole('option',{name:/隔离原图-0-0-000/}).click(); await page.getByRole('button',{name:'重命名',exact:true}).click(); await page.getByRole('textbox',{name:'拓扑名称',exact:true}).fill('Task3原图仅改名称'); await page.getByRole('button',{name:'确认命名',exact:true}).click(); await page.getByRole('dialog').waitFor({state:'hidden'}); await page.getByRole('button',{name:'复制已保存版本为…',exact:true}).click(); await page.getByRole('textbox',{name:'拓扑名称',exact:true}).fill('Task3真实GUI副本'); await page.getByRole('button',{name:'确认复制',exact:true}).click(); await page.getByRole('dialog').waitFor({state:'hidden'}); await page.getByRole('button',{name:'设为本浏览器默认编辑图',exact:true}).click(); await page.screenshot({path:'output/playwright/pc04a5a/task3-copy-default.png'}); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 2 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L2-L3

@@ -1,0 +1,248 @@
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 8 errors, 0 warnings
+### Snapshot
+```yaml
+- generic [ref=f3e3]:
+  - navigation [ref=f3e4]:
+    - generic [ref=f3e6]:
+      - generic [ref=f3e8]:
+        - heading "Meta-3D" [level=4] [ref=f3e9]
+        - paragraph [ref=f3e10]: 软件定义测试 · 虚拟路测
+      - generic [ref=f3e14]:
+        - tab "主控台" [ref=f3e16] [cursor=pointer]:
+          - generic [ref=f3e17]:
+            - paragraph [ref=f3e20]: 主控台
+            - paragraph [ref=f3e21]: 系统就绪、最近执行与实时日志——一站式操作中心。
+        - tab "实验室配置" [selected] [ref=f3e23] [cursor=pointer]:
+          - generic [ref=f3e24]:
+            - paragraph [ref=f3e27]: 实验室配置
+            - paragraph [ref=f3e28]: 在同一LabProfile上下文查看总览、仪器资源、探头与暗室和射频拓扑。
+        - tab "DUT 与 SIM 卡" [ref=f3e30] [cursor=pointer]:
+          - generic [ref=f3e31]:
+            - paragraph [ref=f3e34]: DUT 与 SIM 卡
+            - paragraph [ref=f3e35]: 统一维护被测设备 (DUT) 能力声明与测试卡池 (SIM/eSIM 身份 + 鉴权)，分 Tab 管理，供测试例选用与防插错卡预检。
+        - tab "信道工作台" [ref=f3e37] [cursor=pointer]:
+          - generic [ref=f3e38]:
+            - paragraph [ref=f3e41]: 信道工作台
+            - paragraph [ref=f3e42]: 统一管理多态信道资产 (ChannelAsset)：标准 3GPP / 自定义 CDL / RT 动态 / 厂商文件四源，供测试例按 source_type 引用注入。
+        - tab "测试管理" [ref=f3e44] [cursor=pointer]:
+          - generic [ref=f3e45]:
+            - paragraph [ref=f3e48]: 测试管理
+            - paragraph [ref=f3e49]: 以测试用例为基础的测试管理：用例库（配仪表参数 / 直接执行）、执行历史、虚拟路测。
+        - tab "数据归档与报告" [ref=f3e51] [cursor=pointer]:
+          - generic [ref=f3e52]:
+            - paragraph [ref=f3e55]: 数据归档与报告
+            - paragraph [ref=f3e56]: 浏览历史记录、对比结果，并一键生成标准化报告。
+        - tab "系统校准" [ref=f3e58] [cursor=pointer]:
+          - generic [ref=f3e59]:
+            - paragraph [ref=f3e62]: 系统校准
+            - paragraph [ref=f3e63]: 查看校准方法与原记录；路径校准进入当前实验室射频拓扑，独立方法尚未开放。
+        - generic [ref=f3e64]:
+          - paragraph [ref=f3e65]: 调试维护
+          - tab "暗室首测" [ref=f3e66] [cursor=pointer]:
+            - generic [ref=f3e67]:
+              - paragraph [ref=f3e70]: 暗室首测
+              - paragraph [ref=f3e71]: 3GPP Static MIMO OTA 调试专区 - 基于 UMa CDL-C 模型与 CTIA 门限。现场调试用。
+        - tab "调试序列 + 单阶段" [ref=f3e73] [cursor=pointer]:
+          - generic [ref=f3e74]:
+            - paragraph [ref=f3e77]: 调试序列 + 单阶段
+            - paragraph [ref=f3e78]: SCPI 硬编码序列 + commissioning 单阶段 ad-hoc + HAL trace。workshop tier, 不进 TestPlan。
+        - generic [ref=f3e79]:
+          - paragraph [ref=f3e80]: 其他
+          - tab "📊 高级图表演示" [ref=f3e81] [cursor=pointer]:
+            - generic [ref=f3e82]:
+              - paragraph [ref=f3e85]: 📊 高级图表演示
+              - paragraph [ref=f3e86]: 展示 Plotly.js 交互式图表：时间序列分析、统计对比、性能基准等。
+  - banner [ref=f3e89]:
+    - generic [ref=f3e90]:
+      - generic [ref=f3e92]:
+        - heading "实验室配置" [level=2] [ref=f3e1355]
+        - paragraph [ref=f3e94]: 在同一LabProfile上下文查看总览、仪器资源、探头与暗室和射频拓扑。
+      - generic [ref=f3e95]:
+        - generic [ref=f3e96]:
+          - paragraph [ref=f3e97]: 当前：
+          - textbox "当前 LabProfile" [ref=f3e100] [cursor=pointer]:
+            - /placeholder: 请选择当前 LabProfile
+            - text: PC04A5a实验室0 / PC04A5a暗室0
+        - button "切换至深色模式" [ref=f3e101] [cursor=pointer]:
+          - generic [ref=f3e102]: 🌙
+        - button "保存草稿" [ref=f3e103] [cursor=pointer]
+        - button "新建任务" [ref=f3e106] [cursor=pointer]
+  - main [ref=f3e109]:
+    - generic [ref=f3e1356]:
+      - paragraph [ref=f3e1357]: 使用顶部所选LabProfile；总览是当前配置与运行快照，不是历史执行冻结证据。
+      - tablist "实验室配置子视图" [ref=f3e1359]:
+        - tab "总览" [ref=f3e1360] [cursor=pointer]
+        - tab "仪器资源" [ref=f3e1362] [cursor=pointer]
+        - tab "探头与暗室" [ref=f3e1364] [cursor=pointer]
+        - tab "射频拓扑" [selected] [ref=f3e1366] [cursor=pointer]
+      - generic [ref=f3e1516]:
+        - generic [ref=f3e1517]:
+          - generic [ref=f3e1518]:
+            - heading "射频开关矩阵拓扑" [level=4] [ref=f3e1529]
+            - generic [ref=f3e1530]: 当前暗室：PC04A5a暗室0
+          - generic [ref=f3e1532]:
+            - generic [ref=f3e1533]:
+              - generic [ref=f3e1534]: 射频开关设备
+              - textbox "射频开关设备" [ref=f3e1536] [cursor=pointer]: 隔离开关乙
+            - generic [ref=f3e1537]:
+              - generic [ref=f3e1538]: 拓扑库（仅编辑选择）
+              - textbox "拓扑库（仅编辑选择）" [ref=f3e1540]:
+                - /placeholder: 当前范围尚无拓扑
+                - text: Task2真实GUI命名副本 · 305e1146 · 非活跃
+            - button "刷新拓扑库" [ref=f3e1541] [cursor=pointer]
+          - generic [ref=f3e1544]:
+            - button "重命名" [ref=f3e1545] [cursor=pointer]
+            - button "复制已保存版本为…" [ref=f3e1548] [cursor=pointer]
+            - button "设为本浏览器默认编辑图" [ref=f3e1551] [cursor=pointer]
+            - button "从模板新增副本" [ref=f3e1954] [cursor=pointer]
+          - paragraph [ref=f3e1561]: 库选择和本浏览器默认不改变正式执行绑定。复制/模板新增均为非活跃图，不自动用于正式测试。
+        - generic [ref=f3e1961]:
+          - generic [ref=f3e1962]:
+            - paragraph [ref=f3e1963]: 拓扑编辑器无未保存改动
+            - paragraph [ref=f3e1964]: 插入线缆：添加并核对A/B → 拖两条新边 → 探头属性按CE→探头重声明完整路径 → 删除旧边 → 保存后重新选择服务器路径。 旧边校准值不自动复制；改端口名请先加新端口、建替代边、重声明、删旧边，再删旧端口。
+            - textbox "含旧PA标称的连线" [ref=f3e1967]:
+              - /placeholder: 含旧PA标称的连线（含隐藏及非当前模式）
+            - generic [ref=f3e1968]:
+              - generic [ref=f3e1969]:
+                - paragraph [ref=f3e1970]: Task2真实GUI命名副本
+                - generic [ref=f3e1971]: 1 Channels
+                - generic [ref=f3e1973]: 草稿
+              - generic [ref=f3e1975]:
+                - button "转换旧配置" [ref=f3e1976] [cursor=pointer]
+                - textbox "器件列表" [ref=f3e1981]:
+                  - /placeholder: 搜索全部器件（含隐藏）
+                - textbox "新增器件类型" [ref=f3e1984] [cursor=pointer]: 衰减器
+                - button "添加器件" [ref=f3e1985] [cursor=pointer]
+                - button "校准接线" [ref=f3e1988] [cursor=pointer]
+                - textbox "操作模式" [ref=f3e1993] [cursor=pointer]: MIMO OTA
+                - button "保存拓扑" [ref=f3e1994] [cursor=pointer]
+                - button "放弃未保存改动" [disabled] [ref=f3e2002]
+          - generic [ref=f3e2005]:
+            - application [ref=f3e2007]:
+              - generic [ref=f3e2009]:
+                - generic:
+                  - generic:
+                    - img:
+                      - group "Edge from ce to probe" [ref=f3e2492] [cursor=pointer]
+                  - generic: 1.3 dB · 方向未声明，非双向能力
+                  - generic:
+                    - group [ref=f3e2016]:
+                      - generic [ref=f3e2017]:
+                        - generic [ref=f3e2018]:
+                          - paragraph [ref=f3e2024]: B1.1
+                          - generic [ref=f3e2025]:
+                            - paragraph [ref=f3e2026]: "Unit: -"
+                            - paragraph [ref=f3e2027]: "Port: -"
+                        - paragraph [ref=f3e2028]: 已声明端口 1（未核验硬件）
+                        - generic "out · 方向未声明，非双向能力" [ref=f3e2029]
+                        - generic: "? out · 方向未声明，非双向能力"
+                        - generic "out · 方向未声明，非双向能力" [ref=f3e2030]
+                        - generic: "? out · 方向未声明，非双向能力"
+                    - group [ref=f3e2031]:
+                      - generic [ref=f3e2032]:
+                        - generic [ref=f3e2033]:
+                          - paragraph [ref=f3e2037]: 探头0V
+                          - generic [ref=f3e2038]:
+                            - generic [ref=f3e2039]: V
+                            - generic [ref=f3e2041]: 垂直
+                        - paragraph [ref=f3e2043]: 已声明端口 1（未核验硬件）
+                        - generic "in · 方向未声明，非双向能力" [ref=f3e2044]
+                        - generic: "? in · 方向未声明，非双向能力"
+                        - generic "in · 方向未声明，非双向能力" [ref=f3e2045]
+                        - generic: "? in · 方向未声明，非双向能力"
+              - generic "Control Panel" [ref=f3e2046]:
+                - button "Zoom In" [ref=f3e2047] [cursor=pointer]
+                - button "Zoom Out" [ref=f3e2050] [cursor=pointer]
+                - button "Fit View" [ref=f3e2053] [cursor=pointer]
+                - button "Toggle Interactivity" [ref=f3e2056] [cursor=pointer]
+              - img "Mini Map" [ref=f3e2060]
+              - link "React Flow attribution" [ref=f3e2064] [cursor=pointer]:
+                - /url: https://reactflow.dev
+                - text: React Flow
+            - complementary [ref=f3e2066]:
+              - generic [ref=f3e2068]:
+                - heading "通路采集与确认采用" [level=4] [ref=f3e2069]
+                - alert [ref=f3e2070]:
+                  - generic [ref=f3e2071]: 单项入口保持固定接线；同图多项入口按服务器清单逐项切换／等待人工。采用整条实测损耗后只作用于适用的新执行；既有执行保持冻结。认证资格未知，不代表DUT功率。
+                - generic [ref=f3e2074]:
+                  - generic [ref=f3e2075]: 完整校准通路
+                  - textbox "完整校准通路" [ref=f3e2077]:
+                    - /placeholder: 选择已保存的CE→探头通路
+                - alert [ref=f3e2500]:
+                  - generic [ref=f3e2501]: 正式同时集合路径读取失败：实验室或拓扑已停用；串行批候选单独读取，不放宽正式集合门。
+                - group [ref=f3e2083]:
+                  - generic [ref=f3e2084]:
+                    - generic [ref=f3e2085]:
+                      - generic [ref=f3e2086]:
+                        - generic [ref=f3e2087]: 采集频率（MHz） *
+                        - spinbutton "采集频率（MHz）" [disabled] [ref=f3e2089]
+                      - generic [ref=f3e2090]:
+                        - generic [ref=f3e2091]: 允许的单音设置功率（dBm，非实测） *
+                        - spinbutton "允许的单音设置功率（dBm，非实测）" [disabled] [ref=f3e2093]
+                      - generic [ref=f3e2094]:
+                        - generic [ref=f3e2095]: 参考天线身份、极化及位置 *
+                        - textbox "参考天线身份、极化及位置" [disabled] [ref=f3e2097]
+                      - generic [ref=f3e2098]:
+                        - generic [ref=f3e2099]: 重复采样次数 *
+                        - spinbutton "重复采样次数" [disabled] [ref=f3e2101]: "5"
+                      - generic [ref=f3e2102]:
+                        - generic [ref=f3e2103]: 接收线缆损耗（dB，可空）
+                        - spinbutton "接收线缆损耗（dB，可空）" [disabled] [ref=f3e2105]
+                      - generic [ref=f3e2106]:
+                        - generic [ref=f3e2107]: 接收线缆记录来源及适用频率
+                        - textbox "接收线缆记录来源及适用频率" [disabled] [ref=f3e2109]
+                    - paragraph [ref=f3e2110]: 接收线缆只指参考天线到分析仪的一段；不从现有拓扑线损代填。缺少资料时只采集功率，不计算整条损耗。
+                    - generic [ref=f3e2112]:
+                      - checkbox "我已核对所选链的实际接线，开关已固定到该通路" [disabled] [ref=f3e2114]
+                      - generic [ref=f3e2115]: 我已核对所选链的实际接线，开关已固定到该通路
+                    - generic [ref=f3e2118]:
+                      - checkbox "我已确认专用校准仿真正在运行、本输出口无其它混入信号，以及设置功率对功放和接收端安全" [disabled] [ref=f3e2120]
+                      - generic [ref=f3e2121]: 我已确认专用校准仿真正在运行、本输出口无其它混入信号，以及设置功率对功放和接收端安全
+                  - button "开始自动采集" [disabled] [ref=f3e2123]
+                - button "读取历史／恢复采集状态" [ref=f3e2126] [cursor=pointer]
+                - paragraph [ref=f3e2129]: 执行支持：MIMO-First ASC以waveform方式只补一次；native GCM、外部ASC、B2没有整条参考面消费者，显示不支持／未应用，严格模式在硬件前拒绝。
+                - heading "采集历史" [level=5] [ref=f3e2130]
+                - paragraph [ref=f3e2131]: 暂无采集记录。
+                - heading "所选通路采用历史" [level=5] [ref=f3e2132]
+                - paragraph [ref=f3e2133]: 当前通路暂无确认采用记录。
+                - alert [ref=f3e2504]:
+                  - generic [ref=f3e2505]: 逐项保存路径候选读取失败：实验室或拓扑已停用
+                - generic [ref=f3e2138]:
+                  - heading "同图多项校准工作台" [level=4] [ref=f3e2139]
+                  - alert [ref=f3e2140]:
+                    - generic [ref=f3e2141]: 使用本图保存路径，先完整预览再明确开始。自动切换仅限服务器核验支持的SP6T目标槽；SPDT／未知拒绝。固定直连零开关I/O、无需开关接线声明；换线或移动参考天线等待人工。声明不是RF认证。
+                  - group [ref=f3e2144]:
+                    - generic [ref=f3e2145]:
+                      - generic [ref=f3e2146]:
+                        - generic [ref=f3e2147]: 批量保存路径
+                        - generic [ref=f3e2149] [cursor=pointer]:
+                          - generic:
+                            - textbox "批量保存路径"
+                      - generic [ref=f3e2150]:
+                        - generic [ref=f3e2151]: 批量频点（MHz，逗号分隔）
+                        - textbox "批量频点（MHz，逗号分隔）" [ref=f3e2153]
+                      - generic [ref=f3e2154]:
+                        - generic [ref=f3e2155]: 批量请求功率（dBm，不作实测值）
+                        - textbox "批量请求功率（dBm，不作实测值）" [ref=f3e2157]
+                      - generic [ref=f3e2158]:
+                        - generic [ref=f3e2159]: 每项采样数（2–10）
+                        - textbox "每项采样数（2–10）" [ref=f3e2161]: "5"
+                      - generic [ref=f3e2163]:
+                        - checkbox "已核对清单的固定接线条件" [ref=f3e2165]
+                        - generic [ref=f3e2166]: 已核对清单的固定接线条件
+                      - generic [ref=f3e2169]:
+                        - checkbox "已确认请求功率及现场安全条件" [ref=f3e2171]
+                        - generic [ref=f3e2172]: 已确认请求功率及现场安全条件
+                      - button "预览完整批清单" [ref=f3e2174] [cursor=pointer]
+                  - button "读取批历史／恢复活动批" [ref=f3e2177] [cursor=pointer]
+                  - heading "批历史（不覆盖活动身份）" [level=5] [ref=f3e2180]
+                  - paragraph [ref=f3e2181]: 暂无批历史；不是停发或未启动的证明。
+          - generic [ref=f3e2183]:
+            - paragraph [ref=f3e2184]: —
+            - generic [ref=f3e2185]:
+              - paragraph [ref=f3e2186]: "节点: 2 · 连接: 1"
+              - paragraph [ref=f3e2187]: 双击器件编辑属性；点击连线编辑或删除。声明接线不代表硬件已连接或支持自动控制。
+```

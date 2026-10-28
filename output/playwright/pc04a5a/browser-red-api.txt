@@ -1,0 +1,22 @@
+### Result
+{
+  "url": "http://127.0.0.1:15105/",
+  "listStatus": 200,
+  "total": 2,
+  "ids": [
+    "9020477d-0e07-43ae-ac4c-7dd72441ecba",
+    "f38b1767-b80a-47ca-a370-817c8ecac39f"
+  ],
+  "copyStatus": 404,
+  "copyBody": "{\"detail\":\"Not Found\"}"
+}
+### Ran Playwright code
+```js
+await page.evaluate('async () => { const base="/api/v1/switch-topologies"; const lab="cab03ee3-8b5a-4af5-a424-569b796339c4"; const list=await fetch(`${base}?lab_profile_id=${lab}&switch_category_id=27106171-ce4d-4afa-8fa9-5268b8175026`); const data=await list.json(); const copy=await fetch(`${base}/${data.items[0].id}/copy?lab_profile_id=${lab}`,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({name:"浏览器RED副本"})}); return {url:location.href,listStatus:list.status,total:data.total,ids:data.items.map(x=>x.id),copyStatus:copy.status,copyBody:await copy.text()}; }');
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 1 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T13-20-16-964Z.log#L2

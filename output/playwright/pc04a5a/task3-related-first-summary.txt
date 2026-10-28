@@ -1,0 +1,8 @@
+[35mDEBUG   [0m sqlalchemy.pool.impl.QueuePool:base.py:366 Closing connection <sqlite3.Connection object at 0x119d89030>
+[32mINFO    [0m sqlalchemy.pool.impl.QueuePool:impl.py:229 Pool disposed. Pool size: 5  Connections in pool: 0 Current Overflow: -5 Current Checked out connections: 0
+[32mINFO    [0m sqlalchemy.pool.impl.QueuePool:impl.py:204 Pool recreating
+[36m[1m=========================== short test summary info ============================[0m
+[31mFAILED[0m tests/test_pc04a2_route_application.py::[1mtest_topology_with_adoption_history_cannot_be_hard_deleted[replace][0m - AssertionError: assert '采用' in '已有拓扑不能覆盖导入；请复制已保存版本，...
+[31mFAILED[0m tests/test_pc04a2_route_application.py::[1mtest_delete_race_and_unrelated_constraint_are_distinguished[adoption_after_precheck-replace][0m - assert []
+[31mFAILED[0m tests/test_pc04a2_route_application.py::[1mtest_delete_race_and_unrelated_constraint_are_distinguished[unrelated_dependency-replace][0m - AssertionError: {"detail":"已有拓扑不能覆盖导入；请复制已保存版本，原图和历...
+[31m=========== [31m[1m3 failed[0m, [32m186 passed[0m, [33m1768 warnings[0m[31m in 222.56s (0:03:42)[0m[31m ===========[0m

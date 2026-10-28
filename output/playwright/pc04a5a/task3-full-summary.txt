@@ -1,0 +1,48 @@
+tests/test_workflow_engine.py::TestWorkflowExecutor::test_run_quick_validation_workflow [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_list_predefined_workflows [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_get_predefined_workflow [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_get_predefined_workflow_not_found [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_get_predefined_workflow_yaml [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_parse_valid_workflow [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_parse_invalid_workflow [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_execute_predefined_workflow [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_execute_custom_workflow [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_execute_workflow_no_input [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_list_executions [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_get_execution [32mPASSED[0m[31m [ 99%][0m
+tests/test_workflow_engine.py::TestWorkflowAPI::test_get_execution_not_found [32mPASSED[0m[31m [100%][0m
+
+=================================== FAILURES ===================================
+[31m[1m___________________ test_g8_docs_only_cite_live_plan_routes ____________________[0m
+[1m[31mtests/test_rule_gates.py[0m:1346: in test_g8_docs_only_cite_live_plan_routes
+    [0m[94massert[39;49;00m [95mnot[39;49;00m dead, ([90m[39;49;00m
+[1m[31mE   AssertionError: 现状文档引用了**不存在**的计划链路由 (ARCH-1 S4 已拆除, 或从未实现):[0m
+[1m[31mE       docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md:111 → /test-plans/cases/29769585-c9f1-43f2-8c0e-0c1c3a1d70ac/execute[0m
+[1m[31mE   assert not ['  docs/plans/2026-10-25-pc07a1-validation-evidence/task-3-report.md:111 → /test-plans/cases/29769585-c9f1-43f2-8c0e-0c1c3a1d70ac/execute'][0m
+[31m[1m________________ test_g11_docs_cite_live_api_routes_full_domain ________________[0m
+[1m[31mtests/test_rule_gates.py[0m:1763: in test_g11_docs_cite_live_api_routes_full_domain
+    [0m[94massert[39;49;00m [95mnot[39;49;00m dead, ([90m[39;49;00m
+[1m[31mE   AssertionError: 现状文档引用了不存在的 API 路由/动词 (照文档调会 404/405):[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md:128 → /api/v1/ws[0m
+[1m[31mE   assert not ['  .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md:128 → /api/v1/ws'][0m
+[31m[1m________________ test_gitignore_does_not_shadow_tracked_sources ________________[0m
+[1m[31mtests/test_rule_gates.py[0m:1837: in test_gitignore_does_not_shadow_tracked_sources
+    [0m[94massert[39;49;00m [95mnot[39;49;00m unexpected, ([90m[39;49;00m
+[1m[31mE   AssertionError: 这些**已跟踪**的文件被 .gitignore 命中了 —— 规则写宽了：[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/delivery-status-report.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/final-doc-report.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/progress.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/r1-fix-report.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-1-report.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-3-report.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a5a-topology-library/task-1-fix-report.md[0m
+[1m[31mE       .superpowers/sdd/2026-10-27-pc04a5a-topology-library/task-1-report.md[0m
+[1m[31mE     已跟踪的不受影响，但往同一目录**新加**的文件会被静默忽略。[0m
+[1m[31mE     多半是漏了开头的 `/`（`data/` 匹配任何叫 data 的目录，`/data/` 只匹配根下那个）。[0m
+[1m[31mE   assert not ['.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/delivery-status-report.md', '.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/final-doc-report.md', '.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/progress.md', '.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/r1-fix-report.md', '.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-1-report.md', '.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md', ...][0m
+[36m[1m=========================== short test summary info ============================[0m
+[31mFAILED[0m tests/test_rule_gates.py::[1mtest_g8_docs_only_cite_live_plan_routes[0m - AssertionError: 现状文档引用了**不存在**的计划链路由 (ARCH-1 S4 已拆除, 或...
+[31mFAILED[0m tests/test_rule_gates.py::[1mtest_g11_docs_cite_live_api_routes_full_domain[0m - AssertionError: 现状文档引用了不存在的 API 路由/动词 (照文档调会 404/405):
+[31mFAILED[0m tests/test_rule_gates.py::[1mtest_gitignore_does_not_shadow_tracked_sources[0m - AssertionError: 这些**已跟踪**的文件被 .gitignore 命中了 —— 规则写宽了：
+[31m==== [31m[1m3 failed[0m, [32m8003 passed[0m, [33m17 skipped[0m, [33m9811 warnings[0m[31m in 812.90s (0:13:32)[0m[31m =====[0m

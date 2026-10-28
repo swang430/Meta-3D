@@ -1,0 +1,10 @@
+### Ran Playwright code
+```js
+await (async (page) => { await page.getByRole('tab',{name:'实验室配置',exact:true}).click(); await page.getByRole('tab',{name:'射频拓扑',exact:true}).click(); await page.getByRole('textbox',{name:'完整校准通路',exact:true}).click(); await page.getByRole('option',{name:'B1.1 → 探头0 V · e',exact:true}).click(); await page.getByRole('spinbutton',{name:'采集频率（MHz）',exact:true}).fill('3550'); await page.getByRole('spinbutton',{name:'允许的单音设置功率（dBm，非实测）',exact:true}).fill('-30'); await page.getByRole('textbox',{name:'参考天线身份、极化及位置',exact:true}).fill('Task3仅Mock终态未知锁验证'); await page.getByRole('checkbox',{name:'我已核对所选链的实际接线，开关已固定到该通路',exact:true}).check(); await page.getByRole('checkbox',{name:'我已确认专用校准仿真正在运行、本输出口无其它混入信号，以及设置功率对功放和接收端安全',exact:true}).check(); await page.route('**/fixed-route-acquisitions/*',r=>r.request().method()==='GET'?r.abort('internetdisconnected'):r.continue()); await page.getByRole('button',{name:'开始自动采集',exact:true}).click(); await page.getByText(/记录读取失败，不能据此认为停发/).waitFor(); if(await page.getByRole('button',{name:'取消采集并停止本次单音',exact:true}).isDisabled())throw Error('未获得活动run身份'); if(await page.getByRole('button',{name:'复制已保存版本为…',exact:true}).isEnabled())throw Error('终态未知解锁copy'); if(await page.getByRole('textbox',{name:'拓扑库（仅编辑选择）'}).isEnabled())throw Error('终态未知解锁库'); await page.screenshot({path:'output/playwright/pc04a5a/task3-collection-terminal-unknown.png'}); await page.unroute('**/fixed-route-acquisitions/*'); await page.getByRole('button',{name:'重读本次记录',exact:true}).click(); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 1 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L24

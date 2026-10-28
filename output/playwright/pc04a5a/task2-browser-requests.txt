@@ -1,0 +1,33 @@
+502. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+504. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+506. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=cab03ee3-8b5a-4af5-a424-569b796339c4&switch_category_id=27106171-ce4d-4afa-8fa9-5268b8175026 => [200] OK
+513. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=cab03ee3-8b5a-4af5-a424-569b796339c4&switch_category_id=27106171-ce4d-4afa-8fa9-5268b8175026 => [200] OK
+514. [POST] http://127.0.0.1:15105/api/v1/switch-topologies/9020477d-0e07-43ae-ac4c-7dd72441ecba/copy?lab_profile_id=cab03ee3-8b5a-4af5-a424-569b796339c4 => [404] Not Found
+516. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/1b0a0d18-c969-4796-a72e-7149ea589a66?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [200] OK
+517. [POST] http://127.0.0.1:15105/api/v1/switch-topologies/1b0a0d18-c969-4796-a72e-7149ea589a66/copy?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [201] Created
+518. [PATCH] http://127.0.0.1:15105/api/v1/switch-topologies/1b0a0d18-c969-4796-a72e-7149ea589a66?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [200] OK
+519. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/1b0a0d18-c969-4796-a72e-7149ea589a66?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [200] OK
+524. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+526. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=cab03ee3-8b5a-4af5-a424-569b796339c4&skip=0&limit=100&switch_category_id=27106171-ce4d-4afa-8fa9-5268b8175026 => [422] Unprocessable Content
+527. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=cab03ee3-8b5a-4af5-a424-569b796339c4&skip=0&limit=100&switch_category_id=27106171-ce4d-4afa-8fa9-5268b8175026 => [422] Unprocessable Content
+528. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=cab03ee3-8b5a-4af5-a424-569b796339c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [422] Unprocessable Content
+532. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+534. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+536. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=cab03ee3-8b5a-4af5-a424-569b796339c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [422] Unprocessable Content
+835. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+837. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+839. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [200] OK
+846. [POST] http://127.0.0.1:15105/api/v1/switch-topologies/a6e2087c-71d1-454e-ab99-598ee759ee0b/copy?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [201] Created
+847. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [200] OK
+848. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/305e1146-c675-40e9-ba9f-e8a347095c42?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [200] OK
+857. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+859. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+861. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [200] OK
+875. [PATCH] http://127.0.0.1:15105/api/v1/switch-topologies/305e1146-c675-40e9-ba9f-e8a347095c42?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [200] OK
+876. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [200] OK
+877. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/305e1146-c675-40e9-ba9f-e8a347095c42?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4 => [200] OK
+1202. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+1204. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+1206. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [200] OK
+1216. [GET] http://127.0.0.1:15105/api/v1/switch-topologies/templates => [200] OK
+1218. [GET] http://127.0.0.1:15105/api/v1/switch-topologies?lab_profile_id=b4ebd670-cb0a-48e7-89da-90d88b0323c4&skip=0&limit=100&switch_category_id=ae94b26d-7c2d-4ec4-9363-d5eb3ffc8548 => [200] OK

@@ -1,0 +1,10 @@
+### Ran Playwright code
+```js
+await (async (page) => { await page.route('**/api/v1/switch-topologies/templates',r=>r.abort('internetdisconnected')); await page.getByRole('tab',{name:'实验室配置',exact:true}).click(); await page.getByRole('tab',{name:'射频拓扑',exact:true}).click(); await page.getByText('模板加载失败',{exact:true}).waitFor(); await page.screenshot({path:'output/playwright/pc04a5a/task3-template-error.png'}); await page.unroute('**/api/v1/switch-topologies/templates'); await page.getByRole('button',{name:'重试模板加载',exact:true}).click(); await page.getByRole('button',{name:'从模板新增副本',exact:true}).waitFor(); await page.route('**/api/v1/switch-topologies?**',r=>r.abort('internetdisconnected')); await page.getByRole('button',{name:'刷新拓扑库',exact:true}).click(); await page.getByText(/加载拓扑失败/).waitFor(); if(await page.getByRole('button',{name:'从模板新增副本',exact:true}).isEnabled()) throw Error('GET失败却放行导入'); await page.screenshot({path:'output/playwright/pc04a5a/task3-list-network-failure.png'}); await page.unroute('**/api/v1/switch-topologies?**'); await page.getByRole('button',{name:'刷新拓扑库',exact:true}).click(); })(page);
+```
+### Page
+- Page URL: http://127.0.0.1:15105/
+- Page Title: gui
+- Console: 3 errors, 0 warnings
+### Events
+- New console entries: .playwright-cli/console-2026-10-27T15-37-37-565Z.log#L8-L10
