@@ -29,6 +29,12 @@ def graph(topology):
     return deepcopy([topology.nodes, topology.connections, topology.operating_modes])
 
 
+def saved_revision(client, lab, topology_id):
+    detail = client.get(f'{ROOT}/{topology_id}', params={'lab_profile_id':str(lab.id)})
+    assert detail.status_code == 200, detail.text
+    return detail.json()['revision']
+
+
 @pytest.fixture
 def db():
     engine = create_engine('sqlite:///:memory:', connect_args={'check_same_thread': False}, poolclass=StaticPool)
@@ -133,7 +139,7 @@ def test_name_only_sql_preserves_timestamp_and_execution(client, db, lab, source
             statements.append(statement)
     event.listen(db.bind, 'before_cursor_execute', capture)
     try:
-        response = client.patch(f'{ROOT}/{source.id}', params={'lab_profile_id': str(lab.id)}, json={'name': '  重命名  '})
+        response = client.patch(f'{ROOT}/{source.id}', params={'lab_profile_id': str(lab.id)}, json={'name': '  重命名  ', 'expected_revision':saved_revision(client,lab,source.id)})
     finally:
         event.remove(db.bind, 'before_cursor_execute', capture)
     assert response.status_code == 200, response.text
@@ -152,7 +158,7 @@ def test_name_only_does_not_roll_back_a_newer_database_timestamp(client, db, lab
     with db.bind.begin() as connection:
         connection.execute(update(SwitchTopology).where(SwitchTopology.id == source_id).values(updated_at=newer))
     assert source.updated_at == cached
-    response = client.patch(f'{ROOT}/{source_id}', params={'lab_profile_id': str(lab.id)}, json={'name': '不回退时间'})
+    response = client.patch(f'{ROOT}/{source_id}', params={'lab_profile_id': str(lab.id)}, json={'name': '不回退时间', 'expected_revision':saved_revision(client,lab,source_id)})
     assert response.status_code == 200, response.text
     db.expire_all(); db.refresh(source)
     assert source.updated_at == newer
@@ -161,7 +167,7 @@ def test_name_only_does_not_roll_back_a_newer_database_timestamp(client, db, lab
 def test_non_name_only_patch_keeps_existing_timestamp_semantics(client, db, lab, source):
     updated = source.updated_at
     response = client.patch(f'{ROOT}/{source.id}', params={'lab_profile_id': str(lab.id)},
-                            json={'name': '联合元数据', 'description': '更新描述'})
+                            json={'name': '联合元数据', 'description': '更新描述', 'expected_revision':saved_revision(client,lab,source.id)})
     assert response.status_code == 200, response.text
     db.expire_all(); db.refresh(source)
     assert source.updated_at > updated and source.description == '更新描述'
@@ -174,7 +180,7 @@ def test_invalid_names_rejected_atomically(client, db, lab, source, name, operat
     if operation == 'copy':
         response = copy_request(client, lab, source, name=name)
     elif operation == 'patch':
-        response = client.patch(f'{ROOT}/{source.id}', params={'lab_profile_id': str(lab.id)}, json={'name': name})
+        response = client.patch(f'{ROOT}/{source.id}', params={'lab_profile_id': str(lab.id)}, json={'name': name, 'expected_revision':saved_revision(client,lab,source.id)})
     else:
         response = client.post(ROOT, json={'name': name, 'lab_profile_id': str(lab.id), 'switch_category_id': str(source.switch_category_id)})
     assert response.status_code == 422, response.text

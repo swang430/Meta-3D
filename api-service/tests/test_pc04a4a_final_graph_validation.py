@@ -1,4 +1,5 @@
 """最终保存图必须满足显式路径契约；真实HTTP及正式解析器，不访问硬件。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 from uuid import UUID
 
@@ -29,7 +30,7 @@ def write(world, monkeypatch, entrypoint, payload, target=None):
             'switch_category_id': str(world['switch_id']), 'name': '新图', 'is_default': True})
     if entrypoint == 'patch':
         return client.patch(f'/api/v1/switch-topologies/{target.id}', params=scope,
-                            json={**payload, 'name': '新图', 'is_default': True})
+                            json={**({**payload, 'name': '新图', 'is_default': True}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{target.id}', scope)})
     from app.api import switch_topology as api
     # 只替代模板文件加载，保留实际导入校验、替换和存储链。
     monkeypatch.setattr(api, '_load_template', lambda _: lambda: {
@@ -105,7 +106,7 @@ def test_saved_complete_explicit_or_sparse_legacy_path_remains_consumable(
     else:
         assert resolved.success, resolved.warnings
         assert [(c.chain_id, c.ce_port, c.probe_id, c.polarization) for c in resolved.chains] == [('cp', 'B1.1', 0, 'V')]
-    repeated = client.patch(f'/api/v1/switch-topologies/{ident}', params=scope, json={
-        key: saved[key] for key in ('nodes', 'connections', 'operating_modes')})
+    repeated = client.patch(f'/api/v1/switch-topologies/{ident}', params=scope, json={**({
+        key: saved[key] for key in ('nodes', 'connections', 'operating_modes')}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{ident}', scope)})
     assert repeated.status_code == 200, repeated.text
     assert repeated.json()['connections'] == payload['connections']

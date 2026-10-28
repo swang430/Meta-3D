@@ -1,4 +1,5 @@
 """端口写契约通过真实 HTTP 验证；错误写入不能改变原图或默认位。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import json
 
@@ -57,7 +58,7 @@ def test_patch_rejects_output_to_output_before_name_or_default_write(world):
     data = graph()
     data['nodes'][0]['params']['port_directions'] = {'out': 'output'}
     data['nodes'][1]['params']['port_directions'] = {'in': 'output'}
-    response = client.patch(url, params=scope, json={**data, 'name': '禁止写入', 'is_default': True})
+    response = client.patch(url, params=scope, json={**({**data, 'name': '禁止写入', 'is_default': True}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     assert 'ab' in str(response.json()['detail'])
     assert client.get(keep_url, params=scope).json()['is_default'] is True
@@ -165,7 +166,7 @@ def test_legacy_missing_ports_unrelated_edits_preserve_sparse_json(world, edit):
             payload['nodes'][0]['position'] = {'x': 1, 'y': 2}
     elif edit == 'edge_nominal':
         payload = {'connections': [{**fetched['connections'][0], 'pa_gain_db': 0, 'modes': ['calibration']}]}
-    response = client.patch(url, params=scope, json=payload)
+    response = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     world['db'].refresh(row)
     assert all(node['params'] == {'opaque': {'keep': True}} for node in row.nodes)
@@ -193,7 +194,7 @@ def test_legacy_exemption_cannot_cover_new_or_reconnected_graph(world, change):
         changed['nodes'][0]['params']['ports'] = ['out']
     else:
         changed['connections'][0]['source_pin'] = 'other'
-    response = client.patch(url, params=scope, json=changed)
+    response = client.patch(url, params=scope, json={**(changed), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
     assert row.nodes == data['nodes'] and row.connections == data['connections']
@@ -208,7 +209,7 @@ def test_changed_node_checks_all_incident_edges_across_modes(world, partial):
     nodes = copy.deepcopy(data['nodes'])
     nodes[0]['params']['port_directions'] = {'out': 'input'}
     payload = {'nodes': nodes} if partial else {**data, 'nodes': nodes}
-    response = client.patch(url, params=scope, json=payload)
+    response = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
     assert row.nodes == data['nodes']
@@ -225,7 +226,7 @@ def test_clearing_generic_map_does_not_clear_bse_role(world, map_value):
         nodes[0]['params'].pop('port_directions')
     else:
         nodes[0]['params']['port_directions'] = map_value
-    response = client.patch(url, params=scope, json={'nodes': nodes})
+    response = client.patch(url, params=scope, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
     assert row.nodes == data['nodes']
@@ -241,7 +242,7 @@ def test_real_legacy_caict_import_roundtrip_does_not_materialize_ports(world):
     assert legacy, '必须覆盖真实旧版未声明节点，不能用补齐模板冒充兼容'
     payload = {key: raw[key] for key in ('nodes', 'connections', 'operating_modes')}
     payload['name'] = '旧版无关保存'
-    saved = client.patch(f"/api/v1/switch-topologies/{raw['id']}", params=scope, json=payload)
+    saved = client.patch(f"/api/v1/switch-topologies/{raw['id']}", params=scope, json={**(payload), 'expected_revision': _saved_revision(client, f"/api/v1/switch-topologies/{raw['id']}", scope)})
     assert saved.status_code == 200, saved.text
     assert saved.json()['nodes'] == raw['nodes']
 
@@ -276,7 +277,7 @@ def test_port_removal_rejection_locates_referencing_edge(world):
     row, url, scope = seed(world)
     nodes = copy.deepcopy(row.nodes)
     nodes[0]['params']['ports'] = ['replacement']
-    response = client.patch(url, params=scope, json={'nodes': nodes})
+    response = client.patch(url, params=scope, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     assert all(token in str(response.json()['detail']) for token in ('ab', 'a', 'out'))
     world['db'].refresh(row)

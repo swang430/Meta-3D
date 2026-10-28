@@ -1,4 +1,5 @@
 """标称写入从真实 HTTP 验证，旧坏值只用于初始化历史记录。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import json
 from pathlib import Path
@@ -59,7 +60,7 @@ def test_pa_edge_roundtrip_keeps_null_zero_and_metadata(world, value):
     payload = body()
     payload['connections'][0].update(pa_gain_db=value, nominal_metadata={'pa_gain_db': {
         'unit': 'dB', 'source_note': None, 'frequency_range_mhz': None}})
-    saved = client.patch(url, params=scope, json=payload)
+    saved = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
     assert saved.status_code == 200, saved.text
     fetched = client.get(url, params=scope)
     assert fetched.status_code == 200, fetched.text
@@ -72,8 +73,8 @@ def test_pa_edge_roundtrip_keeps_null_zero_and_metadata(world, value):
      ('reference_antenna', 'gain_dbi', False)])
 def test_invalid_node_nominal_is_rejected_atomically(world, kind, key, bad):
     row, url, scope = row_and_scope(world)
-    response = client.patch(url, params=scope, json={'name': '不应保存', 'nodes': [
-        dict(id='a', type=kind, label='器件', params={key: bad})]})
+    response = client.patch(url, params=scope, json={**({'name': '不应保存', 'nodes': [
+        dict(id='a', type=kind, label='器件', params={key: bad})]}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
     assert row.nodes == [] and row.name == 'Row'
@@ -88,8 +89,8 @@ def test_invalid_node_nominal_is_rejected_atomically(world, kind, key, bad):
 ])
 def test_metadata_raw_types_and_units_are_rejected(world, metadata):
     row, url, scope = row_and_scope(world)
-    response = client.patch(url, params=scope, json={'nodes': [dict(id='a', type='amplifier',
-        label='PA', params={'nominal_metadata': metadata})]})
+    response = client.patch(url, params=scope, json={**({'nodes': [dict(id='a', type='amplifier',
+        label='PA', params={'nominal_metadata': metadata})]}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
     assert row.nodes == []
@@ -101,13 +102,13 @@ def test_new_metadata_normalizes_source_but_unchanged_history_keeps_spacing(worl
         'gain_db': {'unit': 'dB', 'source_note': '  旧说明  ', 'frequency_range_mhz': [100, 100]}}}
     row, url, scope = row_and_scope(world, initial)
     fetched = client.get(url, params=scope).json()
-    saved = client.patch(url, params=scope, json={'nodes': fetched['nodes'], 'name': '新名'})
+    saved = client.patch(url, params=scope, json={**({'nodes': fetched['nodes'], 'name': '新名'}), 'expected_revision': _saved_revision(client, url, scope)})
     assert saved.status_code == 200, saved.text
     assert saved.json()['nodes'][0]['params'] == initial['nodes'][0]['params']
     changed = copy.deepcopy(fetched['nodes'])
     changed[0]['params']['gain_db'] = None
     changed[0]['params']['nominal_metadata']['gain_db']['source_note'] = '   '
-    saved = client.patch(url, params=scope, json={'nodes': changed})
+    saved = client.patch(url, params=scope, json={**({'nodes': changed}), 'expected_revision': _saved_revision(client, url, scope)})
     assert saved.status_code == 200, saved.text
     assert saved.json()['nodes'][0]['params']['gain_db'] is None
     assert saved.json()['nodes'][0]['params']['nominal_metadata']['gain_db']['source_note'] is None
@@ -125,7 +126,7 @@ def test_old_pa_preserved_by_strict_json_type_not_python_equality(world, old, ne
         assert type(value) is type(old) and value == old
     payload = copy.deepcopy(initial)
     payload['connections'][0]['pa_gain_db'] = new
-    response = client.patch(url, params=scope, json=payload)
+    response = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == status, response.text
     world['db'].refresh(row)
     value = row.connections[0]['pa_gain_db']
@@ -181,7 +182,7 @@ def test_template_and_list_keep_typed_nonpa_values_and_raw_pa_metadata(world, mo
 def test_nonfinite_nominal_is_rejected_before_any_write(world, value):
     row, url, scope = row_and_scope(world)
     response = client.patch(url, params=scope,
-        content=json.dumps({'name': '不应保存', 'nodes': [dict(id='a', type='amplifier',
+        content=json.dumps({'expected_revision':_saved_revision(client,url,scope), 'name': '不应保存', 'nodes': [dict(id='a', type='amplifier',
             label='PA', params={'gain_db': value})]}), headers={'content-type': 'application/json'})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
@@ -195,8 +196,8 @@ def test_invalid_numeric_declaration_is_atomic(world, declarations):
     row, url, scope = row_and_scope(world, initial)
     payload = copy.deepcopy(initial)
     payload['connections'][0]['cable_loss_db'] = 2.5
-    response = client.patch(url, params=scope, json={**payload, 'name': '不应保存',
-        'connection_numeric_declarations': declarations})
+    response = client.patch(url, params=scope, json={**({**payload, 'name': '不应保存',
+        'connection_numeric_declarations': declarations}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 422, response.text
     world['db'].refresh(row)
     assert row.connections == initial['connections'] and row.name == 'Row'
@@ -211,12 +212,12 @@ def test_typed_display_preserves_history_unless_explicit_numeric_declaration(wor
     fetched = client.get(url, params=scope).json()
     assert fetched['connections'] == [dict(id='ap', source='a', target='p', cable_loss_db=2.5,
                                           calibrated_loss_db=0.0)]
-    response = client.patch(url, params=scope, json={'connections': fetched['connections']})
+    response = client.patch(url, params=scope, json={**({'connections': fetched['connections']}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     world['db'].refresh(row)
     assert json.dumps(row.connections) == stored
-    response = client.patch(url, params=scope, json={'connections': fetched['connections'],
-        'connection_numeric_declarations': {'ap': ['cable_loss_db']}})
+    response = client.patch(url, params=scope, json={**({'connections': fetched['connections'],
+        'connection_numeric_declarations': {'ap': ['cable_loss_db']}}), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     assert 'connection_numeric_declarations' not in response.json()
     world['db'].refresh(row)
@@ -230,11 +231,11 @@ def test_sparse_add_delete_reorder_and_real_numeric_change_follow_request(world)
     row, url, scope = row_and_scope(world, initial)
     changed = [dict(id='ap2', source='a', target='p', cable_loss_db=0),
                dict(id='ap', source='a', target='p', source_pin='out', pa_gain_db=None)]
-    assert client.patch(url, params=scope, json={'connections': changed}).status_code == 200
+    assert client.patch(url, params=scope, json={**({'connections': changed}), 'expected_revision': _saved_revision(client, url, scope)}).status_code == 200
     world['db'].refresh(row)
     assert row.connections == changed
     changed[1].pop('source_pin')
-    assert client.patch(url, params=scope, json={'connections': changed}).status_code == 200
+    assert client.patch(url, params=scope, json={**({'connections': changed}), 'expected_revision': _saved_revision(client, url, scope)}).status_code == 200
     world['db'].refresh(row)
     assert row.connections == changed
 
@@ -243,7 +244,7 @@ def test_cross_lab_cannot_borrow_old_invalid_value_exemption(world):
     initial = body()
     initial['nodes'][0]['params']['gain_db'] = '12'
     row, url, scope = row_and_scope(world, initial)
-    response = client.patch(url, params={'lab_profile_id': str(world['lab_b'].id)}, json=initial)
+    response = client.patch(url, params={'lab_profile_id': str(world['lab_b'].id)}, json={**(initial), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 409, response.text
 
 

@@ -416,7 +416,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
     savingRef.current=true;setSaving(true);onBusyChange(true);
     const release=beginWork('topology-save','拓扑转换保存尚未结束');
     try{
-      const updated=await switchTopologyService.updateTopology(topology.id,labProfileId,{conversion:{source_digest:preview.source_digest,changes:preview.changes}});
+      const updated=await switchTopologyService.updateTopology(topology.id,labProfileId,{expected_revision:preview.revision,conversion:{source_digest:preview.source_digest,changes:preview.changes}});
       if(!mounted.current)return;
       // 只用已保存GET模型更新原编辑器，不使用preview.candidate替换草稿。
       setDraft(updated);setNumericDeclarations({});setEdgeNumericDeclarations([]);updateDirty(false);
@@ -897,7 +897,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       let result:SwitchTopology;
       if(kind==='import') result=await switchTopologyService.importFromTemplate(selectedSwitchId,labProfileId,template!);
       else if(kind==='copy') result=await switchTopologyService.copyTopology(id!,labProfileId,name);
-      else result=await switchTopologyService.updateTopology(id!,labProfileId,{name});
+      else result=await switchTopologyService.updateTopology(id!,labProfileId,{name,expected_revision:topology!.revision});
       if(!owns(token,id))return;
       // 写成功后从服务器重读全集，不把客户端草稿或POST载荷当当前图。
       const items=await fetchLibrary(labProfileId,selectedSwitchId);

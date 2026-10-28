@@ -9,7 +9,7 @@ import {InternalPathFields} from '../src/features/TopologyEditor/InternalPathFie
 (globalThis as any).React=React;
 
 const node=(params:Record<string,any>={},type='amplifier'):TopologyNode=>({id:'pa',type,label:'PA',position:{x:0,y:0},params:{ports:['IN','OUT'],port_directions:{IN:'input',OUT:'output'},...params}});
-const graph=():SwitchTopology=>({id:'graph',switch_category_id:'switch',name:'图',is_active:true,is_default:true,nodes:[
+const graph=():SwitchTopology=>({revision:0,id:'graph',switch_category_id:'switch',name:'图',is_active:true,is_default:true,nodes:[
   {id:'ce',type:'ce_port',label:'B1.1',position:{x:0,y:0},params:{ports:['OUT']}},
   node({internal_paths:[{from_port:'IN',to_port:'OUT'}]}),
   {id:'probe',type:'probe',label:'探头',position:{x:0,y:0},params:{ports:['IN'],rf_path_selection:{connection_ids:['a','b'],switch_mappings:[]}}}],

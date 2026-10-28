@@ -84,6 +84,7 @@ from app.models.channel_calibration import (
     ChannelCalibrationValidity,
 )
 from app.models.switch_topology import SwitchTopology
+from app.models.switch_topology_revision import SwitchTopologyRevision
 from app.models.lab_profile import LabProfile
 from app.models.instrument_topology_profile import InstrumentTopologyProfile
 from app.models.standard_channel import StandardChannelDefinition

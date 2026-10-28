@@ -11,7 +11,7 @@ import { ReactFlowProvider } from '@xyflow/react';
 // tsx的测试转换不使用Vite的自动JSX运行时。
 (globalThis as any).React=React;
 
-const draft = (): SwitchTopology => ({name:'图', switch_category_id:'s', is_active:true, is_default:false,
+const draft = (): SwitchTopology => ({revision:0,name:'图', switch_category_id:'s', is_active:true, is_default:false,
   nodes:[{id:'a',type:'pad',label:'衰减器',position: {x:12,y:34},params:{}}],
   connections:[{id:'ap',source:'a',target:'p',pa_gain_db:'旧格式'}],operating_modes:[]});
 
@@ -19,7 +19,7 @@ test('清洁保存不补连接或视图默认位置；显式声明仅携带仍�
   const graph=draft();
   const before=structuredClone(graph);
   const payload=transport.topologyUpdatePayload(graph,{});
-  assert.deepEqual(payload,{nodes:graph.nodes,connections:graph.connections,operating_modes:[]});
+  assert.deepEqual(payload,{expected_revision:0,nodes:graph.nodes,connections:graph.connections,operating_modes:[]});
   assert.deepEqual(graph,before);
   assert.deepEqual(transport.topologyUpdatePayload(graph,{
     ap:['cable_loss_db'],removed:['cable_length_m'],
@@ -33,6 +33,12 @@ test('显式数值意图合并去重，不变更原map；删边后不会串到�
   assert.deepEqual(initial,{ap:['cable_loss_db']});
   const graph=draft(); graph.connections=[];
   assert.equal(transport.topologyUpdatePayload(graph,next).connection_numeric_declarations,undefined);
+});
+
+test('保存令牌来自当前草稿保存版本，不用版本文案或固定零替代',()=>{
+  const graph=draft();graph.revision=7;graph.version='描述版本';
+  assert.equal(transport.topologyUpdatePayload(graph,{}).expected_revision,7);
+  assert.equal(graph.revision,7);
 });
 
 test('PA传输原始JSON必须运行时收窄，零/负值仍按PA着色',()=>{

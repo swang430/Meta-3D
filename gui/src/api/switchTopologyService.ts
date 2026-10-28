@@ -8,7 +8,10 @@ export type TopologyPortDirections = Record<string, TopologyPortDirection>;
 export type TopologyInternalPath = { from_port: string; to_port: string };
 export type ConnectionNumericField = 'cable_loss_db' | 'cable_length_m' | 'calibrated_loss_db' | 'calibrated_phase_deg';
 export type ConnectionNumericDeclarations = Record<string, ConnectionNumericField[]>;
-export type TopologyUpdatePayload = Partial<SwitchTopology> & {
+export type TopologyUpdatePayload = Partial<Pick<SwitchTopology,
+  'name'|'description'|'version'|'site_name'|'system_model'|'installed_date'|'installed_by'|
+  'is_active'|'is_default'|'nodes'|'connections'|'operating_modes'|'chamber_id'>> & {
+  expected_revision: number;
   connection_numeric_declarations?: ConnectionNumericDeclarations;
   conversion?: { source_digest: string; changes: TopologyConversionRequest };
 };
@@ -35,6 +38,7 @@ export interface TopologyConversionRequest {
   connections?: ConversionConnectionEdit[];
 }
 export interface TopologyConversionPreview {
+  revision: number;
   source_digest: string;
   changes: TopologyConversionRequest;
   // 原保存JSON，可能缺position/pin或保留旧数值字符串，不能冒充GET默认化模型。
@@ -54,7 +58,7 @@ export function topologyUpdatePayload(draft: SwitchTopology,
   declarations: ConnectionNumericDeclarations): TopologyUpdatePayload {
   const live=new Set(draft.connections.map(edge=>edge.id));
   const kept=Object.fromEntries(Object.entries(declarations).filter(([id,fields])=>live.has(id)&&fields.length));
-  return {nodes:draft.nodes, connections:draft.connections, operating_modes:draft.operating_modes,
+  return {expected_revision:draft.revision, nodes:draft.nodes, connections:draft.connections, operating_modes:draft.operating_modes,
     ...(Object.keys(kept).length?{connection_numeric_declarations:kept}:{})};
 }
 
@@ -96,6 +100,7 @@ export interface OperatingMode {
 }
 
 export interface SwitchTopology {
+  revision: number;
   id?: string;
   switch_category_id: string;
   chamber_id?: string | null;

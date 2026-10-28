@@ -1,4 +1,5 @@
 """真实执行 builder/preflight 与 actual-target 核对内部穿越，不改历史。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 
 import pytest
@@ -103,7 +104,7 @@ async def test_mixed_legacy_and_declared_routes_freeze_formal_identity_without_c
     nodes = copy.deepcopy(topology_two_chains.nodes)
     del next(row for row in nodes if row['id'] == 'selected-pad')['params']['internal_paths']
     saved = client.patch(f'/api/v1/switch-topologies/{topology_two_chains.id}',
-        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes})
+        params={'lab_profile_id': str(configured.id)}, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{topology_two_chains.id}', {'lab_profile_id': str(configured.id)})})
     assert saved.status_code == 200, saved.text
     changed_actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
     assert frozen_route_identity_error(db_session, frozen_before) is not None
@@ -156,7 +157,7 @@ async def test_unrelated_internal_declaration_preserves_legacy_direct_freeze_and
     nodes = copy.deepcopy(topology_two_chains.nodes)
     next(node for node in nodes if node['id'] == declaration_target)['params']['internal_paths'] = []
     saved = client.patch(f'/api/v1/switch-topologies/{topology_two_chains.id}',
-        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes})
+        params={'lab_profile_id': str(configured.id)}, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{topology_two_chains.id}', {'lab_profile_id': str(configured.id)})})
     assert saved.status_code == 200, saved.text
     with pytest.raises(ValueError, match='CE源端存在回接'):
         list_route_selections(db_session, configured.id, topology_two_chains.id, 'mimo_ota')
@@ -195,7 +196,7 @@ async def test_absent_frozen_identity_rejects_new_selected_internal_identity_on_
     nodes = copy.deepcopy(topology_two_chains.nodes)
     declared(next(node for node in nodes if node['id'] == 'selected-pad'))
     saved = client.patch(f'/api/v1/switch-topologies/{topology_two_chains.id}',
-        params={'lab_profile_id': str(configured.id)}, json={'nodes': nodes})
+        params={'lab_profile_id': str(configured.id)}, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{topology_two_chains.id}', {'lab_profile_id': str(configured.id)})})
     assert saved.status_code == 200, saved.text
     actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
     assert next(row for row in actual.probe_bindings if row.connection_id == 'conn_p0h').execution_route_identity[

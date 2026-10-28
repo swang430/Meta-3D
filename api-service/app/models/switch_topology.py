@@ -34,6 +34,7 @@ class SwitchTopology(Base):
     同一个 Switch 型号在不同暗室中会有不同的 topology 记录。
     """
     __tablename__ = "switch_topologies"
+    revision = Column(Integer, nullable=False, default=0, server_default='0')
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
 

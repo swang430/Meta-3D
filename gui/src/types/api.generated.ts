@@ -3239,6 +3239,8 @@ export interface components {
             differences: components["schemas"]["ConversionDifference"][];
             /** Warnings */
             warnings: string[];
+            /** Revision */
+            revision: number;
         };
         /** ConversionDifference */
         ConversionDifference: {
@@ -3456,6 +3458,8 @@ export interface components {
             updated_at?: string | null;
             /** Created By */
             created_by?: string | null;
+            /** Revision */
+            revision: number;
         };
         /** TopologyNode */
         TopologyNode: {
@@ -3658,6 +3662,8 @@ export interface components {
             operating_modes?: components["schemas"]["OperatingMode"][] | null;
             /** Chamber Id */
             chamber_id?: string | null;
+            /** Expected Revision */
+            expected_revision: number;
         };
         /** BatchPlanRequest */
         BatchPlanRequest: {

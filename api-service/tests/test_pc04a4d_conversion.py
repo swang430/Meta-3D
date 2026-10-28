@@ -1,4 +1,5 @@
 """真实HTTP转换、零写预览与双连接CAS；仅使用调用方专用临时SQLite。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import uuid
 import pytest
@@ -22,8 +23,14 @@ def preview(world, url, scope, changes):
 
 
 def commit(world, url, scope, p):
-    return world[2].patch(url, params=scope, json={'conversion':{
+    return world[2].patch(url, params=scope, json={'expected_revision':p['revision'],'conversion':{
         'source_digest':p['source_digest'], 'changes':p['changes']}})
+
+
+def saved_revision(client,url,scope):
+    detail=client.get(url,params=scope)
+    assert detail.status_code==200,detail.text
+    return detail.json()['revision']
 
 
 def test_real_http_preview_cancel_and_confirm(world):
@@ -60,7 +67,7 @@ def test_stale_conversion_preserves_other_writer(world):
     url,scope=create(world)
     p=preview(world,url,scope,{'connections':[{'connection_id':'a','cable_loss_db':None}]})
     data=graph(); data['connections'][0]['cable_loss_db']=7
-    assert world[2].patch(url,params=scope,json={'connections':data['connections']}).status_code==200
+    assert world[2].patch(url,params=scope,json={'expected_revision':saved_revision(world[2],url,scope),'connections':data['connections']}).status_code==200
     before=raw(world,url)
     assert commit(world,url,scope,p).status_code==409
     assert raw(world,url)==before
@@ -101,32 +108,27 @@ def test_real_double_connection_interleaving_after_snapshot_before_update(world,
     import app.api.switch_topology as api
     url,scope=create(world)
     p=preview(world,url,scope,{'connections':[{'connection_id':'a','cable_loss_db':None}]})
-    reached,release=threading.Event(),threading.Event()
-    original=api._conversion_candidate
-    def barrier(source,changes):
-        result=original(source,changes)
-        reached.set()
-        assert release.wait(15)
-        return result
-    monkeypatch.setattr(api,'_conversion_candidate',barrier)
+    # 5b所有写先取同scope锁，不能持锁等另一写成功；两端同令牌同时竞争。
+    barrier=threading.Barrier(2)
+    data=graph();data['connections'][0]['cable_loss_db']=9
+    update={'connections':data['connections']} if kind=='graph' else {'name':'另一会话名称'}
+    update['expected_revision']=p['revision']
+    def convert():
+        barrier.wait(10)
+        return commit(world,url,scope,p)
+    def ordinary():
+        barrier.wait(10)
+        return world[2].patch(url,params=scope,json={**(update), 'expected_revision': _saved_revision(world[2], url, scope)})
     with ThreadPoolExecutor() as pool:
-        pending=pool.submit(commit,world,url,scope,p)
-        try:
-            assert reached.wait(15)
-            # 第二个真实HTTP请求和独立Session在A读快照后提交。
-            data=graph();data['connections'][0]['cable_loss_db']=9
-            update={'connections':data['connections']} if kind=='graph' else {'name':'另一会话名称'}
-            other=world[2].patch(url,params=scope,json=update)
-            assert other.status_code==200,other.text
-        finally:
-            release.set()
+        pending=pool.submit(convert)
+        other=pool.submit(ordinary).result(15)
         response=pending.result(15)
-    assert response.status_code==(409 if kind=='graph' else 200),response.text
+    assert sorted([response.status_code,other.status_code])==[200,409],(response.text,other.text)
     saved=world[2].get(url,params=scope).json()
-    assert saved['connections'][0]['cable_loss_db']==(9 if kind=='graph' else None)
-    if kind=='name':assert saved['name']=='另一会话名称'
+    assert saved['connections'][0]['cable_loss_db']==(
+        None if response.status_code==200 else (9 if kind=='graph' else 2))
+    if kind=='name' and other.status_code==200:assert saved['name']=='另一会话名称'
     # 原digest拒绝后，新快照确实可以提交，不留dirty待get_db退出写入。
-    monkeypatch.setattr(api,'_conversion_candidate',original)
     p=preview(world,url,scope,{'connections':[{'connection_id':'a','cable_loss_db':4}]})
     assert commit(world,url,scope,p).status_code==200
 
@@ -137,11 +139,11 @@ def test_real_sqlite_busy_rollback(world,monkeypatch):
     url,scope=create(world)
     p=preview(world,url,scope,{'connections':[{'connection_id':'a','cable_loss_db':None}]})
     before=raw(world,url)
-    original=api._conversion_snapshot
-    def timeout_snapshot(db,*args):
+    original=api.lock_chamber
+    def timeout_lock(db,*args):
         db.execute(text('PRAGMA busy_timeout=10'))
         return original(db,*args)
-    monkeypatch.setattr(api,'_conversion_snapshot',timeout_snapshot)
+    monkeypatch.setattr(api,'lock_chamber',timeout_lock)
     with engine.connect() as blocker:
         blocker.exec_driver_sql('BEGIN IMMEDIATE')
         try:
@@ -162,7 +164,7 @@ def test_busy_preview_allowed_and_forged_commit_atomic(world,monkeypatch):
     assert commit(world,url,scope,p).status_code==409
     monkeypatch.setattr(api.execution_exclusion_guard,'active_unsafe_diagnostic',lambda:None)
     for extra in ({'candidate':{}},{'name':'bad'},{'connection_numeric_declarations':{}}):
-        response=world[2].patch(url,params=scope,json={'conversion':{
+        response=world[2].patch(url,params=scope,json={'expected_revision':p['revision'],'conversion':{
             'source_digest':p['source_digest'],'changes':p['changes']},**extra})
         assert response.status_code==422,response.text
     assert commit(world,url,scope,{**p,'source_digest':'forged'}).status_code==409
@@ -247,7 +249,7 @@ def test_task4_source_only_preserves_six_legacy_nominals_and_integrated_pa(world
     row.connections=[];row.operating_modes=[];db.commit()
     nodes=copy.deepcopy(row.nodes)
     nodes[0]['params']['nominal_metadata']={field:{'unit':unit,'source_note':'Task4仅补来源待核'}}
-    response=client.patch(url,params=scope,json={'nodes':nodes})
+    response=client.patch(url,params=scope,json={'expected_revision':saved_revision(client,url,scope),'nodes':nodes})
     assert response.status_code==200,response.text
     db.expire_all();assert db.get(SwitchTopology,row.id).nodes[0]['params'][field]=='2.50'
     # 集成PA边不拆成节点，不改原量值/长度/校准零，也不借GET模型做before。
@@ -256,7 +258,7 @@ def test_task4_source_only_preserves_six_legacy_nominals_and_integrated_pa(world
     edges=copy.deepcopy(row.connections);edges[0].update(pa_gain_db='12.50',cable_loss_db='2.50',calibrated_loss_db=0)
     row.connections=edges;db.commit()
     edges=copy.deepcopy(edges);edges[0]['nominal_metadata']={'pa_gain_db':{'unit':'dB','source_note':'Task4集成PA原声明待核'}}
-    response=client.patch(url,params=scope,json={'connections':edges})
+    response=client.patch(url,params=scope,json={'expected_revision':saved_revision(client,url,scope),'connections':edges})
     assert response.status_code==200,response.text
     db.expire_all();saved=db.get(SwitchTopology,row.id)
     assert len(saved.nodes)==3 and saved.connections[0]['pa_gain_db']=='12.50'

@@ -14,7 +14,7 @@ import * as edgeRendering from '../src/features/TopologyEditor/CustomEdges.tsx';
 (globalThis as any).React=React;
 
 const node=(id:string,direction?:string,type='pad'):TopologyNode=>({id,type,label:id,position:{x:0,y:0},params:{ports:['RF5'],...(direction?{port_directions:{RF5:direction}}:{})}});
-const graph=():SwitchTopology=>({name:'图',switch_category_id:'s',is_active:true,is_default:false,
+const graph=():SwitchTopology=>({revision:0,name:'图',switch_category_id:'s',is_active:true,is_default:false,
   nodes:[node('a','output'),node('b','input')],connections:[],operating_modes:[{id:'mimo_ota',name:'正常',active_connections:[]},{id:'calibration',name:'参考',active_connections:[]}]});
 const connection={id:'ab',source:'a',source_pin:'RF5',target:'b',target_pin:'RF5'};
 test('方向解析只读合法ports与显式角色，不按名字/数量字段推导',()=>{

@@ -89,6 +89,7 @@ class ConversionDifference(StrictConversionModel):
 
 
 class TopologyConversionPreview(StrictConversionModel):
+    revision: int = Field(strict=True, ge=0)
     source_digest: str
     changes: TopologyConversionRequest
     candidate: dict[str, Any]

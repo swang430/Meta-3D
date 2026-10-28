@@ -1,4 +1,5 @@
 """元数据不成为物理身份；真实 HTTP 回传保留原连接表示。"""
+from tests.topology_revision_requests import saved_revision as _saved_revision
 import copy
 import json
 
@@ -53,7 +54,7 @@ def test_metadata_and_clean_http_roundtrip_do_not_change_existing_route_identity
         node['params']['nominal_metadata'] = {'gain_dbi': metadata}
     elif location == 'reference_edge':
         payload['connections'][2]['nominal_metadata'] = {'cable_loss_db': {**metadata, 'unit': 'dB'}}
-    response = client.patch(url, params=scope, json=payload)
+    response = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
     assert response.status_code == 200, response.text
     after = paths(client, configured, graph).json()[0]
     assert after['route_digest'] == before['route_digest']
@@ -81,7 +82,7 @@ def test_typed_legacy_reference_edge_roundtrip_preserves_stored_json_and_digest(
     assert raw['connections'][2]['calibrated_loss_db'] == 0
     assert 'opaque' not in raw['connections'][2]
     for payload in ({'name': '只改名'}, {k: raw[k] for k in ('nodes', 'connections', 'operating_modes')}):
-        response = client.patch(url, params=scope, json=payload)
+        response = client.patch(url, params=scope, json={**(payload), 'expected_revision': _saved_revision(client, url, scope)})
         assert response.status_code == 200, response.text
         db_session.refresh(graph)
         assert json.dumps(graph.connections) == stored

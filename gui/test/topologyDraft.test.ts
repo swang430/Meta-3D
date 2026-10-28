@@ -5,7 +5,7 @@ import * as draftHelpers from '../src/features/TopologyEditor/topologyDraft.ts';
 import type { SwitchTopology } from '../src/api/switchTopologyService.ts';
 import { getNodePorts, suggestedPassivePorts } from '../src/features/TopologyEditor/nodePortHelpers.ts';
 
-const fixture = (): SwitchTopology => ({ name: '图', switch_category_id: 's', is_active: true, is_default: false,
+const fixture = (): SwitchTopology => ({ revision:0, name: '图', switch_category_id: 's', is_active: true, is_default: false,
   nodes: ['a','b','c'].map(id => ({id, type:'pad',label:id,position:{x:12,y:34},params:{ports:['in','out'],unknown:{keep:1}}})),
   connections: [{id:'ab',source:'a',target:'b',source_pin:'out',target_pin:'in'}, {id:'bc',source:'b',target:'c',source_pin:'out',target_pin:'in'}],
   operating_modes: [{id:'mimo_ota',name:'测试',active_connections:['ab','bc']},{id:'calibration',name:'校准',active_connections:['ab']}],
