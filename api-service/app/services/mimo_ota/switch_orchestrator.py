@@ -258,7 +258,15 @@ def _build_probe_binding(
                 raise ValueError('正常测试通路缺少唯一完整CE源端')
             edge=predecessors[0];path_edges.insert(0,edge)
             current=nodes_by_id[edge['source']]
-        if current['id'] in seen or any(edge.get('target')==current['id'] for edge in active_connections or []):
+        from app.schemas.topology_ports import BSE_TYPES
+        # BSE→CE 是上游输入，不是输出链回接；只按实际节点类型放行，路径内回接仍拒绝。
+        bad_ce_input = any(
+            edge.get('target') == current['id']
+            and (edge.get('source') in seen
+                 or nodes_by_id.get(edge.get('source'), {}).get('type') not in BSE_TYPES)
+            for edge in active_connections or []
+        )
+        if current['id'] in seen or bad_ce_input:
             raise ValueError('正常测试CE源端存在回接')
         path_nodes.insert(0,current)
         ce_port_label=resolve_declared_calibration_ce_port(path_nodes,path_edges,allow_incomplete=True)
