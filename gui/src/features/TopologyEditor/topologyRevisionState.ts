@@ -7,6 +7,10 @@ export type LibraryInspectionContext=RevisionContext&{inspectionGeneration:numbe
 export function ownsLibraryInspection(current:LibraryInspectionContext,captured:LibraryInspectionContext):boolean {
   return ownsRevisionRequest(current,captured)&&current.inspectionGeneration===captured.inspectionGeneration;
 }
+export type SavedInspectionContext=LibraryInspectionContext&{savedRevision:number};
+export function ownsSavedInspection(current:SavedInspectionContext,captured:SavedInspectionContext):boolean {
+  return ownsLibraryInspection(current,captured)&&current.savedRevision===captured.savedRevision;
+}
 export function canRestore(s:RevisionGuards):boolean {
   return !s.dirty&&!s.writing&&!s.collectionBusy&&!s.unknownWrite;
 }

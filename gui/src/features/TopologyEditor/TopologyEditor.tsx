@@ -52,8 +52,8 @@ import {PortDeclarationFields} from './PortDeclarationFields';
 import {InternalPathFields} from './InternalPathFields';
 import {LegacyConversionPanel} from './LegacyConversionPanel';
 import {TopologyHistoryPanel} from './TopologyHistoryPanel';
-import {canRestore,ownsRevisionRequest,ownsLibraryInspection,revisionFailure} from './topologyRevisionState';
-import type {RevisionContext} from './topologyRevisionState';
+import {canRestore,ownsRevisionRequest,ownsLibraryInspection,ownsSavedInspection,revisionFailure} from './topologyRevisionState';
+import type {RevisionContext,SavedInspectionContext} from './topologyRevisionState';
 import {validateDraftInternalPaths} from './internalPathHelpers';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
 import { RouteCalibrationPanel } from './RouteCalibrationPanel';
@@ -140,6 +140,16 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
   const scope=JSON.stringify([labProfileId,topology.switch_category_id]);
   const requestGeneration=useRef(0);
   const liveRequest=useRef<RevisionContext>({scope,topologyId:topology.id??'',generation:0});
+  const latestIdentity=useRef<SavedInspectionContext|null>(null);
+  const savedModel=useRef({topology,libraryBusy});
+  // 同图库写开始或保存模型更换，即刻失效在途/已展示核查；读代数不能改变父写ticket。
+  if(savedModel.current.topology!==topology||(!savedModel.current.libraryBusy&&libraryBusy)){
+    inspectGeneration.current++;latestIdentity.current=null;
+  }
+  savedModel.current={topology,libraryBusy};
+  useEffect(()=>{
+    if(!latestIdentity.current){setLatest(null);setLatestHistory(null);setInspecting(false)}
+  },[topology,libraryBusy]);
   if(liveRequest.current.scope!==scope||liveRequest.current.topologyId!==(topology.id??'')){
     liveRequest.current={scope,topologyId:topology.id??'',generation:++requestGeneration.current};
     inspectGeneration.current++;
@@ -401,17 +411,21 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
   };
   // 显式 GET 核查不借用写 ticket，不接纳令牌覆盖仍在编辑的旧草稿。
   const inspectLatest=async()=>{
-    if(savingRef.current||collectionBusyRef.current||libraryBusy||!topology.id)return;
+    if(savingRef.current||collectionBusyRef.current||isLibraryBusy()||!topology.id)return;
     const ticket={...liveRequest.current},read=++inspectGeneration.current;setInspecting(true);setLatest(null);setLatestHistory(null);
+    const captured={...ticket,inspectionGeneration:read,savedRevision:topology.revision};
+    const ownsInspection=()=>ownsWrite(ticket)&&!isLibraryBusy()&&ownsSavedInspection(
+      {...liveRequest.current,inspectionGeneration:inspectGeneration.current,savedRevision:savedModel.current.topology.revision},captured);
     try{
       const current=await switchTopologyService.getTopology(topology.id,labProfileId);
       const history=await switchTopologyService.listRevisions(topology.id,labProfileId,0,50);
-      if(ownsWrite(ticket)&&read===inspectGeneration.current){setLatest(current);setLatestHistory(history)}
-    }catch(err){if(ownsWrite(ticket)&&read===inspectGeneration.current)setRevisionError(`核查读取失败，原草稿和未知状态保留。 ${errorText(err)}`)}
-    finally{if(ownsWrite(ticket)&&read===inspectGeneration.current)setInspecting(false)}
+      if(ownsInspection()){latestIdentity.current=captured;setLatest(current);setLatestHistory(history)}
+    }catch(err){if(ownsInspection())setRevisionError(`核查读取失败，原草稿和未知状态保留。 ${errorText(err)}`)}
+    finally{if(ownsInspection())setInspecting(false)}
   };
   const adoptLatest=()=>{
-    if(!latest||savingRef.current||collectionBusyRef.current||libraryBusy)return;
+    if(!latest||!latestIdentity.current||savingRef.current||collectionBusyRef.current||isLibraryBusy()||!ownsSavedInspection(
+      {...liveRequest.current,inspectionGeneration:inspectGeneration.current,savedRevision:topology.revision},latestIdentity.current))return;
     adoptSaved(latest);setLatest(null);setLatestHistory(null);setRevisionError('');setSaveResult('idle');
     unknownWriteRef.current=false;setUnknownWrite(false);onBusyChange(collectionBusyRef.current||savingRef.current);
   };

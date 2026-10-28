@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {canRestore,ownsRevisionRequest,ownsLibraryInspection,revisionFailure} from '../src/features/TopologyEditor/topologyRevisionState.ts';
+import {canRestore,ownsRevisionRequest,ownsLibraryInspection,ownsSavedInspection,revisionFailure} from '../src/features/TopologyEditor/topologyRevisionState.ts';
 
 test('恢复与dirty、全部写、采集未知互斥',()=>{
   const ready={dirty:false,writing:false,collectionBusy:false,unknownWrite:false};
@@ -30,4 +30,10 @@ test('库核查在Flow写开始及A→B→A后，迟到读取与已展示结果�
   // 即便最终回到A，期间选图两次也不能让旧A核查重新拥有上下文。
   const returnedToA={...captured,inspectionGeneration:7};
   assert.equal(ownsLibraryInspection(returnedToA,captured),false);
+});
+test('Flow核查在同图库写开始或保存基线改变后，迟到读取和最终采用均拒绝旧身份',()=>{
+  const captured={scope:'lab/category',topologyId:'A',generation:2,inspectionGeneration:5,savedRevision:3};
+  assert.equal(ownsSavedInspection(captured,{...captured}),true);
+  assert.equal(ownsSavedInspection({...captured,inspectionGeneration:6},captured),false,'库写开始即失效');
+  assert.equal(ownsSavedInspection({...captured,savedRevision:4},captured),false,'同图新修订不能采用旧核查');
 });

@@ -51,6 +51,12 @@ API专用18106（PID44239，exec session7712）；首Vite15186（node44301）由
 
 GUI：`npx --no-install tsx --test test/topologyRevisionState.test.ts test/topologyLibraryState.test.ts test/topologyDraft.test.ts test/topologyNominalTransport.test.ts test/legacyConversionState.test.ts test/topologyOperationalLabContext.test.ts`，tsx4.23.15/Node26.5.1，46 passed/0 failed，556.947792ms，退出0。`npm run build`退出0，11.80秒；保留既有chunk-size警告（`gui-tests.log`/`gui-build.log`）。
 
+### 累计 F1 最小 GUI 修复补验
+
+累计审查发现与 H08-library 相反的遗漏：同图库命名开始/保存模型变更未使 Flow 较早的“服务器最新”核查失效。新隔离库 `/tmp/pc04a5b-66qL8r/browser.sqlite`、专用 API18106/GUI15186，bootstrap 后显式重读8类别/4 Lab/28非空bindings全 Mock；不连接默认库或用户服务。真实 DOM 改名及真实响应延迟实跑：RED 分别复现迟到核查和已展示核查使 UI 退回旧 r0/r1（DB仍是r1/r2）；GREEN两站旧核查丢弃，保留当前保存基线。只延迟 `route.fetch()` 得到的真实响应，不合成业务响应、不调用 React handler。
+
+最小修复复用 Flow 读代数与保存模型身份，在库写开始/同图模型变化时作废在途及已展示核查；读取完成和最终采用均校验捕获的修订/代数，不换新token配旧draft。补验 GUI 47 passed/0 failed（563.1325ms、退出0），build退出0（real15.61秒，保留chunk-size警告）。请求、截图、RED/GREEN、输入hash索引为本机 `output/playwright/pc04a5b-final-fix/index.json`；详细阶段与限制在本片 SDD `final-fix-report.md`。本轮仅GUI及验证说明变化，**下节后端全量限定复用原后端输入，未重跑、也不冒称它覆盖新GUI**；未开始5c/5d或部署/现场验证。
+
 ## 唯一最终后端全量
 
 完整原始命令脚本为本机`output/playwright/pc04a5b/run-final.sh`；唯一全量exec session78567，pytest PID48819。新库`/tmp/pc04a5b-Ziu3Cj/full.sqlite`，与browser.sqlite分离；bootstrap退出0并重读7类别、1 Lab、7非空binding全Mock。
