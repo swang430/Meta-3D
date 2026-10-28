@@ -43,7 +43,7 @@ rg -n '绝不|不许|禁止|must not|别把' api-service/app/api/switch_topology
 
 | Task | 文件 |
 |---|---|
-| 1 | 修改 `api-service/app/models/switch_topology.py`、`app/models/__init__.py`、`app/schemas/switch_topology.py`、`app/api/switch_topology.py`、`app/api/chamber.py`；新增 `app/models/switch_topology_revision.py`、`app/services/topology_revisions.py`、`alembic/versions/f28a91c7d6b3_switch_topology_revisions.py`、`tests/test_pc04a5b_topology_revisions.py`、`tests/test_pc04a5b_revision_migration.py` |
+| 1 | 修改 `api-service/app/models/switch_topology.py`、`app/models/__init__.py`、`app/schemas/switch_topology.py`、`app/schemas/topology_conversion.py`（转换预览revision）、`app/api/switch_topology.py`、`app/api/chamber.py`、`gui/src/features/TopologyEditor/TopologyEditor.tsx`（保存/改名/转换三个活写调用）；新增 `app/models/switch_topology_revision.py`、`app/services/topology_revisions.py`、`alembic/versions/f28a91c7d6b3_switch_topology_revisions.py`、`tests/test_pc04a5b_topology_revisions.py`、`tests/test_pc04a5b_revision_migration.py` |
 | 1/2 | 四镜像：`api/openapi.yaml`、`gui/src/types/api.generated.ts`、`gui/src/api/switchTopologyService.ts`、`gui/src/api/mockServer.ts`；原Pydantic schema与真实路由同步 |
 | 2 | 新增 `api-service/tests/test_pc04a5b_topology_restore.py`；在Task1 service/schema/API扩展历史与恢复，不创建第二套校验器 |
 | 3 | 修改 `gui/src/features/TopologyEditor/TopologyEditor.tsx`、`LegacyConversionPanel.tsx`；新增 `TopologyHistoryPanel.tsx`、`topologyRevisionState.ts`、`gui/test/topologyRevisionState.test.ts`；更新受令牌影响的现有GUI测试 |
@@ -278,14 +278,29 @@ API `try`必须包住lock、候选构造、CAS、peer写、flush、响应校验�
 
 接入顺序明确为：
 
-1. create：lock→原schema/nominal/structure/ports/internal_paths/loss_owner校验→构建 `revision=1` 新图→flush/统计/响应预校验→读取同chamber/category默认peer→每个 `cas_revision(..., {'is_default':False})`→新图 `add_revision(...,'create')`→flush历史→序列化所有被写响应候选→commit。peer任一个CAS/历史失败整个create回滚，不能沿用原bulk update。
+1. create：lock→原schema/nominal/structure/ports/internal_paths/loss_owner校验→构建 `revision=1` 新图→flush/统计/响应预校验→**仅 `request.is_default is True` 时**读取同chamber/category、`is_default IS TRUE`且 `id != 新图.id` 的peer→每个 `cas_revision(..., {'is_default':False})`→新图 `add_revision(...,'create')`→flush历史→序列化所有被写响应候选→commit。新图已flush，必须排除自身，不能自让位；非默认create不读写peer。peer任一个CAS/历史失败整个create回滚，不能沿用原bulk update。
 2. copy：lock→同scope读source→原raw复制及已有校准两字段清null→新图显式r1/inactive/nondefault→flush→原响应校验→统计→add_revision(copy)→flush/响应预校验→commit。不复制source历史，源图revision不变。
 3. import：lock→原模板校验和已有库覆盖409→显式r1/inactive/nondefault→flush/统计/响应预校验→add_revision(import)→flush→commit。失败不留新图。
-4. PATCH：lock→新鲜目标→先核expected→从 `model_dump(exclude_unset=True)` pop expected和非列控制键→沿现有preserve与全部验证器构造候选（禁止typed GET重建raw）→算统计（临时对象，不挂Session）→仅实际变化时同scope默认peer逐行CAS→目标cas_revision→flush→`SwitchTopologyResponse.model_validate(row).model_dump(mode='json')`→commit。仅名称字段时 `preserve_updated_at=True`，即使还含expected也必须命中；同值chamber断言不当内容变更。
+4. PATCH：lock→新鲜目标→先核expected→从 `model_dump(exclude_unset=True)` pop expected和非列控制键→沿现有preserve与全部验证器构造候选（禁止typed GET重建raw）→算统计（临时对象，不挂Session）→**仅本次显式提交 `is_default=True` 且当前目标非默认（false→true）时**，对同chamber/category、`is_default IS TRUE`且 `id != 目标.id` 的peer逐行CAS让位→目标cas_revision→flush→`SwitchTopologyResponse.model_validate(row).model_dump(mode='json')`→commit。name-only、普通图保存、未提交default、显式false或已default仍true均不进入peer写路径，不改变peer的revision/default/updated_at。仅名称字段时 `preserve_updated_at=True`，即使还含expected也必须命中；同值chamber断言不当内容变更。
 5. conversion：envelope允许且仅允许 `{'expected_revision','conversion'}`；`_commit_conversion`新增expected_revision参数。源快照同时取revision；沿原 `_conversion_candidate`、source_digest及三个cast(raw,Text)等式，用 `cas_revision(...,operation='conversion',raw_conditions=...)`；不把metadata放进既有digest造成兼容漂移。no-op转换仍检查digest/expected后返回原revision，不编造转换历史。
 6. DELETE：lock→原 `_assert_deletable` + `assert_revision_deletable`→删除；chamber bulk DELETE锁同暗室、在删图/探头/暗室之前执行两个保护，RESTRICT是最后防线。竞争失败必须回滚探头和暗室；不能将新修订表cascade删除。
 
 `is_active/is_default`实际变化也推进revision，即使可恢复snapshot同值；recorded_metadata展示状态变化。历史行没有update/delete API，没有自动清理，没有revision驱动的自动激活。
+
+两个默认让位入口共用以下查询形状，调用条件分别如上；锁/CAS/回滚边界保持不变，不引入新机制：
+
+```python
+peers=db.query(SwitchTopology).filter(
+    SwitchTopology.chamber_id==target.chamber_id,
+    SwitchTopology.switch_category_id==target.switch_category_id,
+    SwitchTopology.is_default.is_(True),
+    SwitchTopology.id!=target.id,
+).all()
+for peer in peers:
+    cas_revision(db,peer,peer.revision,{'is_default':False})
+```
+
+此处target为当前入口已加载/已flush的目标图。create条件为 `request.is_default is True`；PATCH条件为 `'is_default' in request.model_fields_set and request.is_default is True and not target.is_default`，使用锁后重读的旧状态、在目标CAS前判断，不用新candidate状态作判据。
 
 - [ ] **Step 6：四镜像和三个活GUI写调用先迁移令牌。** Schema增加strict字段；OpenAPI请求required同步，响应revision必填，生成TS；服务手工类型中 `SwitchTopology.revision:number`，创建草稿测试补0但不拿0冒充已保存GET令牌。`TopologyUpdatePayload`排除只读revision/id/统计列，强制expected_revision；图保存helper返回 `expected_revision:draft.revision`，改名使用当前已保存topology.revision，转换用预览对应保存版本的整数令牌。转换preview响应增加revision并在同次源查询取值，避免预览后重新读令牌自动确认旧candidate。
 
@@ -462,7 +477,25 @@ def field_differences(before,after):
 
 顶层graph数组差异完整呈现raw前后内容（保持每个内部缺键/类型），不默默归一化；GUI可折叠JSON。restore-preview：scope→当前fresh图→expected匹配→按topology_id/revision查历史→candidate→下面六道保存门→临时对象统计及响应序列化验证→返回。读端不调用lock写SQLite暗室、不flush、不插baseline。restore：在写事务lock后重新执行同样选择/构造/门，不信preview候选；values从RESTORABLE取，installed_date用 `datetime.fromisoformat`（null保持）； `cas_revision(...,operation='restore',restored_from_revision=request.revision,force_revision=True)`，flush/响应预校验/commit。恢复不写scope/is_active/is_default/created_at/created_by。
 
-校验门按当前源raw与candidate传参，复用 `switch_topology.py` 内 `_validate_nominal`、`_validate_structure`、`_validate_ports`、`_validate_internal_paths`、`_validate_loss_owners` 及Pydantic名称/日期字段验证。**不调用preserve_graph_rows把当前默认值灌进历史**；不把历史自己当previous绕过声明变化校验。previous必须当前raw，只有与当前同ID同字段且JSON类型/值未变的旧声明才能沿原保形例外；候选恢复了现在不允许的旧结构→preview422、restore422，当前零写。对于数值，通过已有nominal/数值保存规则检查，显式恢复字段不能用缺connection_numeric_declarations逃过有限/非负约束；未知不补0。
+校验门按当前源raw与candidate传参，复用 `switch_topology.py` 内 `_validate_nominal`、`_validate_structure`、`_validate_ports`、`_validate_internal_paths`、`_validate_loss_owners` 及Pydantic名称/日期字段验证。**不调用preserve_graph_rows把当前默认值灌进历史**；不把历史自己当previous绕过声明变化校验。previous必须当前raw，只有与当前同ID同字段且JSON类型/值未变的旧声明才能沿原保形例外；候选恢复了现在不允许的旧结构→preview422、restore422，当前零写。
+
+数值门精确复用 `app/schemas/topology_nominal.py::validate_number`：`validate_nominal_write`本身不校验 `cable_loss_db`，该字段现有写规则位于 `preserve_connection_rows` 的 `validate_number(value,key='cable_loss_db',nonnegative=True)` 分支。恢复不走typed GET/显示值等价例外，按当前raw同ID同键比较，新增/改变的cable_loss_db显式调用该函数，拒绝bool、字符串、非有限和负值，允许null；缺键保持缺键。复用规则而不调用会回填/转换JSON的保形函数，不新建校验框架，其它字段继续各自现有规则。
+
+```python
+old_edges={edge['id']:edge for edge in current.connections}
+for edge in candidate['connections']:
+    if 'cable_loss_db' not in edge:
+        continue
+    previous=old_edges.get(edge['id'],{})
+    value=edge['cable_loss_db']
+    if 'cable_loss_db' not in previous or not same_json(value,previous['cable_loss_db']):
+        try:
+            validate_number(value,key='cable_loss_db',nonnegative=True)
+        except ValueError as exc:
+            raise HTTPException(422,detail=str(exc)) from exc
+```
+
+`validate_number`从 `app.schemas.topology_nominal`导入，current是锁后（preview为只读fresh）取到的当前ORM图；历史自身不作previous。恢复不能用缺connection_numeric_declarations跳过上述检查；未知不补0。
 
 - [ ] **Step 4：服务TS镜像与开发mock。** `SwitchTopologyRevisionSummary/Detail`、`TopologyRestorePreview`字段对应上面schema；raw使用已有 `JsonValue`。服务方法参数完整：
 
