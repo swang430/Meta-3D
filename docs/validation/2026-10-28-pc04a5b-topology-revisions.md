@@ -33,7 +33,7 @@ API专用18106（PID44239，exec session7712）；首Vite15186（node44301）由
 
 组件内保护不等于全局SPA离页守卫；本片不实现跨卸载持久草稿/unknown。离页不取消服务端请求，重入不宣称原写成功、不使用缓存旧令牌、不自动重发。采集未知的既有保守锁不放宽。
 
-补充精确出口：`empty-library-final.log`及`empty-library-1793165941783-*`证明真正空库import POST200仅1次、随后GET失败unknown，不建伪成功Flow；显式GET/history核查仍锁，明确采用才建立r1保存基线。该例仅向同一隔离库新增空暗室及Lab（Lab `8344c5b4-5333-477c-a9f1-ad1367851251`），故初期4 Lab/28 bindings与最终5 Lab/35 bindings分时点记录；所有8类别及最终35非空binding均重新核Mock。新import图`ca47b1a0-5810-487c-adb9-2e7425e51da3`，只有1条r1/import历史。
+补充精确出口：`empty-library-final.log`及`empty-library-1793165941783-*`证明真正空库import POST200仅1次、随后GET失败unknown，不建伪成功Flow；显式GET/history核查仍锁，明确采用才建立r1保存基线。该例仅向同一隔离库新增空暗室及Lab（Lab `8344c5b4-5333-477c-a9f1-ad1367851251`）：初始seed快照为4个浏览器业务Lab/28 bindings；最终只读复算为**全库55 Lab，其中5个浏览器业务Lab各7 bindings，另50个归属测试Lab的bindings为NULL**，合计35个非空binding、8类别全部Mock。新import图`ca47b1a0-5810-487c-adb9-2e7425e51da3`，只有1条r1/import历史。
 
 `doubleclick-final.log`及本机独立`doubleclick.browser.js`保留实际`page.mouse.dblclick`代码，真实PATCH计数为1，恢复在途禁用；截图前缀`H07-1793165961258-*`。`late-preview-lab-final.log`及`late-preview-lab-1793166043247-*`证明真实restore-preview原响应延迟时关闭历史并切Lab，旧preview不进入新图，也不产生写入。
 
@@ -45,7 +45,7 @@ API专用18106（PID44239，exec session7712）；首Vite15186（node44301）由
 
 `calibration_certificates`、`route_calibration_applications`、`route_calibration_selections`、`test_executions`、`test_plan_executions`前后计数及内容摘要完全相同。Mock采集没有产生采用/证书/正式执行资格。
 
-补证前后`audit-after.json`/`audit-after-supplement.json`及`audit-verification-supplement.log`进一步确认192条已有历史完全不变，上述5类正式表计数/hash不变；最终8类别、5 Lab、35非空binding。`calibrated-reset-proof.log`在实际库中定位到历史r4内嵌2.5→restore r5为null，原r4仍为2.5；这些值均为synthetic输入，不能称现场校准值。旧`probe_path_loss_calibrations`等资格实体的恢复前后不变由Task2定点生产入口测试覆盖，不冒称都包含于本机按表名筛选的5类审计。
+补证前后`audit-after.json`/`audit-after-supplement.json`及`audit-verification-supplement.log`进一步确认192条已有历史完全不变，上述5类正式表计数/hash不变；最终8类别、全库55 Lab（5个浏览器业务Lab及50个NULL bindings归属测试Lab）、35非空binding。原`audit-verification-supplement.log`的`lab_count=5`将业务Lab误写为总数，原件不覆盖；追加只读`SELECT id,name,instrument_bindings FROM lab_profiles`更正原件`lab-count-correction-r1.json`，记录完整分类及原审计SHA256。50个空绑定Lab来源可定位到`tests/test_pc04a4d_loss_truth.py::world`的归属测试夹具，未清理数据库。`calibrated-reset-proof.log`在实际库中定位到历史r4内嵌2.5→restore r5为null，原r4仍为2.5；这些值均为synthetic输入，不能称现场校准值。旧`probe_path_loss_calibrations`等资格实体的恢复前后不变由Task2定点生产入口测试覆盖，不冒称都包含于本机按表名筛选的5类审计。
 
 相关后端：`tests/test_pc04a5b_topology_revisions.py tests/test_pc04a5b_topology_restore.py tests/test_pc04a2_route_selection.py tests/test_pc04a2_route_eligibility.py tests/test_pc04a2_route_application.py tests/test_pc04a2_route_freeze.py tests/test_pc04a4d_loss_truth.py`，`pytest -q`：183 passed，1208 warnings，171.56秒，退出0（`targeted-first.log`）。补充`test_pc04a5b_restore_contract.py test_pc04a5b_restore_qualification.py test_pc04a5b_revision_migration.py`：5 passed，84 warnings，6.83秒，退出0（`targeted-supplement.log`）。其中迁移覆盖实际文件`f28a91c7d6b3_topology_revisions.py`；双连接CAS及回滚、同身份confirmed一次补偿、身份变化后当前和旧freeze两端拒绝均沿真实生产入口测试，synthetic软件证据不等于现场实测。
 
