@@ -8,7 +8,7 @@
 |---|---|---|---|
 | 1 | **PC-04A-5a** | 拓扑库：同Lab/开关范围内选择、命名、复制/另存为；默认选择与图记录分离，复制不自动改仪器绑定、不复制校准采用资格；重载后可选回原图 | 已由[PR545](https://github.com/swang430/Meta-3D/pull/545)合并至`ce4bec1140d34fff7c029dfa04e38a71de5aad63`；[验收记录](validation/2026-10-27-pc04a5a-topology-library.md)保留3项文档/规则门失败及未验边界 |
 | 2 | **PC-04A-5b** | 保存前持久化修订、并发冲突拒绝、历史预览与显式恢复；恢复产生新修订，保留旧修订及历史执行/证书；区分放弃草稿与恢复已保存版本 | 2026-10-28实施验证快照：[实施计划](plans/2026-10-28-pc04a5b-topology-revisions.md)及Task1～3独立审查已完成；[隔离验证](validation/2026-10-28-pc04a5b-topology-revisions.md)H01～H10/GUI/build已执行，唯一全量8066 passed/17 skipped/3项历史规则failed。Task4独立/累计/外审合并尚未完成；最终交付以功能PR合并回执为准 |
-| 3 | **PC-04A-5c** | 仅CAICT副本定向改接，不修改原CAICT：先备份并确认准确源图；副本中每条目标F64→probe边改为F64原输出→独立PA.in→PA.out→原probe，声明in/input、out/output及in→out内部通路；保留原对应关系，更新模式/显式路径引用；仅在副本删除被替代旧边及重复PA标称，不泛删其他器件 | 未启动，依赖5b；先预览差异后保存 |
+| 3 | **PC-04A-5c** | 仅CAICT副本定向改接，不修改原CAICT：先备份并确认准确源图；副本中每条目标F64→probe边改为F64原输出→独立PA.in→PA.out→原probe，声明in/input、out/output及in→out内部通路；保留原对应关系，更新模式/显式路径引用；仅在副本删除被替代旧边及重复PA标称，不泛删其他器件 | 2026-10-28隔离软件验证完成：[验证记录](validation/2026-10-28-pc04a5c-independent-pa.md)。原图/候选完整正常绑定同32路；API/真实鼠标拖动保存和合法r2恢复为r4已验，r1恢复422保留。定点294 passed、GUI59 passed/build通过，最终全量8146 passed/17 skipped/3项历史门failed；独立审查/外审合并及用户库落地待主任务，不代表现场或校准合格 |
 | 4 | **PC-04A-5d** | 综合验收与操作指南：原图/副本/重命名/默认/误保存恢复/冲突/跨Lab/采集锁；CAICT逐链映射、实际拖动端口连接保存重载、标称和confirmed补偿不重复 | 依赖5c |
 
 5a交付范围：本页实际走`switch_topologies`，不是通用`topologies`。GUI提供Lab/开关范围内的库选择、命名、复制与独立浏览器默认；保留图保存，模板仅显式追加非活跃副本，不再自动导入或覆盖原库。模型的version字符串不等于5b独立整数revision；历史恢复的实施验证状态见[本片验证快照](validation/2026-10-28-pc04a5b-topology-revisions.md)及上表。图选择、绑定、转换保存、导入保护、删除和冻结消费关系已纳入5a独立内审，不据此宣称现场验收通过。
