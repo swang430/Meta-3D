@@ -118,7 +118,7 @@ def test_real_double_connection_interleaving_after_snapshot_before_update(world,
         return commit(world,url,scope,p)
     def ordinary():
         barrier.wait(10)
-        return world[2].patch(url,params=scope,json={**(update), 'expected_revision': _saved_revision(world[2], url, scope)})
+        return world[2].patch(url,params=scope,json=update)
     with ThreadPoolExecutor() as pool:
         pending=pool.submit(convert)
         other=pool.submit(ordinary).result(15)
