@@ -630,7 +630,7 @@ try {
 }
 ```
 
-上述变量在Flow初始化：`requestGeneration=useRef(0)`、`liveRequest=useRef<RevisionContext>({scope,topologyId:topology.id??'',generation:0})`、revisionError字符串、unknownWrite布尔及同步ref；启动前同时设置liveRequest=ticket。复用现有beginWork release，release只结清本网络任务，unknownWrite的持久阻断由state/ref和离页guard消费；禁止finally把采集或未知状态强制false。selectedNode/selectedEdge具体setter沿原Flow名清理，不保留指向被恢复图不存在对象的选择。
+上述变量在Flow初始化：`requestGeneration=useRef(0)`、`liveRequest=useRef<RevisionContext>({scope,topologyId:topology.id??'',generation:0})`、revisionError字符串、unknownWrite布尔及同步ref；启动前同时设置liveRequest=ticket。复用现有beginWork release，release只结清本网络任务，unknownWrite由当前组件state/ref及原图/Lab/category守卫持续阻断；禁止finally把采集或未知状态强制false。不新增全局SPA离页守卫，不跨卸载持久保存草稿/unknown；实际在途beginWork跨卸载保留至请求落定，迟到响应不写已卸载UI。未知提示明确“离开不会取消服务器请求，返回后请核查服务器最新修订”；重入从服务器GET当前图/列表建立新保存基线，不用旧缓存令牌/草稿，不显示原写成功、不自动POST。此裁决只针对数据库写UI，真实采集未知的既有保守锁不变。selectedNode/selectedEdge具体setter沿原Flow名清理，不保留指向被恢复图不存在对象的选择。
 
 显式“刷新查看服务器最新”只GET当前图/历史并展示比较，dirty草稿仍保留，不能用新的revision配旧draft直接保存；用户必须明确放弃旧草稿后采用最新详情，或保留草稿取消。结果未知时强制核对GET revision/历史中的operation与内容，不自动判恢复成功；用户确认采用服务器最新后清unknownWrite。与已有“放弃未保存改动”按钮区分：后者仅回到已知保存快照，不叫历史恢复。保存/名称/转换也统一409/超时提示；conversion输入保持，重新预览须显式。
 
