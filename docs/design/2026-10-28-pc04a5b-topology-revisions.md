@@ -1,6 +1,6 @@
 # PC-04A-5b：拓扑持久修订、冲突拒绝与显式恢复
 
-状态：细化设计，等待用户确认以下具体契约后编制实施计划；尚未实现。
+状态：2026-10-28用户已确认完整具体契约（含缺修订令牌422、过期409）；[实施计划](../plans/2026-10-28-pc04a5b-topology-revisions.md)已编制、待独立审查；尚未实现。
 
 基线：PC04A5a PR545 已合并，`ce4bec1140d34fff7c029dfa04e38a71de5aad63`。承接已批准的[总体设计](2026-10-27-topology-library-pa-recovery.md)第5节，不启动5c/5d，不修改用户原CAICT、默认数据库或用户服务。额度例外授权仅本片；原自动化继续暂停。
 
@@ -33,7 +33,11 @@
 
 `is_default`让位会写同scope其它图，必须在同一事务纳入各行修订快照及CAS，失败全部回滚；GUI不新增此控制。scope字段维持原有一致性限制，不允许借修订改chamber/category。名称单独修改仍用`updated_at=SwitchTopology.updated_at`列自赋值，避免改变正式执行选图排序；其它保存的updated_at沿既有语义，不引入自动激活。
 
+实施澄清（decision0010）：所有拓扑写入口和两个删除入口在读取目标/默认peer之前取得同暗室事务锁。PostgreSQL锁暗室行；SQLite以`id=id, updated_at=updated_at`无内容变化UPDATE取得事务写锁，不改变暗室时间或其它字段。锁后重新读取图，仍逐行revision CAS；因此空scope并发create默认图也不能绕过保护。只读历史/预览不取SQLite写锁。`is_active/is_default`实际变化亦推进修订；另存只读`recorded_metadata`记录当时UUID/scope/状态/创建更新时间及创建者，供历史并列展示，不进入可恢复白名单。此为已批准原子性和审计边界的实施澄清，不增加激活或资格能力。
+
 无实际改动的合法PATCH保持原revision，不新增假历史；与旧revision冲突仍先409。判断JSON等价需区分true与1、缺键与null，不用普通Python相等折叠。
+
+显式restore不适用PATCH无变化例外：即使候选与当前内容相同，仍新增operation=restore修订并记录来源，不回退或改写历史。
 
 ## 4. API与恢复
 
