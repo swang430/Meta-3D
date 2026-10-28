@@ -20,6 +20,7 @@
 - 原 `ce_port` 是对应声明来源，坐标、名称、ID 拼写、型号不是物理事实。原 source_pin=`out`→新 B# 必须列明为本次显式声明，不能说原 pin 已是 B#。
 - PA `ports=['in','out']`，`port_directions={'in':'input','out':'output'}`，`internal_paths=[{'from_port':'in','to_port':'out'}]`；一条原边对应一个 PA 和两条新边，禁止共享 PA 或重排原 CE→probe 身份。
 - 原 20 dB 仅旧版标称，绝不变实测；未知不补零，原复合损耗不得重复计算。软件声明不等于现场导通、RF 认证、校准合格或 B/HOLD 解除。
+- 恢复仍走当前端口声明门：copy所得r1缺ports，候选r2已主动声明后，恢复r1应422且零写，r1只读历史原样保留。成功恢复只在合法已声明候选之间演练，不修改历史r1、不放宽共享恢复门。
 - 最终本机副本写入仅由主任务在合并、验证、新备份和恢复演练之后执行；实施子任务只在自己的隔离库写入。
 - 主任务维护台账 claim、进度与释放。NotebookLM 本片不适用：不改 HAL、SCPI 或仪器语义；发现需要断言仪器事实时停止扩展并报告。
 
@@ -87,7 +88,7 @@ PA `params.gain_db` 沿原 `pa_gain_db` 数值复制，`nominal_metadata.gain_db
 | 普通正式选图 | `mimo_ota/switch_orchestrator.orchestrate_switch_topology` 按chamber/is_active/updated_at，`rf_chain_resolver` | 源活跃、副本inactive；选择ID和源行为前后不变，不激活副本来凑通过 |
 | 参考段 | `calibration/route_calibration._route_selections`；只有 `calibration` 模式沿probe追参考段 | 不把历史 `calibration_e2e` 改名为 `calibration`，不加虚构air_path/参考仪器；参考节点/边逐字段不变 |
 | 采用与冻结 | `route_calibration`、`configuration_scope`、`mimo_ota/route_calibration_freeze`、`mimo_ota/executors/measure.py` | 副本不产生Application/Selection/证书；原confirmed整链只计一次，原execution frozen payload逐字不变；已有NULL topology_id兼容不声称被修复 |
-| 历史恢复 | `topology_revisions`、`restore-preview/restore` | 预览不写；副本恢复为新修订，不恢复active/default或资格；原图不参与恢复 |
+| 历史恢复 | `topology_revisions`、`restore-preview/restore`、`validate_port_write` | r2→缺ports的r1预览/恢复均422零写；r2候选→位置变r3→恢复r2为r4；不恢复active/default或资格，原图不参与恢复 |
 | GUI | `TopologyEditor`、`NominalPropertyFields`、`CustomEdges` | 用既有库选择副本，显示32独立PA与两边损耗未知；来源说明可见；保存重载与历史恢复不丢opaque历史资料 |
 
 实施前再查全集；新增命中先判断是否涉及本转换，不顺带修全仓：
@@ -271,7 +272,11 @@ GREEN必须同时覆盖：完整4条BSE输入+32 PA输出正常；去掉BSE输�
 
 为“confirmed只计一次”复用已有 `test_pc04a5b_restore_qualification.py`、`test_pc04a2_route_freeze.py` 正向断言，保留其synthetic fixture属性；增加本片copy/PATCH前后四张记录表及原execution freeze逐字相同断言。不能把Mock采集做成confirmed，也不能凭副本新UUID宣称所有旧证书兼容被取消。
 
-- [ ] **Step 4：副本恢复演练与失败事务。** r2→restore-preview r1 只读；restore r1 expected=2→r3，图回到copy基线且inactive/非default；再PATCH原candidate expected=3→r4。每步原图hash不变；原r1/r2历史immutable。过期恢复409、跨暗室409、缺令牌422、候选错pin/半链422且revision/history不变。网络未知不自动重试copy/PATCH，读列表/最新revision核实。保存回执必须带实际副本UUID，而非复用源UUID。
+- [ ] **Step 4：副本恢复演练与失败事务。** 在r2分别请求restore-preview r1和restore r1，body均为 `{revision:1,expected_revision:2}`，两者必须422，当前raw仍为r2候选、revision仍2、历史条数/内容零变化。原因是r1原样缺F64/32probe的ports，当前r2已主动声明；恢复会删除声明，现有 `validate_port_write` 拒绝。r1通过GET历史详情只读查看，不补端口、不篡改快照，也不为了本片放宽恢复门。
+
+  成功序列另做：从r2候选深拷贝nodes，仅改变一个新增PA的position，普通PATCH expected=2→r3；restore-preview r2 expected=3应200且零写；restore r2 expected=3→r4，raw回到合法r2候选且inactive/非default。所有r1/r2/r3历史保持不可变、每步原图hash不变。过期恢复409须选择合法r2历史作为目标，避免与r1非法历史422混测；另验跨暗室409、缺令牌422、候选错pin/半链422及失败零修订。网络未知不自动重试copy/PATCH，读列表/最新revision核实。保存回执必须带实际副本UUID，而非复用源UUID。
+
+  2026-10-28主任务接受此收窄：代价是不能把已经主动声明的副本恢复成无声明raw；原CAICT始终完好，仍可经现有copy另建inactive、非default副本。不承诺任意历史都可恢复，不把本片成功恢复演练说成“已恢复到原始r1”。数据库备份在新演练库中的恢复是独立步骤，不受此GUI声明恢复承诺混淆。
 
 - [ ] **Step 5：真实浏览器和build。** 新隔离API使用18116、Vite18117（运行前只读确认端口空闲，有占用换空闲端口并同步本片配置，不停用户进程）。Vite专用配置在原config之上同时覆盖 `/api/v1/ota`、`/api/v1/ws` 和 `/api`，避免默认代理漏回8000；其目标均为 `http://127.0.0.1:18116`。启动命令从对应目录运行：
 
@@ -282,7 +287,7 @@ BOOTSTRAP_ON_STARTUP=false .venv/bin/python -m uvicorn app.main:app --host 127.0
 npm run dev -- --config vite.pc04a5c.config.ts --host 127.0.0.1 --port 18117
 ```
 
-先读适用浏览器技能，真实点击库选择源→复制已保存版本→选择副本；服务端回读确认ID/inactive/非default后，将离线预览已核candidate经真实PATCH送副本并刷新页面。不用route mock拦截。确认32独立PA、ports/方向/pair、原B#对应probe；至少首/中/末路真点击PA及两侧边，来源说明显示旧标称且0.8未分配、线缆损耗为空/未知；截图与网络回执关联同UUID/revision。真实拖动一个PA→保存→刷新，增益20、两边null、opaque原边均保留；用已有历史面板预览/恢复到候选修订，来源/未知/对应关系复核。另页过期保存409保留草稿，库切换仍走既有dirty/busy守卫；不新增跨SPA机制。真实操作结尾只读审计源raw和副本raw哈希。
+先读适用浏览器技能，真实点击库选择源→复制已保存版本→选择副本；服务端回读确认ID/inactive/非default后，将离线预览已核candidate经真实PATCH送副本并刷新页面。不用route mock拦截。确认32独立PA、ports/方向/pair、原B#对应probe；至少首/中/末路真点击PA及两侧边，来源说明显示旧标称且0.8未分配、线缆损耗为空/未知；截图与网络回执关联同UUID/revision。r2时历史r1详情可只读查看，预览恢复r1显示422，当前图不变；不要在UI宣称已恢复原图。真实拖动一个PA→保存为r3→刷新，增益20、两边null、opaque原边均保留；用已有历史面板预览/恢复合法候选r2，得到r4，来源/未知/对应关系复核。浏览器使用独立新副本以保持该修订序列，不沿用已完成API演练的r4副本套用旧令牌。另页过期保存409保留草稿，库切换仍走既有dirty/busy守卫；不新增跨SPA机制。真实操作结尾只读审计源raw和副本raw哈希。
 
 ```bash
 # api-service（新test.sqlite + Mock，安全bootstrap完成后）
@@ -304,7 +309,7 @@ npm run build
 - [ ] 运行已合并纯转换器生成新candidate、32路manifest和preview；由主任务核对量值未分配、完整模式缺口、每一路映射。离线工具不直接连本机API，也没有apply开关。
 - [ ] 调5a copy，名称明确“CAICT 独立PA副本”，保存请求/响应；不自动重试未知结果。新UUID必须非源且inactive/非default/r1；读取副本r1历史raw，核对其与新源raw在仅两calibrated字段清空的例外下同形。整个源图hash必须仍相同。
 - [ ] 用副本最新revision普通PATCH候选；冲突409立即停止、重读核对，不覆盖。回读raw/history确认32 PA/64替代边、120节点/122边、模式69/71及其余不变；核对PA gain20仅旧标称、两边null、复合0.8/5m只在历史资料；源摘要/updated_at/revision全部不变。
-- [ ] 本机真实页面只读确认库可在原图/副本间选择，副本非活跃非默认，原图内容与默认保持；不启动采集、不激活、不改仪器绑定。最终交付源/副本UUID、raw hash、manifest hash、备份及恢复证据路径、实际修订。软件输出子路径通过不等于完整模式/现场校准通过。
+- [ ] 本机真实页面只读确认库可在原图/副本间选择，副本非活跃非默认，原图内容与默认保持；不启动采集、不激活、不改仪器绑定。最终交付源/副本UUID、raw hash、manifest hash、备份及恢复证据路径、实际修订；明确r1可读但声明撤销恢复被拒绝，成功历史恢复证据仅指隔离库r2→位置变r3→恢复r2为r4，不在用户库额外制造演练修订。软件输出子路径通过不等于完整模式/现场校准通过。
 - [ ] 写回项目台账、生成handoff并由主任务释放claim；原自动化不因本片自动恢复。
 
 ## 4. 计划自检
