@@ -52,7 +52,7 @@ import {PortDeclarationFields} from './PortDeclarationFields';
 import {InternalPathFields} from './InternalPathFields';
 import {LegacyConversionPanel} from './LegacyConversionPanel';
 import {TopologyHistoryPanel} from './TopologyHistoryPanel';
-import {canRestore,ownsRevisionRequest,revisionFailure} from './topologyRevisionState';
+import {canRestore,ownsRevisionRequest,ownsLibraryInspection,revisionFailure} from './topologyRevisionState';
 import type {RevisionContext} from './topologyRevisionState';
 import {validateDraftInternalPaths} from './internalPathHelpers';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
@@ -98,9 +98,10 @@ interface TopologyFlowProps {
   /** P1-57：dirty 状态上报给外层，用于注册 LabProfile 切换阻断。 */
   onDirtyChange: (dirty: boolean) => void;
   onBusyChange: (busy:boolean)=>void;
+  onWriteStart: ()=>void;
 }
 
-const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, isLibraryBusy, onTopologyUpdated, onDirtyChange, onBusyChange }: TopologyFlowProps) => {
+const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, isLibraryBusy, onTopologyUpdated, onDirtyChange, onBusyChange, onWriteStart }: TopologyFlowProps) => {
   const { screenToFlowPosition, setCenter } = useReactFlow();
   const [activeMode, setActiveMode] = useState<string>(
     topology.operating_modes.length > 0 ? topology.operating_modes[0].id : ''
@@ -372,6 +373,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
 
   const ownsWrite=(ticket:RevisionContext)=>mounted.current&&ownsRevisionRequest(liveRequest.current,ticket);
   const startWrite=()=>{
+    onWriteStart();
     const ticket={scope,topologyId:topology.id??'',generation:++requestGeneration.current};
     liveRequest.current=ticket;inspectGeneration.current++;setInspecting(false);
     savingRef.current=true;setSaving(true);setRevisionError('');setLatest(null);onBusyChange(true);
@@ -471,7 +473,7 @@ const TopologyFlow = ({ topology, labProfileId, conversionEpoch, libraryBusy, is
       finishWrite(ticket);
       release();
     }
-  }, [topology, draft, numericDeclarations, onTopologyUpdated, labProfileId, beginWork, onBusyChange]);
+  }, [topology, draft, numericDeclarations, onTopologyUpdated, labProfileId, beginWork, onBusyChange,onWriteStart]);
 
   const saveConversion=async(preview:TopologyConversionPreview)=>{
     if(isWriteBlocked()||dirty||!topology.id)return;
@@ -885,9 +887,12 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [libraryUnknown,setLibraryUnknown]=useState(false);
   const [libraryRevisionError,setLibraryRevisionError]=useState('');
   const [libraryInspection,setLibraryInspection]=useState<{items:SwitchTopology[];saved:SwitchTopology|null;history:unknown;
-    token:{scope:string;generation:number};sourceId:string|null}|null>(null);
+    token:{scope:string;generation:number};sourceId:string|null;inspectionGeneration:number}|null>(null);
   const [libraryInspecting,setLibraryInspecting]=useState(false);
   const libraryInspectSerial=useRef(0);
+  const invalidateLibraryInspection=useCallback(()=>{
+    libraryInspectSerial.current++;setLibraryInspection(null);setLibraryInspecting(false);
+  },[]);
   const lock = useRef({dirty:false,flow:false,library:false,unknown:false});
   const syncGuard = useCallback(() => {
     const value=lock.current;
@@ -960,7 +965,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   useEffect(()=>{
     const token={scope,generation:request.current.generation+1};request.current=token;
     setTopology(null);setSelectedId(null);currentId.current=null;setLibrary([]);setLoadedScope('');
-    setModal(null);setTopoError(null);setLibraryInspection(null);setLibraryInspecting(false);libraryInspectSerial.current++;
+    setModal(null);setTopoError(null);invalidateLibraryInspection();
     if(!labProfileId||!selectedSwitchId||!chamberId){setTopoLoading(false);return}
     setTopoLoading(true);
     fetchLibrary(labProfileId,selectedSwitchId).then(items=>{
@@ -990,7 +995,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     if(kind!=='import'&&!id)return;
     if(kind==='import'&&!template)return;
     const token={...request.current};
-    libraryInspectSerial.current++;setLibraryInspection(null);setLibraryInspecting(false);
+    invalidateLibraryInspection();
     const owner={};operation.current=owner;
     lock.current.library=true;setLibraryBusy(true);syncGuard();setModalError(null);setLibraryRevisionError('');
     const release=beginWork('topology-library','拓扑库写操作尚未结束');
@@ -1029,24 +1034,30 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const inspectLibrary=async()=>{
     if(lock.current.library||lock.current.flow||!labProfileId)return;
     const token={...request.current},id=currentId.current,serial=++libraryInspectSerial.current;
+    const captured={...token,topologyId:id??'',inspectionGeneration:serial};
+    const ownsInspection=()=>ownsLibraryInspection({...request.current,topologyId:currentId.current??'',inspectionGeneration:libraryInspectSerial.current},captured);
     setLibraryInspecting(true);setLibraryInspection(null);
     try{
       const items=await fetchLibrary(labProfileId,selectedSwitchId);
       const selected=id??chooseTopology(items,null);
       const saved=selected?await switchTopologyService.getTopology(selected,labProfileId):null;
       const history=selected?await switchTopologyService.listRevisions(selected,labProfileId,0,50):null;
-      if(owns(token,id)&&serial===libraryInspectSerial.current)setLibraryInspection({items,saved,history,token,sourceId:id});
-    }catch(err){if(owns(token,id)&&serial===libraryInspectSerial.current)setLibraryRevisionError(`核查失败；未知锁和输入保留。 ${errorText(err)}`)}
-    finally{if(owns(token,id)&&serial===libraryInspectSerial.current)setLibraryInspecting(false)}
+      if(ownsInspection())setLibraryInspection({items,saved,history,token,sourceId:id,inspectionGeneration:serial});
+    }catch(err){if(ownsInspection())setLibraryRevisionError(`核查失败；未知锁和输入保留。 ${errorText(err)}`)}
+    finally{if(ownsInspection())setLibraryInspecting(false)}
   };
   const adoptLibraryLatest=()=>{
-    if(!libraryInspection||!owns(libraryInspection.token,libraryInspection.sourceId)||lock.current.library||lock.current.flow)return;
+    if(!libraryInspection||!ownsLibraryInspection(
+      {...request.current,topologyId:currentId.current??'',inspectionGeneration:libraryInspectSerial.current},
+      {...libraryInspection.token,topologyId:libraryInspection.sourceId??'',inspectionGeneration:libraryInspection.inspectionGeneration}
+    )||lock.current.library||lock.current.flow)return;
     const {items,saved}=libraryInspection;
     selectLoaded(saved?items.map(item=>item.id===saved.id?saved:item):items,saved?.id??null);
     lock.current.unknown=false;setLibraryUnknown(false);setLibraryRevisionError('');setLibraryInspection(null);setModal(null);syncGuard();
   };
   const handleSelection=(id:string|null)=>{
     if(!id||id===currentId.current||!canLeave())return;
+    invalidateLibraryInspection();
     selectLoaded(currentLibrary,id);
   };
   const openModal=(kind:'name'|'copy')=>{
@@ -1129,7 +1140,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         :currentTopology?<ReactFlowProvider key={`${labProfileId}/${selectedSwitchId}/${currentTopology.id}`}>
           <TopologyFlow topology={currentTopology} labProfileId={labProfileId} conversionEpoch={conversionEpoch}
             libraryBusy={libraryBusy||libraryUnknown} isLibraryBusy={isLibraryBusy}
-            onDirtyChange={dirtyCallback} onBusyChange={busyCallback}
+            onDirtyChange={dirtyCallback} onBusyChange={busyCallback} onWriteStart={invalidateLibraryInspection}
             onTopologyUpdated={updated=>{if(liveFlow.current===flowIdentity&&updated.id===currentId.current){setTopology(updated);setLibrary(items=>items.map(item=>item.id===updated.id?updated:item))}}}/>
         </ReactFlowProvider>
         :<Center h="100%"><Text c="dimmed">此范围尚无拓扑配置；可显式从模板新增非活跃副本，不会自动导入。</Text></Center>}

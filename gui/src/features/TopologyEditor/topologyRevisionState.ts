@@ -3,6 +3,10 @@ export type RevisionGuards={dirty:boolean;writing:boolean;collectionBusy:boolean
 export function ownsRevisionRequest(a:RevisionContext,b:RevisionContext):boolean {
   return a.scope===b.scope&&a.topologyId===b.topologyId&&a.generation===b.generation;
 }
+export type LibraryInspectionContext=RevisionContext&{inspectionGeneration:number};
+export function ownsLibraryInspection(current:LibraryInspectionContext,captured:LibraryInspectionContext):boolean {
+  return ownsRevisionRequest(current,captured)&&current.inspectionGeneration===captured.inspectionGeneration;
+}
 export function canRestore(s:RevisionGuards):boolean {
   return !s.dirty&&!s.writing&&!s.collectionBusy&&!s.unknownWrite;
 }

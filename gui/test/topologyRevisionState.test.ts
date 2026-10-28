@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {canRestore,ownsRevisionRequest,revisionFailure} from '../src/features/TopologyEditor/topologyRevisionState.ts';
+import {canRestore,ownsRevisionRequest,ownsLibraryInspection,revisionFailure} from '../src/features/TopologyEditor/topologyRevisionState.ts';
 
 test('恢复与dirty、全部写、采集未知互斥',()=>{
   const ready={dirty:false,writing:false,collectionBusy:false,unknownWrite:false};
@@ -19,4 +19,15 @@ test('409和超时均不自动重试',()=>{
   assert.equal(revisionFailure(undefined).kind,'unknown');
   assert.equal(revisionFailure(503).kind,'unknown');
   assert.equal(revisionFailure(422).kind,'rejected');
+});
+test('库核查在Flow写开始及A→B→A后，迟到读取与已展示结果均不可采用',()=>{
+  const captured={scope:'lab/category',topologyId:'A',generation:2,inspectionGeneration:5};
+  assert.equal(ownsLibraryInspection({...captured},captured),true);
+  // Flow保存/恢复开始推进已有库核查代数；scope、图ID与库请求代数都仍相同。
+  const afterWrite={...captured,inspectionGeneration:6};
+  assert.equal(ownsLibraryInspection(afterWrite,captured),false,'迟到读取应丢弃');
+  assert.equal(ownsLibraryInspection(afterWrite,captured),false,'已展示结果最终采用也应拒绝');
+  // 即便最终回到A，期间选图两次也不能让旧A核查重新拥有上下文。
+  const returnedToA={...captured,inspectionGeneration:7};
+  assert.equal(ownsLibraryInspection(returnedToA,captured),false);
 });
