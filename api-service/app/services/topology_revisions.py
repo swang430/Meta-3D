@@ -45,6 +45,35 @@ def raw_snapshot(row):
     return {key: json_value(getattr(row, key)) for key in RESTORABLE}
 
 
+def restore_candidate(snapshot):
+    """白名单raw恢复；仅清已有内嵌校准键，不补缺键或typed默认。"""
+    if not isinstance(snapshot, dict) or set(snapshot) != set(RESTORABLE):
+        raise HTTPException(422, detail='历史快照可恢复字段不完整')
+    candidate = deepcopy(snapshot)
+    for key in ('nodes', 'connections', 'operating_modes'):
+        if not isinstance(candidate[key], list) or any(not isinstance(x, dict) for x in candidate[key]):
+            raise HTTPException(422, detail='历史图必须为对象列表')
+    for edge in candidate['connections']:
+        for key in ('calibrated_loss_db', 'calibrated_phase_deg'):
+            if key in edge:
+                edge[key] = None
+    return candidate
+
+
+def field_differences(before, after):
+    result = []
+    for key in sorted(set(before) | set(after)):
+        if key in before and key in after and same_json(before[key], after[key]):
+            continue
+        item = {'field': key, 'before_present': key in before, 'after_present': key in after}
+        if key in before:
+            item['before'] = deepcopy(before[key])
+        if key in after:
+            item['after'] = deepcopy(after[key])
+        result.append(item)
+    return result
+
+
 def recorded_metadata(row):
     return {key: (str(getattr(row, key)) if key in ('id', 'chamber_id', 'switch_category_id')
                   and getattr(row, key) is not None else json_value(getattr(row, key))) for key in RECORDED}

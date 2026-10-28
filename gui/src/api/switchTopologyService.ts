@@ -1,6 +1,28 @@
 import apiClient from './client';
 
 export type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+export interface SwitchTopologyRevisionSummary {
+  revision: number;
+  operation: 'baseline'|'create'|'copy'|'import'|'update'|'conversion'|'restore';
+  created_at: string;
+  restored_from_revision: number | null;
+  recorded_metadata: Record<string, JsonValue>;
+}
+export interface SwitchTopologyRevisionDetail extends SwitchTopologyRevisionSummary {
+  snapshot: Record<string, JsonValue>;
+}
+export type TopologyRevisionSummary = SwitchTopologyRevisionSummary;
+export type TopologyRevisionDetail = SwitchTopologyRevisionDetail;
+export interface TopologyRevisionList { total: number; items: SwitchTopologyRevisionSummary[] }
+export interface TopologyRestorePreview {
+  current_revision: number;
+  target_revision: number;
+  snapshot: Record<string, JsonValue>;
+  candidate: Record<string, JsonValue>;
+  differences: {field: string; before_present: boolean; after_present: boolean;
+    before?: JsonValue; after?: JsonValue}[];
+  warnings: string[];
+}
 // 应用层接线声明，不代表已核验硬件能力；缺键保持缺失，unknown不等于双向。
 export type TopologyPortDirection = 'input' | 'output' | 'bidirectional' | 'unknown';
 export type TopologyPortDirections = Record<string, TopologyPortDirection>;
@@ -126,6 +148,24 @@ export interface SwitchTopology {
 }
 
 export const switchTopologyService = {
+  async listRevisions(id: string, labProfileId: string, skip = 0, limit = 50): Promise<TopologyRevisionList> {
+    return (await apiClient.get(`/switch-topologies/${id}/revisions`, {
+      params: {lab_profile_id: labProfileId, skip, limit},
+    })).data;
+  },
+  async getRevision(id: string, labProfileId: string, revision: number): Promise<TopologyRevisionDetail> {
+    return (await apiClient.get(`/switch-topologies/${id}/revisions/${revision}`, {
+      params: {lab_profile_id: labProfileId},
+    })).data;
+  },
+  async previewRestore(id: string, labProfileId: string, revision: number, expectedRevision: number): Promise<TopologyRestorePreview> {
+    return (await apiClient.post(`/switch-topologies/${id}/restore-preview`,
+      {revision, expected_revision: expectedRevision}, {params: {lab_profile_id: labProfileId}})).data;
+  },
+  async restoreTopology(id: string, labProfileId: string, revision: number, expectedRevision: number): Promise<SwitchTopology> {
+    return (await apiClient.post(`/switch-topologies/${id}/restore`,
+      {revision, expected_revision: expectedRevision}, {params: {lab_profile_id: labProfileId}})).data;
+  },
   // P1-57：每个数据方法都携带 lab_profile_id —— 后端由它派生暗室，
   // 不再相信客户端自由提交的 chamber_id（那正是"拓扑写进错暗室"的口子）。
 

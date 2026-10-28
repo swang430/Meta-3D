@@ -4,6 +4,74 @@
  */
 
 export interface paths {
+    "/api/v1/switch-topologies/{topology_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Topology Revisions */
+        get: operations["list_topology_revisions_api_v1_switch_topologies__topology_id__revisions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}/revisions/{revision}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Topology Revision */
+        get: operations["get_topology_revision_api_v1_switch_topologies__topology_id__revisions__revision__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}/restore-preview": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Preview Topology Restore */
+        post: operations["preview_topology_restore_api_v1_switch_topologies__topology_id__restore_preview_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/switch-topologies/{topology_id}/restore": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Restore Topology */
+        post: operations["restore_topology_api_v1_switch_topologies__topology_id__restore_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/switch-topologies/{topology_id}/conversion-preview": {
         parameters: {
             query?: never;
@@ -3226,6 +3294,90 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** TopologyRestoreRequest */
+        TopologyRestoreRequest: {
+            /** Revision */
+            revision: number;
+            /** Expected Revision */
+            expected_revision: number;
+        };
+        /** TopologyRevisionSummary */
+        TopologyRevisionSummary: {
+            /** Revision */
+            revision: number;
+            /**
+             * Operation
+             * @enum {string}
+             */
+            operation: "baseline" | "create" | "copy" | "import" | "update" | "conversion" | "restore";
+            /** Created At */
+            created_at: string;
+            /** Restored From Revision */
+            restored_from_revision: number | null;
+            /** Recorded Metadata */
+            recorded_metadata: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        /** TopologyRevisionDetail */
+        TopologyRevisionDetail: {
+            /** Revision */
+            revision: number;
+            /**
+             * Operation
+             * @enum {string}
+             */
+            operation: "baseline" | "create" | "copy" | "import" | "update" | "conversion" | "restore";
+            /** Created At */
+            created_at: string;
+            /** Restored From Revision */
+            restored_from_revision: number | null;
+            /** Recorded Metadata */
+            recorded_metadata: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Snapshot */
+            snapshot: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+        };
+        /** TopologyRevisionList */
+        TopologyRevisionList: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["TopologyRevisionSummary"][];
+        };
+        /** TopologyFieldDifference */
+        TopologyFieldDifference: {
+            /** Field */
+            field: string;
+            /** Before Present */
+            before_present: boolean;
+            /** After Present */
+            after_present: boolean;
+            before?: components["schemas"]["JsonValue"];
+            after?: components["schemas"]["JsonValue"];
+        };
+        /** TopologyRestorePreview */
+        TopologyRestorePreview: {
+            /** Current Revision */
+            current_revision: number;
+            /** Target Revision */
+            target_revision: number;
+            /** Snapshot */
+            snapshot: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Candidate */
+            candidate: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Differences */
+            differences: components["schemas"]["TopologyFieldDifference"][];
+            /** Warnings */
+            warnings: string[];
+        };
         /** TopologyConversionPreview */
         TopologyConversionPreview: {
             /** Source Digest */
@@ -6500,6 +6652,149 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    list_topology_revisions_api_v1_switch_topologies__topology_id__revisions_get: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+                skip?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopologyRevisionList"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_topology_revision_api_v1_switch_topologies__topology_id__revisions__revision__get: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+                revision: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopologyRevisionDetail"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_topology_restore_api_v1_switch_topologies__topology_id__restore_preview_post: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopologyRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TopologyRestorePreview"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    restore_topology_api_v1_switch_topologies__topology_id__restore_post: {
+        parameters: {
+            query: {
+                lab_profile_id: string;
+            };
+            header?: never;
+            path: {
+                topology_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TopologyRestoreRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SwitchTopologyResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     preview_topology_conversion_api_v1_switch_topologies__topology_id__conversion_preview_post: {
         parameters: {
             query: {

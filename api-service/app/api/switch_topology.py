@@ -4,8 +4,9 @@ Switch Topology API endpoints
 CRUD operations for RF Switch Matrix hardware topology configurations,
 and advanced endpoints for path resolution and calibration matrix.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Path as PathParam, Query, Request
 from copy import deepcopy
+from datetime import datetime
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import IntegrityError
@@ -27,6 +28,8 @@ from app.schemas.switch_topology import (
     SignalPathResponse,
     CalibrationMatrixResponse,
     TopologyConnection,
+    TopologyRestoreRequest, TopologyRevisionDetail,
+    TopologyRevisionList, TopologyRestorePreview,
 )
 from app.services.topology_service import TopologyService
 from app.schemas.topology_nominal import (
@@ -47,7 +50,9 @@ from app.services import execution_exclusion_guard
 from app.services.topology_revisions import (
     lock_chamber, cas_revision, add_revision, assert_revision_deletable,
     demote_default_peers, topology_write,
+    RESTORABLE, raw_snapshot, restore_candidate, field_differences,
 )
+from app.models.switch_topology_revision import SwitchTopologyRevision
 
 router = APIRouter(prefix="/switch-topologies", tags=["Switch Topologies"])
 logger = logging.getLogger(__name__)
@@ -602,6 +607,111 @@ def get_switch_topology(
     """Get a specific switch topology by ID (scoped to the current lab's chamber)"""
     chamber = _resolve_scope(db, lab_profile_id)
     return _load_scoped_topology(db, topology_id, chamber.id)
+
+
+def _history_revision(db, topology_id, revision):
+    row = db.query(SwitchTopologyRevision).filter(
+        SwitchTopologyRevision.topology_id == topology_id,
+        SwitchTopologyRevision.revision == revision).first()
+    if row is None:
+        raise HTTPException(404, detail='未找到该拓扑修订')
+    return row
+
+
+@router.get('/{topology_id}/revisions', response_model=TopologyRevisionList)
+def list_topology_revisions(topology_id: UUID, lab_profile_id: UUID = Query(...),
+                            skip: int = Query(0, ge=0), limit: int = Query(50, ge=1, le=100),
+                            db: Session = Depends(get_db)):
+    chamber = _resolve_scope(db, lab_profile_id)
+    _load_scoped_topology(db, topology_id, chamber.id)
+    query = db.query(SwitchTopologyRevision).filter(SwitchTopologyRevision.topology_id == topology_id)
+    return {'total': query.count(), 'items': query.order_by(
+        SwitchTopologyRevision.revision.desc()).offset(skip).limit(limit).all()}
+
+
+@router.get('/{topology_id}/revisions/{revision}', response_model=TopologyRevisionDetail,
+            response_model_exclude_unset=True)
+def get_topology_revision(topology_id: UUID, revision: int = PathParam(..., ge=0),
+                          lab_profile_id: UUID = Query(...), db: Session = Depends(get_db)):
+    chamber = _resolve_scope(db, lab_profile_id)
+    _load_scoped_topology(db, topology_id, chamber.id)
+    return _history_revision(db, topology_id, revision)
+
+
+def _restore_selection(db, topology_id, chamber_id, request):
+    current = _load_scoped_topology(db, topology_id, chamber_id)
+    if current.revision != request.expected_revision:
+        raise HTTPException(409, detail='服务器拓扑已变化，请刷新核对；草稿未覆盖')
+    history = _history_revision(db, topology_id, request.revision)
+    candidate = restore_candidate(history.snapshot)
+    nodes, edges, modes = (candidate[key] for key in ('nodes', 'connections', 'operating_modes'))
+    # 验证模型形态但丢弃typed结果；不将默认图或日期格式灌回raw快照。
+    try:
+        SwitchTopologyUpdate.model_validate(dict(expected_revision=request.expected_revision, **candidate))
+        if candidate['installed_date'] is not None:
+            if not isinstance(candidate['installed_date'], str):
+                raise ValueError('历史日期必须为ISO字符串')
+            datetime.fromisoformat(candidate['installed_date'])
+    except (ValidationError, ValueError) as exc:
+        raise HTTPException(422, detail='历史名称、安装信息或图字段形态无效') from exc
+    _validate_structure(nodes, edges, modes)
+    _validate_nominal(nodes, edges, previous_nodes=current.nodes, previous_connections=current.connections)
+    old_edges = {edge['id']: edge for edge in current.connections}
+    for edge in edges:
+        previous = old_edges.get(edge['id'], {})
+        if 'cable_loss_db' in edge and ('cable_loss_db' not in previous or
+                not same_json(edge['cable_loss_db'], previous['cable_loss_db'])):
+            try:
+                validate_number(edge['cable_loss_db'], key='cable_loss_db', nonnegative=True)
+            except ValueError as exc:
+                raise HTTPException(422, detail=str(exc)) from exc
+    _validate_ports(nodes, edges, previous_nodes=current.nodes, previous_connections=current.connections)
+    _validate_internal_paths(nodes, edges, modes, previous_nodes=current.nodes,
+        previous_connections=current.connections, previous_modes=current.operating_modes)
+    _validate_loss_owners(nodes, edges, modes, previous_connections=current.connections)
+    statistics = SwitchTopology(nodes=nodes, connections=edges, operating_modes=modes)
+    statistics.update_statistics()
+    # 与写入口同样验证最终响应可序列化，但绝不以该typed结果替代raw。
+    response = {column.name: getattr(current, column.name) for column in SwitchTopology.__table__.columns}
+    response.update(candidate)
+    response.update({key: getattr(statistics, key) for key in
+                    ('total_nodes', 'total_connections', 'total_probes', 'total_channels')})
+    SwitchTopologyResponse.model_validate(response).model_dump(mode='json')
+    return current, history, candidate, statistics
+
+
+@router.post('/{topology_id}/restore-preview', response_model=TopologyRestorePreview,
+             response_model_exclude_unset=True)
+def preview_topology_restore(topology_id: UUID, request: TopologyRestoreRequest,
+                            lab_profile_id: UUID = Query(...), db: Session = Depends(get_db)):
+    chamber = _resolve_scope(db, lab_profile_id)
+    current, history, candidate, _ = _restore_selection(db, topology_id, chamber.id, request)
+    return TopologyRestorePreview.model_validate(dict(current_revision=current.revision,
+        target_revision=request.revision, snapshot=history.snapshot, candidate=candidate,
+        differences=field_differences(raw_snapshot(current), candidate), warnings=[
+            '仅恢复接线声明；已存在的内嵌校准值清空，不恢复采用、证书、运行或confirmed资格。',
+            '当前暗室、分类、激活、默认及创建信息保持不变；历史原件只读。']))
+
+
+@router.post('/{topology_id}/restore', response_model=SwitchTopologyResponse)
+@topology_write
+def restore_topology(topology_id: UUID, request: TopologyRestoreRequest,
+                     lab_profile_id: UUID = Query(...), db: Session = Depends(get_db)):
+    chamber = _resolve_scope(db, lab_profile_id)
+    lock_chamber(db, chamber.id)
+    current, _, candidate, statistics = _restore_selection(db, topology_id, chamber.id, request)
+    values = deepcopy(candidate)
+    if values['installed_date'] is not None:
+        values['installed_date'] = datetime.fromisoformat(values['installed_date'])
+    values.update({key: getattr(statistics, key) for key in
+                  ('total_nodes', 'total_connections', 'total_probes', 'total_channels')})
+    cas_revision(db, current, request.expected_revision, values, operation='restore',
+                 restored_from_revision=request.revision, force_revision=True)
+    db.flush()
+    SwitchTopologyResponse.model_validate(current).model_dump(mode='json')
+    db.commit()
+    db.refresh(current)
+    return current
 
 
 def _conversion_snapshot(db, topology_id, chamber_id):

@@ -176,6 +176,47 @@ class SwitchTopologyListResponse(BaseModel):
     items: List[SwitchTopologyResponse]
 
 
+class TopologyRestoreRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    revision: Revision
+    expected_revision: Revision
+
+
+class TopologyRevisionSummary(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    revision: Revision
+    operation: Literal['baseline', 'create', 'copy', 'import', 'update', 'conversion', 'restore']
+    created_at: UTCDateTime
+    restored_from_revision: Revision | None
+    recorded_metadata: dict[str, JsonValue]
+
+
+class TopologyRevisionDetail(TopologyRevisionSummary):
+    snapshot: dict[str, JsonValue]
+
+
+class TopologyRevisionList(BaseModel):
+    total: int
+    items: list[TopologyRevisionSummary]
+
+
+class TopologyFieldDifference(BaseModel):
+    field: str
+    before_present: bool
+    after_present: bool
+    before: JsonValue = None
+    after: JsonValue = None
+
+
+class TopologyRestorePreview(BaseModel):
+    current_revision: Revision
+    target_revision: Revision
+    snapshot: dict[str, JsonValue]
+    candidate: dict[str, JsonValue]
+    differences: list[TopologyFieldDifference]
+    warnings: list[str]
+
+
 # ==========================================
 # TopologyService Computation Models
 # ==========================================
