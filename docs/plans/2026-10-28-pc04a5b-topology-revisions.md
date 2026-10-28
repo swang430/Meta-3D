@@ -10,13 +10,15 @@
 
 **Spec:** [已批准细化设计](../design/2026-10-28-pc04a5b-topology-revisions.md)。2026-10-28用户已确认完整契约，含缺 `expected_revision` 的旧写请求422、过期409；同暗室事务锁及只读元信息的实施澄清经主任务接受并记decision0010，不改变已批准语义。
 
-**状态：** 计划待独立审查，尚无5b功能或验证完成声明。基线5a PR545已合并至 `ce4bec1140d34fff7c029dfa04e38a71de5aad63`；额度例外仅5b，5c/5d不启动，原自动化保持PAUSED。保护原CAICT、用户数据库、用户服务、worktree、venv、DB、output和scratch，不清理现场。
+**状态：** 2026-10-28实施验证快照：计划独立审查、Task1～3独立规格/质量审查已完成；Task4隔离H01～H10及额外迟到核查验证、GUI46项/build和唯一最终后端全量已执行，见[验证记录](../validation/2026-10-28-pc04a5b-topology-revisions.md)。后端8066 passed/17 skipped/3 failed（3项历史规则），不称全绿。Task4独立、整片累计、Ready PR外审及合并步骤仍未完成；最终交付以功能PR合并回执为准，不另开递归状态PR。基线5a PR545已合并至 `ce4bec1140d34fff7c029dfa04e38a71de5aad63`；额度例外仅5b，5c/5d不启动，原自动化保持PAUSED。保护原CAICT、用户数据库、用户服务、worktree、venv、DB、output和scratch，不清理现场。
 
 ## 0. 执行前置、已核边界与接口约定
 
 - [ ] 运行 `python3 /Users/simon/Tools/Skills_Pool/skillctl.py work resolve --json`，读PROJECT/handoff、AGENTS审查规则、CLAUDE当前流程及批准设计；由主任务维护claim，子任务不释放主claim。先通过独立计划审查，再按Task1→4串行实施；每任务规格/质量审查，整片累计审查。
-- [ ] 查memory索引核对保存/资格边界；NotebookLM明确不适用：本片不改HAL、SCPI、仪器返回量纲或仪器能力结论。若实施中触及它们，停止该扩展并报告，不猜命令。
-- [ ] 复核真实写入口，不把通用 `topologies` / `instrument_topology_profiles` 当作本对象：
+
+  前置读取及计划审查已完成；此综合项保留未勾，因为Task4独立与整片累计审查尚待主任务收口。下列实施复选框是本次验证快照，不代表Ready PR已合并。
+- [x] 查memory索引核对保存/资格边界；NotebookLM明确不适用：本片不改HAL、SCPI、仪器返回量纲或仪器能力结论。若实施中触及它们，停止该扩展并报告，不猜命令。
+- [x] 复核真实写入口，不把通用 `topologies` / `instrument_topology_profiles` 当作本对象：
 
 ```bash
 rg -n 'SwitchTopology|switch_topologies' api-service/app
@@ -43,7 +45,7 @@ rg -n '绝不|不许|禁止|must not|别把' api-service/app/api/switch_topology
 
 | Task | 文件 |
 |---|---|
-| 1 | 修改 `api-service/app/models/switch_topology.py`、`app/models/__init__.py`、`app/schemas/switch_topology.py`、`app/schemas/topology_conversion.py`（转换预览revision）、`app/api/switch_topology.py`、`app/api/chamber.py`、`gui/src/features/TopologyEditor/TopologyEditor.tsx`（保存/改名/转换三个活写调用）；新增 `app/models/switch_topology_revision.py`、`app/services/topology_revisions.py`、`alembic/versions/f28a91c7d6b3_switch_topology_revisions.py`、`tests/test_pc04a5b_topology_revisions.py`、`tests/test_pc04a5b_revision_migration.py` |
+| 1 | 修改 `api-service/app/models/switch_topology.py`、`app/models/__init__.py`、`app/schemas/switch_topology.py`、`app/schemas/topology_conversion.py`（转换预览revision）、`app/api/switch_topology.py`、`app/api/chamber.py`、`gui/src/features/TopologyEditor/TopologyEditor.tsx`（保存/改名/转换三个活写调用）；新增 `app/models/switch_topology_revision.py`、`app/services/topology_revisions.py`、`alembic/versions/f28a91c7d6b3_topology_revisions.py`（实际文件名）、`tests/test_pc04a5b_topology_revisions.py`、`tests/test_pc04a5b_revision_migration.py` |
 | 1/2 | 四镜像：`api/openapi.yaml`、`gui/src/types/api.generated.ts`、`gui/src/api/switchTopologyService.ts`、`gui/src/api/mockServer.ts`；原Pydantic schema与真实路由同步 |
 | 2 | 新增 `api-service/tests/test_pc04a5b_topology_restore.py`；在Task1 service/schema/API扩展历史与恢复，不创建第二套校验器 |
 | 3 | 修改 `gui/src/features/TopologyEditor/TopologyEditor.tsx`、`LegacyConversionPanel.tsx`；新增 `TopologyHistoryPanel.tsx`、`topologyRevisionState.ts`、`gui/test/topologyRevisionState.test.ts`；更新受令牌影响的现有GUI测试 |
@@ -87,7 +89,7 @@ export LOG_DIR="$pc04a5b_run_dir/logs"
 
 **目标：** 只要一次写对外成功，当前图和对应不可变快照就同时存在；失败、冲突和无效请求不留baseline、不改peer默认位。
 
-- [ ] **Step 1（RED）：新增真实路由测试，复用5a已存在隔离夹具。** `tests/test_pc04a5b_topology_revisions.py` 直接导入5a命名fixtures，不运行5a服务：
+- [x] **Step 1（RED）：新增真实路由测试，复用5a已存在隔离夹具。** `tests/test_pc04a5b_topology_revisions.py` 直接导入5a命名fixtures，不运行5a服务：
 
 ```python
 from copy import deepcopy
@@ -130,8 +132,8 @@ def test_missing_token_rejected(client,db,lab,source):
     assert rows(db,source)==[]
 ```
 
-- [ ] **Step 2：只跑上述定点RED。** `.venv/bin/python -m pytest tests/test_pc04a5b_topology_revisions.py -q`；预期缺revision字段或新模型失败，不是环境/默认库连接失败。保存实际输出及SHA，不预写通过计数。
-- [ ] **Step 3：模型和迁移。** 新模型如下（该段为完整新模型）；`switch_topology.py` 加revision列，`models/__init__.py` 导入新类。
+- [x] **Step 2：只跑上述定点RED。** `.venv/bin/python -m pytest tests/test_pc04a5b_topology_revisions.py -q`；预期缺revision字段或新模型失败，不是环境/默认库连接失败。保存实际输出及SHA，不预写通过计数。
+- [x] **Step 3：模型和迁移。** 新模型如下（该段为完整新模型）；`switch_topology.py` 加revision列，`models/__init__.py` 导入新类。
 
 ```python
 import uuid
@@ -186,7 +188,7 @@ def downgrade():
 
 迁移测试新建最小brownfield表（id、原三JSON列），放入含bool/数字/字符串/缺键/null/opaque图，Alembic `MigrationContext` + `Operations.context` 调用该upgrade，再用SQL比较原JSON文本完全相同、revision0、历史空；重复upgrade幂等。另用新SQLite运行 `alembic upgrade head`，确保fresh baseline不重复建表；FK测试显式开启SQLite `PRAGMA foreign_keys=ON`，直接SQL删除有历史图被拒绝。所有测试DB用tmp_path，不借用当前应用DB。
 
-- [ ] **Step 4：新增单一修订service，先定义raw及锁边界。** `recorded_metadata`只存当时scope/UUID/状态/创建与更新时间，供预览说明，**不在restore白名单**；这是设计“并列展示当时信息”的只读实现，不改变可恢复范围。
+- [x] **Step 4：新增单一修订service，先定义raw及锁边界。** `recorded_metadata`只存当时scope/UUID/状态/创建与更新时间，供预览说明，**不在restore白名单**；这是设计“并列展示当时信息”的只读实现，不改变可恢复范围。
 
 ```python
 from copy import deepcopy
@@ -243,7 +245,7 @@ def assert_revision_deletable(db,topology_ids):
 
 所有写和两个删除入口在目标/peer SELECT前调用lock_chamber；先由Lab解析chamber，锁后重取目标（`populate_existing`或expire），不能读旧identity map。锁粒度暂取暗室，避免引入lock表/散列碰撞/进程本地mutex。锁只串行化持久化，不能代表硬件空闲。SQLite读取scope后升级写锁遇BUSY/LOCKED按既有底层错误码409，必须回滚；其它DB错误原样失败并回滚。两个并发create同scope空peer时，后一个锁后重读必见前一个并对其让位；不同category虽然串行，但查询和CAS绝不越category。
 
-- [ ] **Step 5：写入原语和原路由接入，保留原校验。** 在同service提供下面接口；函数不commit，唯一commit由API事务边界负责。候选 `values` 只含真实修改的ORM列，日期先解析为datetime；request令牌/connection_numeric_declarations/conversion不能落列。
+- [x] **Step 5：写入原语和原路由接入，保留原校验。** 在同service提供下面接口；函数不commit，唯一commit由API事务边界负责。候选 `values` 只含真实修改的ORM列，日期先解析为datetime；request令牌/connection_numeric_declarations/conversion不能落列。
 
 ```python
 def cas_revision(db,row,expected_revision,values,*,operation='update',raw_conditions=(),
@@ -302,7 +304,7 @@ for peer in peers:
 
 此处target为当前入口已加载/已flush的目标图。create条件为 `request.is_default is True`；PATCH条件为 `'is_default' in request.model_fields_set and request.is_default is True and not target.is_default`，使用锁后重读的旧状态、在目标CAS前判断，不用新candidate状态作判据。
 
-- [ ] **Step 6：四镜像和三个活GUI写调用先迁移令牌。** Schema增加strict字段；OpenAPI请求required同步，响应revision必填，生成TS；服务手工类型中 `SwitchTopology.revision:number`，创建草稿测试补0但不拿0冒充已保存GET令牌。`TopologyUpdatePayload`排除只读revision/id/统计列，强制expected_revision；图保存helper返回 `expected_revision:draft.revision`，改名使用当前已保存topology.revision，转换用预览对应保存版本的整数令牌。转换preview响应增加revision并在同次源查询取值，避免预览后重新读令牌自动确认旧candidate。
+- [x] **Step 6：四镜像和三个活GUI写调用先迁移令牌。** Schema增加strict字段；OpenAPI请求required同步，响应revision必填，生成TS；服务手工类型中 `SwitchTopology.revision:number`，创建草稿测试补0但不拿0冒充已保存GET令牌。`TopologyUpdatePayload`排除只读revision/id/统计列，强制expected_revision；图保存helper返回 `expected_revision:draft.revision`，改名使用当前已保存topology.revision，转换用预览对应保存版本的整数令牌。转换preview响应增加revision并在同次源查询取值，避免预览后重新读令牌自动确认旧candidate。
 
 ```python
 from typing import Annotated
@@ -334,7 +336,7 @@ await switchTopologyService.updateTopology(topology.id,labProfileId,{
 
 开发mock没有权威raw历史，新增PATCH拒绝处理器明确422“请连接真实API核验修订”；不生成200伪历史。新历史端点Task2增加拒绝处理器。`mockDatabase.ts`不添加虚构记录；现有Mock通路继续只作演示。
 
-- [ ] **Step 7：补全集事务测试并GREEN。** 下列测试必须各自实际调用生产入口，不能只测helper：
+- [x] **Step 7：补全集事务测试并GREEN。** 下列测试必须各自实际调用生产入口，不能只测helper：
 
 | 测试函数（新revision测试文件） | 构造和断言 |
 |---|---|
@@ -369,7 +371,7 @@ assert response.status_code==200
 
 ## Task 2：历史、恢复API与资格隔离
 
-- [ ] **Step 1（RED）：写恢复生产路由测试。** 新文件复用Task1及5afixtures，代码中的 `rows` 为Task1已定义函数：
+- [x] **Step 1（RED）：写恢复生产路由测试。** 新文件复用Task1及5afixtures，代码中的 `rows` 为Task1已定义函数：
 
 ```python
 from copy import deepcopy
@@ -403,8 +405,8 @@ def test_read_old_history_never_lazy_writes(client,db,lab,source):
     assert rows(db,source)==[]
 ```
 
-- [ ] **Step 2：运行RED。** `.venv/bin/python -m pytest tests/test_pc04a5b_topology_restore.py -q`；预期新路由404，不因真实库/硬件失败。
-- [ ] **Step 3：Schema/路由/服务，实现明确类型。** 摘要包含revision/operation/created_at/restored_from_revision/recorded_metadata；详情另加snapshot。所有raw字段用 `dict[str,JsonValue]`，绝不 `SwitchTopologyResponse`。预览candidate是同样raw恢复字段对象；differences逐字段包含before_present/after_present及可选值，不将缺键写成null。
+- [x] **Step 2：运行RED。** `.venv/bin/python -m pytest tests/test_pc04a5b_topology_restore.py -q`；预期新路由404，不因真实库/硬件失败。
+- [x] **Step 3：Schema/路由/服务，实现明确类型。** 摘要包含revision/operation/created_at/restored_from_revision/recorded_metadata；详情另加snapshot。所有raw字段用 `dict[str,JsonValue]`，绝不 `SwitchTopologyResponse`。预览candidate是同样raw恢复字段对象；differences逐字段包含before_present/after_present及可选值，不将缺键写成null。
 
 ```python
 from typing import Literal
@@ -497,7 +499,7 @@ for edge in candidate['connections']:
 
 `validate_number`从 `app.schemas.topology_nominal`导入，current是锁后（preview为只读fresh）取到的当前ORM图；历史自身不作previous。恢复不能用缺connection_numeric_declarations跳过上述检查；未知不补0。
 
-- [ ] **Step 4：服务TS镜像与开发mock。** `SwitchTopologyRevisionSummary/Detail`、`TopologyRestorePreview`字段对应上面schema；raw使用已有 `JsonValue`。服务方法参数完整：
+- [x] **Step 4：服务TS镜像与开发mock。** `SwitchTopologyRevisionSummary/Detail`、`TopologyRestorePreview`字段对应上面schema；raw使用已有 `JsonValue`。服务方法参数完整：
 
 ```ts
 async listRevisions(id:string,labProfileId:string,skip=0,limit=50):Promise<TopologyRevisionList> {
@@ -522,7 +524,7 @@ async restoreTopology(id:string,labProfileId:string,revision:number,expectedRevi
 
 `TopologyRevisionList={total:number;items:TopologyRevisionSummary[]}`，差异类型与schema相同并将before/after标可选；create未保存对象不产生历史。mock新GET返回404“页面演示无服务器修订历史”，新POST返回422“页面演示不恢复服务器图，请连接真实API”；不以空历史成功冒充查询到了服务器。
 
-- [ ] **Step 5：补恢复边界正反例并GREEN。** 独立测试函数：`test_restore_same_candidate_still_appends`（连续恢复已相同r2内容，携带最新令牌，增加r3）；`test_restore_keeps_scope_status_and_creation_metadata`；`test_history_pagination_and_foreign_revision_404`（101次保存，total正确、降序、第二页、不读其它图编号）；`test_invalid_history_cannot_relax_current_save_gates`（端口、内部路径、引用、loss owner、非有限/负损耗分别preview422零写）；`test_restore_snapshot_insert_failure_rolls_back`；`test_stale_preview_rejected_at_restore`；`test_raw_history_does_not_gain_default_pins`。
+- [x] **Step 5：补恢复边界正反例并GREEN。** 独立测试函数：`test_restore_same_candidate_still_appends`（连续恢复已相同r2内容，携带最新令牌，增加r3）；`test_restore_keeps_scope_status_and_creation_metadata`；`test_history_pagination_and_foreign_revision_404`（101次保存，total正确、降序、第二页、不读其它图编号）；`test_invalid_history_cannot_relax_current_save_gates`（端口、内部路径、引用、loss owner、非有限/负损耗分别preview422零写）；`test_restore_snapshot_insert_failure_rolls_back`；`test_stale_preview_rejected_at_restore`；`test_raw_history_does_not_gain_default_pins`。
 
 资格回归不造一套采用判据。复用 `tests/test_pc04a2_route_application.py`、`test_pc04a2_route_freeze.py`、`test_pc04a4d_loss_truth.py` 的有效普通/参考路径生产入口夹具，实际通过restore API后断言：Application/Selection/run/证书数量及历史record字节不变；恢复清空当前内嵌值；身份相同沿既有confirmed门仍匹配、恰一次补偿；身份变化则当前和freeze两端拒绝旧匹配；新revision自身不使所有链失效。不改生产资格/freeze逻辑来迁就测试，也不承诺NULL topology_id旧证书被本片阻断。
 
@@ -534,7 +536,7 @@ async restoreTopology(id:string,labProfileId:string,revision:number,expectedRevi
 
 ## Task 3：原GUI历史、冲突与生命周期
 
-- [ ] **Step 1（RED）：纯状态测试先行，组件浏览器稍后验真。** 新增 `topologyRevisionState.ts` 定义以下API与 `gui/test/topologyRevisionState.test.ts`：
+- [x] **Step 1（RED）：纯状态测试先行，组件浏览器稍后验真。** 新增 `topologyRevisionState.ts` 定义以下API与 `gui/test/topologyRevisionState.test.ts`：
 
 ```ts
 import assert from 'node:assert/strict';
@@ -560,8 +562,8 @@ test('409和超时均不自动重试',()=>{
 });
 ```
 
-- [ ] **Step 2：运行RED。** gui中 `node --experimental-strip-types --test test/topologyRevisionState.test.ts`；预期新模块缺失，保存输出。
-- [ ] **Step 3：最小状态实现，不建立第二套采集锁。**
+- [x] **Step 2：运行RED。** gui中 `node --experimental-strip-types --test test/topologyRevisionState.test.ts`；预期新模块缺失，保存输出。
+- [x] **Step 3：最小状态实现，不建立第二套采集锁。**
 
 ```ts
 export type RevisionContext={scope:string;topologyId:string;generation:number};
@@ -581,7 +583,7 @@ export function revisionFailure(status:number|undefined):{kind:'conflict'|'unkno
 
 API已返回200但随后详情GET失败也归unknown（写已确认、展示未核对），保留阻断直到显式核查；不能重新POST。错误框可同时显示服务端detail，不丢错误原因。
 
-- [ ] **Step 4：新增 `TopologyHistoryPanel.tsx`，接入现有Flow。** 组件props明确为 `{opened,labId,topology,dirty,blocked,isBlocked,onClose,onRestore,onInspectLatest}`；`onRestore(targetRevision:number,expectedRevision:number):Promise<void>`由父Flow统一持写锁/guard，子组件只请求只读列表/详情/preview。Panel独立state为skip、items、total、selectedRevision、detail、preview、confirmed、error、pending；每次选择/预览/scope变化使request代数递增，清confirmed/preview，迟到回包仅owns匹配时显示。关闭不改draft，不复用转换候选为图。
+- [x] **Step 4：新增 `TopologyHistoryPanel.tsx`，接入现有Flow。** 组件props明确为 `{opened,labId,topology,dirty,blocked,isBlocked,onClose,onRestore,onInspectLatest}`；`onRestore(targetRevision:number,expectedRevision:number):Promise<void>`由父Flow统一持写锁/guard，子组件只请求只读列表/详情/preview。Panel独立state为skip、items、total、selectedRevision、detail、preview、confirmed、error、pending；每次选择/预览/scope变化使request代数递增，清confirmed/preview，迟到回包仅owns匹配时显示。关闭不改draft，不复用转换候选为图。
 
 固定界面内容：标题“保存修订历史”；列表每页50，显示r编号/操作/时间/恢复来源；空旧图显示“尚无修订留痕，从首次保存开始记录”；detail raw只读；recorded_metadata标“当时状态，仅供查阅，不恢复”；preview对照“历史原件 / 将写入候选 / 当前差异”，显示“恢复清空内嵌校准值，不自动重新采用，不代表通路合格”。复选框“确认将此历史声明恢复为新的保存修订”默认false；确认按钮须preview.current_revision等于当前保存revision且canRestore及confirmed。dirty允许只读历史，不允许restore-preview后执行恢复；提示先保存或显式放弃。
 
@@ -597,7 +599,7 @@ API已返回200但随后详情GET失败也归unknown（写已确认、展示未�
 
 代码接入保留Mantine原语，历史JSON用 `<pre>`/Text，不能innerHTML。分页实际请求skip与limit，不只前端截断第一页。完整列表/preview不修改原 `numericDeclarations`、selectedNode/edge或dirty。
 
-- [ ] **Step 5：父Flow统一保存/恢复上下文，原库写共享锁。** `savingRef`、`collectionBusyRef`、`isLibraryBusy()`仍为即时门；开始恢复同步置savingRef，注册beginWork，再await。每次操作捕获lab/category/topologyId/generation；结束只有当前请求可更新state或解除其锁，离页/换scope后旧finally不能解除新请求。恢复成功先服务端restore，再GET detail，令牌/draft从该GET取；清理selected node/edge/connection、drawers、highlightedRoute、numericDeclarations及转换旧preview，更新库当前项。失败不清草稿、不接纳409返回的新令牌重试。
+- [x] **Step 5：父Flow统一保存/恢复上下文，原库写共享锁。** `savingRef`、`collectionBusyRef`、`isLibraryBusy()`仍为即时门；开始恢复同步置savingRef，注册beginWork，再await。每次操作捕获lab/category/topologyId/generation；结束只有当前请求可更新state或解除其锁，离页/换scope后旧finally不能解除新请求。恢复成功先服务端restore，再GET detail，令牌/draft从该GET取；清理selected node/edge/connection、drawers、highlightedRoute、numericDeclarations及转换旧preview，更新库当前项。失败不清草稿、不接纳409返回的新令牌重试。
 
 ```ts
 const ticket={scope,topologyId:topology.id,generation:++requestGeneration.current};
@@ -636,7 +638,7 @@ try {
 
 `RouteCalibrationPanel`既有 `revision:string` 是JSON queryKey，不改成整数令牌。新Flow变量称 `savedRevision`（来自topology.revision），仍传原graph JSON queryKey给校准组件。恢复改变graph时queryKey自然失效；纯名称修订不触发错误的资格取消。
 
-- [ ] **Step 6：GREEN与真组件准备。** gui运行以下命令，不跑完整后端/build；纯helper通过不能代替Task4真浏览器：
+- [x] **Step 6：GREEN与真组件准备。** gui运行以下命令，不跑完整后端/build；纯helper通过不能代替Task4真浏览器：
 
 ```bash
 npx --no-install tsx --test test/topologyRevisionState.test.ts test/topologyLibraryState.test.ts test/topologyDraft.test.ts test/topologyNominalTransport.test.ts test/legacyConversionState.test.ts test/topologyOperationalLabContext.test.ts
@@ -651,7 +653,7 @@ npm run openapi:generate
 
 **唯一最终全量责任：本任务执行者。** Task1～3和所有审查者只复用输出或跑必要定点，不因身份重复全量。稳定输入后再全量；其后生产共享契约若变，旧全量失效，由同一责任者按CLAUDE重新安排最终版，不谎称旧结果覆盖新版。
 
-- [ ] **Step 1（RED/基线）：建全新隔离浏览器夹具。** 新文件沿 `tests/pc04a5a_browser_fixture.py` 的真实bootstrap结构，前置环境path断言替换为 `/tmp/pc04a5b-[A-Za-z0-9]+/browser.sqlite`；必须不存在新文件再seed，`Base.metadata.create_all`→`run_bootstrap_on_startup`→每个InstrumentCategory.driver_mode=mock→全部Lab.instrument_bindings每个driver_mode=mock→commit→重新查询all断言。保留原所有bootstrap模板；新增两个测试暗室、两个Lab及共享暗室Lab、两个switch category。只在该新库种legacy r0图，使用真实API保存101次得到分页历史；不得向用户原库写CAICT副本。
+- [x] **Step 1（RED/基线）：建全新隔离浏览器夹具。** 新文件沿 `tests/pc04a5a_browser_fixture.py` 的真实bootstrap结构，前置环境path断言替换为 `/tmp/pc04a5b-[A-Za-z0-9]+/browser.sqlite`；必须不存在新文件再seed，`Base.metadata.create_all`→`run_bootstrap_on_startup`→每个InstrumentCategory.driver_mode=mock→全部Lab.instrument_bindings每个driver_mode=mock→commit→重新查询all断言。保留原所有bootstrap模板；新增两个测试暗室、两个Lab及共享暗室Lab、两个switch category。只在该新库种legacy r0图，使用真实API保存101次得到分页历史；不得向用户原库写CAICT副本。
 
 bootstrap后核查实际HAL选择使用 `is_mock_driver()`，而非名字前缀或只读env。manifest记录全Mock类别/binding、DB绝对路径、Lab/category/图UUID、当前revision及历史条数；不输出凭据。当前新图创建统一走API以有r1历史，legacy r0仅夹具明确直写并记录来源。
 
@@ -669,7 +671,7 @@ export LOG_DIR="$pc04a5b_browser_dir/logs"
 
 GUI独立终端在gui目录：`npm run dev -- --host 127.0.0.1 --port 15186 --strictPort --config vite.pc04a5b.config.ts`。服务仅本轮临时库，默认用户8000及其GUI不操作。浏览器工具遵循当前可用browser skill，真实鼠标/表单动作主证据；接口脚本用于构造第二客户端冲突和只读SQL核验，不冒充鼠标操作。
 
-- [ ] **Step 2：真实浏览器矩阵。** 新 `gui/test/pc04a5bRevisions.browser.js` 跟踪每项请求方法/body/status、UI状态和截图；手工或既有浏览器执行器跑完同一矩阵，证据放 `output/playwright/pc04a5b/`，保留文件。
+- [x] **Step 2：真实浏览器矩阵。** 新 `gui/test/pc04a5bRevisions.browser.js` 跟踪每项请求方法/body/status、UI状态和截图；手工或既有浏览器执行器跑完同一矩阵，证据放 `output/playwright/pc04a5b/`，保留文件。
 
 | 编号 | 鼠标/真实请求序列 | 数据与界面断言 |
 |---|---|---|
@@ -686,9 +688,9 @@ GUI独立终端在gui目录：`npm run dev -- --host 127.0.0.1 --port 15186 --st
 
 Mock采集只验证busy生命周期，不把Mock值当正式实测、confirmed或B/HOLD通过。需构造真实confirmed软件正例时沿现有测试生产入口/证据夹具，明确synthetic软件证据，不能现场采集冒充。
 
-- [ ] **Step 3：只读库审计与正式消费者回归。** `tests/pc04a5b_browser_audit.py` 导入前验证同一新库路径、Mock环境；只SELECT，不init/seed。审计：history每图revision唯一、当前rev等于max、legacy未写历史空、source/copy UUID及历史独立、calibrated只在候选清null、scope/active/default/created字段不恢复、历史record前后不改；请求日志与截图逐项对应当前SHA。执行/证书/采用计数与内容摘要前后比对，不能只看toast。API定点包含Task1/2新测试及 `test_pc04a2_route_selection.py`、`test_pc04a2_route_eligibility.py`、`test_pc04a2_route_application.py`、`test_pc04a2_route_freeze.py`、`test_pc04a4d_loss_truth.py`。
+- [x] **Step 3：只读库审计与正式消费者回归。** `tests/pc04a5b_browser_audit.py` 导入前验证同一新库路径、Mock环境；只SELECT，不init/seed。审计：history每图revision唯一、当前rev等于max、legacy未写历史空、source/copy UUID及历史独立、calibrated只在候选清null、scope/active/default/created字段不恢复、历史record前后不改；请求日志与截图逐项对应当前SHA。执行/证书/采用计数与内容摘要前后比对，不能只看toast。API定点包含Task1/2新测试及 `test_pc04a2_route_selection.py`、`test_pc04a2_route_eligibility.py`、`test_pc04a2_route_application.py`、`test_pc04a2_route_freeze.py`、`test_pc04a4d_loss_truth.py`。
 
-- [ ] **Step 4：冻结输入，唯一最终后端全量。** 记录git HEAD、tracked diff以及实际Python测试输入清单hash（包含本片未提交文件，排除venv/output/scratch）；全量前后列表一致才可复用。另起新/tmp目录，不使用browser.sqlite。环境同0.2；全量运行前bootstrap新库并明确所有类别/所有Lab bindings Mock，再重新查询核验，禁止依靠环境变量代替绑定检查。可用Task4夹具拆出 `bootstrap_mock_database()` 供browser/full共同调用；输入路径严格限制新/tmp/pc04a5b目录，full.sqlite与browser.sqlite分别守卫，不能接受任意DB URL。
+- [x] **Step 4：冻结输入，唯一最终后端全量。** 记录git HEAD、tracked diff以及实际Python测试输入清单hash（包含本片未提交文件，排除venv/output/scratch）；全量前后列表一致才可复用。另起新/tmp目录，不使用browser.sqlite。环境同0.2；全量运行前bootstrap新库并明确所有类别/所有Lab bindings Mock，再重新查询核验，禁止依靠环境变量代替绑定检查。可用Task4夹具拆出 `bootstrap_mock_database()` 供browser/full共同调用；输入路径严格限制新/tmp/pc04a5b目录，full.sqlite与browser.sqlite分别守卫，不能接受任意DB URL。
 
 ```bash
 pc04a5b_full_dir=$(mktemp -d /tmp/pc04a5b-XXXXXX)
