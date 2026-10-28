@@ -200,3 +200,21 @@ def test_malformed_snapshot_rejected_without_writes(client, db, lab, source, bad
         response = restore_call(client, lab, source, preview=preview)
         assert response.status_code == 422, response.text
     assert len(rows(db, source)) == 2
+
+
+def test_null_version_history_preview_and_restore_rejected_without_mutation(client, db, lab, source):
+    source.version = None  # 旧ORM列允许null；baseline由真实PATCH产生，不篡改历史行。
+    db.commit()
+    assert patch(client, lab, source, {'expected_revision': 0, 'name': '当前', 'version': '已修正'}).status_code == 200
+    assert rows(db, source)[0].snapshot['version'] is None
+    def state():
+        db.refresh(source)
+        current = deepcopy({column.name: getattr(source, column.name) for column in source.__table__.columns})
+        revisions = [deepcopy({column.name: getattr(row, column.name) for column in row.__table__.columns})
+                     for row in rows(db, source)]
+        return current, revisions
+    before = state()
+    for preview in (True, False):
+        response = restore_call(client, lab, source, preview=preview)
+        assert response.status_code == 422, response.text
+        assert state() == before

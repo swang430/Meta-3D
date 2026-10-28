@@ -676,7 +676,10 @@ def _restore_selection(db, topology_id, chamber_id, request):
     response.update(candidate)
     response.update({key: getattr(statistics, key) for key in
                     ('total_nodes', 'total_connections', 'total_probes', 'total_channels')})
-    SwitchTopologyResponse.model_validate(response).model_dump(mode='json')
+    try:
+        SwitchTopologyResponse.model_validate(response).model_dump(mode='json')
+    except ValidationError as exc:
+        raise HTTPException(422, detail='历史名称、安装信息或图字段形态无效') from exc
     return current, history, candidate, statistics
 
 
