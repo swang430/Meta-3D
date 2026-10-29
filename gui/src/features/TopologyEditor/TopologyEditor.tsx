@@ -64,7 +64,7 @@ import { getNodePorts, nodePortsToSelectOptions, suggestedPassivePorts, edgePort
 import { addDraftNode, addDraftConnection, removeDraftNodes, removeDraftConnections, updateDraftNode, updateDraftConnection, getDraftModeConnectionIds, CALIBRATION_MODE } from './topologyDraft';
 import { switchTopologyService, topologyUpdatePayload, mergeConnectionDeclarations } from '../../api/switchTopologyService';
 import type { SwitchTopology, TopologyConnection, TopologyNode, ConnectionNumericField, ConnectionNumericDeclarations, TopologyConversionPreview } from '../../api/switchTopologyService';
-import {chooseTopology, preferenceKey, requestMatches, canLeaveTopology, loadTopologyLibrary} from './topologyLibraryState';
+import {chooseTopology, preferenceKey, requestMatches, canLeaveTopology, loadTopologyLibrary,activationPayload} from './topologyLibraryState';
 import apiClient from '../../api/client';
 import { logFrontendEvent } from '../../observability/frontendLogger';
 import {layoutTopology,captureLayoutUndo,restoreLayoutPositions} from './topologyLayout';
@@ -598,7 +598,7 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
             <Text fw={600}>{topology.name}</Text>
             <Badge color="blue" variant="light">{topology.total_channels ?? 0} Channels</Badge>
             <Badge color={topology.is_active ? 'green' : 'gray'} variant="light">
-              {topology.is_active ? '已激活' : '草稿'}
+              {topology.is_active ? '已启用' : '已停用'}
             </Badge>
             {dirty && (
               <Badge color="yellow" variant="filled" size="sm">● 未保存</Badge>
@@ -972,7 +972,8 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const [topoError,setTopoError]=useState<string|null>(null);
   const [conversionEpoch,setConversionEpoch]=useState(0);
   const [reload,setReload]=useState(0);
-  const [modal,setModal]=useState<'name'|'copy'|null>(null);
+  const [modal,setModal]=useState<'name'|'copy'|'activation'|null>(null);
+  const [activationSource,setActivationSource]=useState<SwitchTopology|null>(null);
   const [name,setName]=useState('');
   const [modalError,setModalError]=useState<string|null>(null);
   const currentId=useRef<string|null>(null);
@@ -1040,9 +1041,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
 
   // 同一操作持有独立token；迟到finally只释放自己的锁，不能解锁新操作。
   const operation=useRef<object|null>(null);
-  const runWrite=async(kind:'name'|'copy'|'import')=>{
+  const runWrite=async(kind:'name'|'copy'|'import'|'activation')=>{
     if(!canLeave()||!labProfileId||!selectedSwitchId||!chamberId)return;
     const id=currentId.current;
+    if(kind==='activation'&&(!activationSource||activationSource.id!==id||libraryRevisionError))return;
     const template=availableTemplates?.includes('caict_v4')?'caict_v4':availableTemplates?.[0];
     if(kind!=='import'&&!id)return;
     if(kind==='import'&&!template)return;
@@ -1056,6 +1058,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       let result:SwitchTopology;
       if(kind==='import') result=await switchTopologyService.importFromTemplate(selectedSwitchId,labProfileId,template!);
       else if(kind==='copy') result=await switchTopologyService.copyTopology(id!,labProfileId,name);
+      else if(kind==='activation') result=await switchTopologyService.updateTopology(id!,labProfileId,activationPayload(activationSource!));
       else result=await switchTopologyService.updateTopology(id!,labProfileId,{name,expected_revision:topology!.revision});
       writeConfirmed=true;
       if(!owns(token,id))return;
@@ -1067,7 +1070,9 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
       if(!owns(token,id))return;
       selectLoaded(items.map(item=>item.id===saved.id?saved:item),saved.id!);
       setModal(null);
-      notifications.show({color:'green',message:kind==='name'?'名称已保存；执行选择未改变':'已新增非活跃副本；未修改本浏览器默认或正式执行选择'});
+      notifications.show({color:'green',message:kind==='activation'
+        ?`已${saved.is_active?'启用':'停用'}并回读服务器状态；正式执行仍按同暗室最近更新的启用图选图，不代表校准合格`
+        :kind==='name'?'名称已保存；执行选择未改变':'已新增非活跃副本；未修改本浏览器默认或正式执行选择'});
     }catch(err){
       if(!owns(token,id))return;
       const failure=revisionFailure(writeConfirmed?undefined:(err as any).response?.status);
@@ -1112,8 +1117,10 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     invalidateLibraryInspection();
     selectLoaded(currentLibrary,id);
   };
-  const openModal=(kind:'name'|'copy')=>{
+  const openModal=(kind:'name'|'copy'|'activation')=>{
     if(!canLeave()||!currentTopology)return;
+    if(kind==='activation'&&libraryRevisionError)return;
+    setActivationSource(kind==='activation'?currentTopology:null);
     setName(kind==='copy'?`${currentTopology.name} 副本`:currentTopology.name);
     setModalError(null);setModal(kind);
   };
@@ -1149,6 +1156,9 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         <Button variant="light" disabled={blocked||topoLoading||!labProfileId} onClick={()=>{if(canLeave())setReload(value=>value+1)}}>刷新拓扑库</Button>
       </Group>
       <Group mt="sm">
+        <Badge color={currentTopology?.is_active?'green':'gray'}>{currentTopology?currentTopology.is_active?'已启用':'已停用':'未选择拓扑'}</Badge>
+        <Button color={currentTopology?.is_active?'orange':'blue'} disabled={blocked||!currentTopology||!!libraryRevisionError}
+          onClick={()=>openModal('activation')}>{currentTopology?.is_active?'停用拓扑':'启用拓扑'}</Button>
         <Button disabled={blocked||!currentTopology} onClick={()=>openModal('name')}>重命名</Button>
         <Button disabled={blocked||!currentTopology} onClick={()=>openModal('copy')}>复制已保存版本为…</Button>
         <Button variant="light" disabled={blocked||!currentTopology} onClick={savePreference}>设为本浏览器默认编辑图</Button>
@@ -1157,8 +1167,9 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
           onClick={()=>void runWrite('import')}>从模板新增副本</Button>}
       </Group>
       <Text size="xs" c="dimmed" mt="xs">库选择和本浏览器默认不改变正式执行绑定。复制/模板新增均为非活跃图，不自动用于正式测试。</Text>
+      <Text size="xs" c="dimmed">正式 MIMO 执行从同暗室全部启用图中按最近更新时间选取；不限定于当前开关库。启用不等于校准或资格合格。</Text>
       <Text size="xs" c="dimmed">进入页面从服务器读取保存基线；如曾离开结果未知的写操作，请核查服务器最新修订，页面不会自动重发。</Text>
-      {blocked&&<Alert mt="sm" color="yellow">{flowDirty?'请先保存或放弃未保存草稿，再切换范围、复制、命名或导入。':'操作尚未结束；保存、转换或采集结束未确认时禁止切换和另存。'}</Alert>}
+      {blocked&&<Alert mt="sm" color="yellow">{flowDirty?'请先保存或放弃未保存草稿，再切换范围、启停、复制、命名或导入。':'操作尚未结束；保存、转换或采集结束未确认时禁止启停、切换和另存。'}</Alert>}
       {libraryRevisionError&&<Alert mt="sm" color="red">{libraryRevisionError}</Alert>}
       {!!libraryRevisionError&&<Button mt="xs" variant="light" loading={libraryInspecting} disabled={libraryBusy||flowBusy} onClick={()=>void inspectLibrary()}>核查服务器最新拓扑库（只读）</Button>}
       {templateError&&<Alert mt="sm" color="red" title="模板加载失败"><Button size="xs" variant="light" onClick={()=>setTemplateReload(value=>value+1)}>重试模板加载</Button></Alert>}
@@ -1166,19 +1177,28 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
     </Card>
     <Modal opened={modal!==null} onClose={()=>{if(!lock.current.library)setModal(null)}}
       closeOnClickOutside={!libraryBusy} closeOnEscape={!libraryBusy} withCloseButton={!libraryBusy}
-      title={modal==='copy'?'复制已保存版本为…':'重命名拓扑'}>
+      title={modal==='activation'?`${activationSource?.is_active?'停用':'启用'}拓扑确认`:modal==='copy'?'复制已保存版本为…':'重命名拓扑'}>
       <Stack>
-        <Text size="sm">源图：{currentTopology?topologyLabel(currentTopology):'无'}</Text>
+        <Text size="sm">源图：{modal==='activation'?activationSource?.name:currentTopology?topologyLabel(currentTopology):'无'}</Text>
+        {modal==='activation'&&<>
+          <Text size="sm" style={{overflowWrap:'anywhere'}}>完整 ID：{activationSource?.id}</Text>
+          <Text size="sm">目标状态：{activationSource?.is_active?'已停用':'已启用'}；基线修订：r{activationSource?.revision}</Text>
+          <Alert color="orange">{activationSource?.is_active
+            ?'停用后，正式 MIMO 执行可能改选同暗室另一启用图，或没有启用图。'
+            :'启用会更新本图时间，可能改变正式 MIMO 执行选图：同暗室全部启用图按 updated_at 最近优先，而非仅当前开关库。'}
+            不会自动停用其他图，不改变默认、图内容、仪器绑定或既有历史；启用不等于校准或资格合格。</Alert>
+        </>}
         {modal==='copy'&&<Alert color="yellow">只复制已保存版本。副本非活跃、非默认；不复制旧采用记录、证书或历史执行。已有 calibrated_loss_db 和 calibrated_phase_deg 将置空，标称值不等于实测校准。</Alert>}
-        <TextInput label="拓扑名称" value={name} disabled={libraryBusy} onChange={event=>setName(event.currentTarget.value)} required/>
+        {modal!=='activation'&&<TextInput label="拓扑名称" value={name} disabled={libraryBusy} onChange={event=>setName(event.currentTarget.value)} required/>}
         {modalError&&<Alert color="red">{modalError}</Alert>}
         {modalError&&<Button variant="light" loading={libraryInspecting} disabled={libraryBusy||flowBusy} onClick={()=>void inspectLibrary()}>核查服务器最新拓扑库（只读）</Button>}
         <Group justify="end"><Button variant="default" disabled={libraryBusy} onClick={()=>setModal(null)}>取消</Button>
-          <Button loading={libraryBusy} disabled={!name.trim()||flowDirty||flowBusy||libraryUnknown} onClick={()=>void runWrite(modal==='copy'?'copy':'name')}>确认{modal==='copy'?'复制':'命名'}</Button></Group>
+          <Button loading={libraryBusy} disabled={(modal!=='activation'&&!name.trim())||flowDirty||flowBusy||libraryUnknown||(modal==='activation'&&!!libraryRevisionError)}
+            onClick={()=>void runWrite(modal==='activation'?'activation':modal==='copy'?'copy':'name')}>确认{modal==='activation'?activationSource?.is_active?'停用':'启用':modal==='copy'?'复制':'命名'}</Button></Group>
       </Stack>
     </Modal>
     <Modal opened={libraryInspection!==null} onClose={()=>setLibraryInspection(null)} title="核对服务器拓扑库" size="xl" closeOnClickOutside={false}>
-      <Stack><Alert color="orange">请核对修订、历史操作与图内容。读取不会解除未知写锁，也不会自动重发命名、复制或导入。</Alert>
+      <Stack><Alert color="orange">请核对修订、启用状态、历史操作与图内容。读取不会解除未知写锁，也不会自动重发启停、命名、复制或导入。</Alert>
         <pre style={{whiteSpace:'pre-wrap',maxHeight:380,overflow:'auto'}}>{JSON.stringify(libraryInspection,null,2)}</pre>
         <Group><Button variant="default" onClick={()=>setLibraryInspection(null)}>保留输入，取消</Button>
           <Button color="orange" onClick={adoptLibraryLatest}>确认采用服务器最新并结束核查</Button></Group></Stack>
@@ -1205,5 +1225,5 @@ function errorText(error: any): string {
   return typeof detail==='string'?detail:JSON.stringify(detail);
 }
 function topologyLabel(item:SwitchTopology):string {
-  return `${item.name} · ${item.id?.slice(0,8)} · ${item.is_active?'活跃':'非活跃'}`;
+  return `${item.name} · ${item.id?.slice(0,8)} · ${item.is_active?'已启用':'已停用'}`;
 }
