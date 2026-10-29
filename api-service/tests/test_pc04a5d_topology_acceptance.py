@@ -7,7 +7,6 @@ import hashlib
 import json
 import os
 from pathlib import Path
-import re
 import subprocess
 import sys
 import tempfile
@@ -16,11 +15,6 @@ from unittest.mock import patch
 from uuid import UUID, uuid4
 
 import pytest
-
-# conftest 导入 app 之前必须由独立 CLI bootstrap；这里拒绝默认库和未准备的库。
-assert re.fullmatch(r'sqlite:////tmp/pc04a5d-[A-Za-z0-9]+/test\.sqlite', os.environ.get('DATABASE_URL', ''))
-assert os.environ.get('USE_MOCK_INSTRUMENTS') == 'true'
-assert Path(os.environ['DATABASE_URL'].removeprefix('sqlite:///')).is_file()
 
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, text
@@ -40,7 +34,7 @@ from tests.pc04a5d_browser_fixture import (SOURCE, audit_mock, canonical_hash,
 ROOT = '/api/v1/switch-topologies'
 HISTORY = ('route_calibration_applications', 'route_calibration_selections',
            'probe_path_loss_calibrations', 'diagnostic_runs')
-EVIDENCE = Path(os.environ['DATABASE_URL'].removeprefix('sqlite:///')).parent / 'receipts' / (
+EVIDENCE_ATTEMPT = (
     'attempt-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + uuid4().hex[:8])
 
 
@@ -72,8 +66,11 @@ def graph(db, ident):
 
 @pytest.fixture
 def world(tmp_path, monkeypatch, request):
+    # 收集不依赖全局DB命名；实际写入只落pytest新库，仍拒绝非Mock执行。
+    assert os.environ.get('USE_MOCK_INSTRUMENTS') == 'true'
     path = tmp_path / 'pc04a5d-world.sqlite'
     assert not path.exists()
+    evidence = tmp_path.parent / 'pc04a5d-receipts' / EVIDENCE_ATTEMPT
     engine = create_engine(f'sqlite:///{path}', connect_args={'check_same_thread':False})
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -107,8 +104,8 @@ def world(tmp_path, monkeypatch, request):
                 receipts['final_mock_audit'] = audit_mock(db)
                 receipts['final_persistence'] = {table:raw_table(db,table) for table in
                     ('switch_topologies','switch_topology_revisions',*HISTORY)}
-                EVIDENCE.mkdir(parents=True,exist_ok=True)
-                (EVIDENCE / (request.node.name + '.json')).write_text(
+                evidence.mkdir(parents=True,exist_ok=True)
+                (evidence / (request.node.name + '.json')).write_text(
                     json.dumps(receipts,ensure_ascii=False,sort_keys=True,default=str,indent=2))
                 app.dependency_overrides.clear(); app.dependency_overrides.update(previous)
     engine.dispose()
@@ -140,7 +137,7 @@ def test_import_guard_rejects_without_app_import_or_database(tmp_path):
     valid_directory = Path(tempfile.mkdtemp(prefix='pc04a5d-',dir='/tmp'))
     valid_url = f'sqlite:///{valid_directory}/browser.sqlite'
     for changes in ({'DATABASE_URL':f'sqlite:///{tmp_path}/forbidden.sqlite'},
-                    {'DATABASE_URL':os.environ['DATABASE_URL']},
+                    {'DATABASE_URL':os.environ.get('DATABASE_URL','')},
                     {'DATABASE_URL':valid_url,'USE_MOCK_INSTRUMENTS':'false'},
                     {'DATABASE_URL':valid_url,'BOOTSTRAP_ON_STARTUP':'false'}):
         env = {**os.environ,**changes}
