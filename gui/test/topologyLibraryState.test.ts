@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {chooseTopology, preferenceKey, requestMatches, canLeaveTopology, loadTopologyLibrary} from '../src/features/TopologyEditor/topologyLibraryState.ts';
+import {activationPayload} from '../src/features/TopologyEditor/topologyLibraryState.ts';
 
 const items = [
   {id:'b',name:'重复名',created_at:'2026-01-02',is_default:false},
@@ -36,4 +37,10 @@ test('取完整分页后才返回库；重复页和空进展报错不循环',asy
   assert.deepEqual(result.map(x=>x.id),['b','a','old']);assert.deepEqual(calls,[0,2]);
   await assert.rejects(loadTopologyLibrary(async()=>({items:[],total:1})),/分页/);
   await assert.rejects(loadTopologyLibrary(async()=>({items:[items[0]],total:2})),/分页/);
+});
+test('启停只构造目标flag和原修订，绝不带GET默认化图内容或default',()=>{
+  const saved={revision:0,is_active:false,nodes:[],connections:[],operating_modes:[],is_default:true};
+  assert.deepEqual(activationPayload(saved),
+    {is_active:true,expected_revision:0});
+  assert.deepEqual(activationPayload({revision:17,is_active:true}),{is_active:false,expected_revision:17});
 });

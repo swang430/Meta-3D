@@ -4,6 +4,9 @@ export const preferenceKey = (lab: string, category: string) =>
 export const requestMatches = (a: {scope: string; generation: number}, b: {scope: string; generation: number}) =>
   a.scope === b.scope && a.generation === b.generation;
 export const canLeaveTopology = (dirty: boolean, busy: boolean) => !dirty && !busy;
+// 启停是独立元数据操作，不把GET默认化的三个图数组回写。
+export const activationPayload = (saved: {is_active:boolean; revision:number}) =>
+  ({is_active:!saved.is_active,expected_revision:saved.revision});
 
 type LibraryItem = {id?: string; created_at?: string; is_default: boolean};
 export function chooseTopology(items: LibraryItem[], preferredId: string | null): string | null {
