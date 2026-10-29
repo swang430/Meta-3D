@@ -132,8 +132,8 @@ curl --fail http://127.0.0.1:18126/api/v1/health
 
 **Interfaces:** 消费真实 `POST /api/v1/switch-topologies/{id}/copy`（仅 `{name}`）、`PATCH /api/v1/switch-topologies/{id}`（`expected_revision`）、`POST /api/v1/switch-topologies/{id}/restore-preview` 与 `POST /api/v1/switch-topologies/{id}/restore`（`revision,expected_revision`）、revision list/detail。产出 D01/D04～D08/D11～D12 JSON 证据及供 Task 2 使用的安全 manifest。`seed()` 只播原 r0 和独立小型声明世界；最终副本由接口生成。
 
-- [ ] 1. 写 fixture 与 import 前守卫；API 测试本身使用 pytest `tmp_path` 的新文件库及本片 db/client fixture，无 lifespan 的真实 TestClient 可按 5a dependency override 方式复用，但不用其空 bindings/world 当“全绑定 Mock”证明。每个测试世界在创建后完整审计类别、Lab bindings，空集合不算通过。失败守卫不应 import app，不触默认 DB。
-- [ ] 2. 新测试按下列名称实现真实序列；原图全部列、历史全部列、Lab bindings 和四类历史表先后 raw 快照，用 JSON 类型/缺键保持比较，不仅比较 typed GET。全部测试允许首次直接 GREEN。
+- [x] 1. 写 fixture 与 import 前守卫；API 测试本身使用 pytest `tmp_path` 的新文件库及本片 db/client fixture，无 lifespan 的真实 TestClient 可按 5a dependency override 方式复用，但不用其空 bindings/world 当“全绑定 Mock”证明。每个测试世界在创建后完整审计类别、Lab bindings，空集合不算通过。失败守卫不应 import app，不触默认 DB。
+- [x] 2. 新测试按下列名称实现真实序列；原图全部列、历史全部列、Lab bindings 和四类历史表先后 raw 快照，用 JSON 类型/缺键保持比较，不仅比较 typed GET。全部测试允许首次直接 GREEN。
 
 | 测试名 | 必须完成的可运行序列和断言 |
 |---|---|
@@ -184,8 +184,8 @@ def copy_restore_receipts(client, source_id, lab_id, raw_source, audit):
 
 D07 使用 `test_pc04a5c_copy_roundtrip.py::full_bindings` 的完整模式方式；DB原图调用 `orchestrate_switch_topology` 与 `resolve_rf_chains` 核正式选择，inactive副本不为获得选图而激活。原/副本完整JSON分别调用 `_build_probe_binding` 与纯 `TopologyService(complete_graph).resolve_paths('mimo_ota')`，32路期望直接比source与manifest集合，不只断言数量。
 
-- [ ] 3. D08 逐路只在**明确标注的输出子图**调用 `resolve_saved_rf_path`/`loss_sources_for_path`/`loss_source_for_terminal`/`TopologyService` 检查 None；原/候选完整模式解析另存证，不拿子图冒充完整模式。首/中/末 B1/B16/B32 UI只抽样，不能代替本步骤32路机器核验。错pin/反pair/缺一边按实际结构校验检查HTTP拒绝后零修订；CE身份冲突允许保存，但必须由正式 `_build_probe_binding` 消费者抛出明确异常拒绝，保存不等于可执行，不宣称HTTP拒绝。0样本在独立小图而非改unknown候选。（2026-10-29主任务裁决C：不在验收片新增生产保存门。）
-- [ ] 4. 在独立、已活动的小型声明图创建明确 synthetic 旧 DiagnosticRun/Application/Selection 输入，所有绑定仍 Mock。`selection_snapshot` 必须取真实 `route-calibration-paths` 响应并用 `RouteSelection` 验证；不手拼伪 route digest、不patch qualification/freeze。根据当前 `RouteApplicationRecord` 完整构造：
+- [x] 3. D08 逐路只在**明确标注的输出子图**调用 `resolve_saved_rf_path`/`loss_sources_for_path`/`loss_source_for_terminal`/`TopologyService` 检查 None；原/候选完整模式解析另存证，不拿子图冒充完整模式。首/中/末 B1/B16/B32 UI只抽样，不能代替本步骤32路机器核验。错pin/反pair/缺一边按实际结构校验检查HTTP拒绝后零修订；CE身份冲突允许保存，但必须由正式 `_build_probe_binding` 消费者抛出明确异常拒绝，保存不等于可执行，不宣称HTTP拒绝。0样本在独立小图而非改unknown候选。（2026-10-29主任务裁决C：不在验收片新增生产保存门。）
+- [x] 4. 在独立、已活动的小型声明图创建明确 synthetic 旧 DiagnosticRun/Application/Selection 输入，所有绑定仍 Mock。`selection_snapshot` 必须取真实 `route-calibration-paths` 响应并用 `RouteSelection` 验证；不手拼伪 route digest、不patch qualification/freeze。根据当前 `RouteApplicationRecord` 完整构造：
 
 ```python
 record = RouteApplicationRecord(
@@ -207,7 +207,7 @@ record = RouteApplicationRecord(
 
 用 `factory.build_mimo_ota_test_case` 的真实 configuration 建用例与新 execution，然后直接走 `freeze_execution_route_compensation(db,execution,test_case)`（无硬件I/O），保存 E1；name-only保存→恢复合法旧修订→E2冻结，要求两次 `source_kind='confirmed_route'`、value 28，旧E1不变。再以冻结载荷调用 `ChannelEngineClient._query_calibration_entries(chamber.id,2595e6,chamber,path_loss_calibration=None,route_compensation=freeze)`，只能替换其独立 phase 查询为 `{}`，不替换待验补偿消费者；实际返回对应端口 cable_loss 28、probe_gain 0。若模型输入未进消费者，报失败和原因，不能patch门让其通过。真实 pin/pair 改变后新freeze不再confirmed，旧E1仍不变。
 
-- [ ] 5. Mock真实采集负例使用生产 start/progress/application-preview，核 simulated、空samples、net_loss None、formal_eligible false、不可采用和确认拒绝；不复用 `real_capture`。新相关集仅运行本片及不调用该fixture的 5a/5b/5c契约与loss/identity消费者：
+- [x] 5. Mock真实采集负例使用生产 start/progress/application-preview，核 simulated、空samples、net_loss None、formal_eligible false、不可采用和确认拒绝；不复用 `real_capture`。新相关集仅运行本片及不调用该fixture的 5a/5b/5c契约与loss/identity消费者：
 
 ```bash
 # cwd api-service；先新mktemp，env先于Python；test.sqlite不得已存在。
@@ -221,7 +221,7 @@ export LOG_DIR="$acceptance_dir/logs"
 
 测试旧文件中的 memory/tmp_path fixture 不访问默认库；新全局 app DB 同样已bootstrap核Mock。旧5b confirmed/4a2 eligibility/freeze文件不加入该相关命令；前片测试结果只能作背景。2026-10-29执行前核实4d/4c上述两个测试各有两参数例会调用 `real_capture`，原命令漏排除；主任务批准明确deselect共4例，不能写成这四例已通过。
 
-- [ ] 6. 写 task回执（命令/输出/exit/输入/每个分支），自查核心消费者真实命中；独立规格/质量审查后提交本任务。若只新增验收且GREEN，不做无意义的生产回退/变异；若批准新增产品修复或新守门，按仓库规则补核心变异并恢复输入hash。Task1不push、不最终全量。
+- [x] 6. 写 task回执（命令/输出/exit/输入/每个分支），自查核心消费者真实命中；独立规格/质量审查后提交本任务。若只新增验收且GREEN，不做无意义的生产回退/变异；若批准新增产品修复或新守门，按仓库规则补核心变异并恢复输入hash。Task1不push、不最终全量。
 
 ## Task 2：真实浏览器跨功能旅程与两轮采集锁
 
@@ -229,8 +229,8 @@ export LOG_DIR="$acceptance_dir/logs"
 
 **Interfaces:** 输入 Task1 新 manifest+本片 URL+stage；产出 `{case,attempt,checks,exchanges,shots,error}`。HTTP监听捕获真实请求/响应，SQL审计由单独只读核验完成。浏览器不能伪装 Task1 的 synthetic confirmed 为新采集；其历史显示明确标“synthetic软件示例”。
 
-- [ ] 1. 新建 browser.sqlite 并按 §2 启动，核API/GUI准确PID、命令、端口、DB路径和Mock审计。原图从manifest选中，截图中名称/短ID与请求/SQL一致。开两个真实页面和第二独立浏览器context供并发/偏好核验，不复用旧片hardcoded UUID。
-- [ ] 2. 执行以下串行旅程；每个分支保留独立case结果，失败不将整行标通过。
+- [x] 1. 新建 browser.sqlite 并按 §2 启动，核API/GUI准确PID、命令、端口、DB路径和Mock审计。原图从manifest选中，截图中名称/短ID与请求/SQL一致。开两个真实页面和第二独立浏览器context供并发/偏好核验，不复用旧片hardcoded UUID。
+- [x] 2. 执行以下串行旅程；每个分支保留独立case结果，失败不将整行标通过。
 
 | 旅程 | 真实操作与持久断言 |
 |---|---|
@@ -245,7 +245,7 @@ export LOG_DIR="$acceptance_dir/logs"
 | D10 第2轮 | 新start产生不同run UUID→真实cancel请求在途（只延迟真实响应）→未知保持锁→回读服务器终态→编辑保存→离页再进入重新GET同scope，不能自动重发start/cancel、不能以空历史认定未启动。始终Mock不可采用，不称真实cleanup |
 | D11/D12 展示边界 | 可只读查看Task1 synthetic旧历史/冻结原值与identity；不得浏览器切real或点击确认造confirmed成功。与Task1消费者证据关联UUID，不把32路inactive副本的422换成可采集小图的200来声称副本可采集 |
 
-- [ ] 3. D09 端口鼠标操作沿当前 `.react-flow__node[data-id="<nodeId>"] .react-flow__handle[data-handleid="<port>"]` 定位，并按 source/target class筛选；必须由实际DOM确认目标唯一、`boundingBox()`可见。鼠标的最小操作形状如下，不运行React函数：
+- [x] 3. D09 端口鼠标操作沿当前 `.react-flow__node[data-id="<nodeId>"] .react-flow__handle[data-handleid="<port>"]` 定位，并按 source/target class筛选；必须由实际DOM确认目标唯一、`boundingBox()`可见。鼠标的最小操作形状如下，不运行React函数：
 
 ```js
 const a = await sourceHandle.boundingBox(), b = await targetHandle.boundingBox();
@@ -259,9 +259,9 @@ await page.getByTestId('topology-save-stage').filter({hasText:'拓扑草稿未�
 
 ReactFlow重载可能生成新edge UUID，比较实际新edge的端点/pin而非猜ID。若空间遮挡，先用现有fit/zoom/pan或拖节点使可见，不直接调用 handler。保存请求要核 `source_pin/target_pin` 与当前模式引用，不能只看画面线段。
 
-- [ ] 4. 生命周期故障注入仅允许保留原样真实请求/响应：`route.fetch()` 到服务端后延迟原样 `route.fulfill({response})`，或 abort 当前GET使状态未知；保存“已到服务端”与请求次数。start pending可证API已受理但不是“采集任务仍运行”的证据；还须实际GET观察run running并核真实活动租约，再进行cancel。Mock过快时不能伪造running：先报主任务，允许的最小解决仅是本片测试级Mock/时钟阻塞夹具经真实runner/lease执行，不改生产状态/结果或假API响应。若没取得真实running则该分支明确未验。
-- [ ] 5. 明确区别数据库写未知与硬件采集未知：前者组件内unknown/dirty不承诺跨SPA持久草稿，离页回到新GET不自动重试；`beginWork`真实在途跨卸载直到请求落定；采集未知继续保守锁，不能用“导航卸载”当停发。分别实测离页/重入，至少两轮release/run身份不继承。
-- [ ] 6. 跑GUI现有相关集和build，日志不覆盖；真实视觉查看关键截图（copy/偏好、r1拒绝、r2恢复、409dirty、共享Lab、三处PA端口、真实连接、两轮未知锁与重入）：
+- [x] 4. 生命周期故障注入仅允许保留原样真实请求/响应：`route.fetch()` 到服务端后延迟原样 `route.fulfill({response})`，或 abort 当前GET使状态未知；保存“已到服务端”与请求次数。start pending可证API已受理但不是“采集任务仍运行”的证据；还须实际GET观察run running并核真实活动租约，再进行cancel。Mock过快时不能伪造running：先报主任务，允许的最小解决仅是本片测试级Mock/时钟阻塞夹具经真实runner/lease执行，不改生产状态/结果或假API响应。若没取得真实running则该分支明确未验。
+- [x] 5. 明确区别数据库写未知与硬件采集未知：前者组件内unknown/dirty不承诺跨SPA持久草稿，离页回到新GET不自动重试；`beginWork`真实在途跨卸载直到请求落定；采集未知继续保守锁，不能用“导航卸载”当停发。分别实测离页/重入，至少两轮release/run身份不继承。
+- [x] 6. 跑GUI现有相关集和build，日志不覆盖；真实视觉查看关键截图（copy/偏好、r1拒绝、r2恢复、409dirty、共享Lab、三处PA端口、真实连接、两轮未知锁与重入）：
 
 ```bash
 # cwd gui
@@ -269,19 +269,21 @@ npx --no-install tsx --test test/topologyDraft.test.ts test/topologyRevisionStat
 npm run build
 ```
 
-- [ ] 7. 独立规格/质量审查并提交；若Task3还复核，交接准确PID/DB/端口/浏览器session；否则只停已核身份的本片进程，验证本片端口无监听。保留所有DB/证据，不停止用户8000/5173服务或Docker。
+- [x] 7. 独立规格/质量审查并提交；若Task3还复核，交接准确PID/DB/端口/浏览器session；否则只停已核身份的本片进程，验证本片端口无监听。保留所有DB/证据，不停止用户8000/5173服务或Docker。
 
 ## Task 3：指南、验证摘要与唯一条件全量收口
+
+执行回填（2026-10-29）：Task1最终4b5a2917、Task2最终1eedefaf均已独立Approved；各自回执保留279/18/1不同输入及真实浏览器分支，不重跑同输入。Task3指南/摘要与文档门已实施；勾选表示该步骤已执行，不代表门全绿：G8/G11/gitignore实际3 failed、40 warnings，其中Task2回执有本片新增命中，详见[摘要](../validation/2026-10-29-pc04a5d-topology-acceptance.md)。累计无共享生产、shared fixture、schema或依赖变化，Step5条件评估为不触发，未跑新版全后端。步骤7的作者自查完成，Task3/累计独立审查及外审/合并、步骤8的主任务台账收口仍待主任务，不提前勾选。
 
 **Files:** 新增 `docs/guides/topology-library-recovery.md`、`docs/validation/2026-10-29-pc04a5d-topology-acceptance.md`，最小更新 roadmap 和本计划。输入 Task1/2 manifest、逐分支回执/SQL/消费者/截图及其失败原件；不改历史报告。
 
 **Interfaces:** 输出可照真实UI执行的指南、D01～D12“新验/复用/未验/失败”证据矩阵和新片输入责任说明。本任务唯一决定并承担最终全量，不默认转给reviewer。
 
-- [ ] 1. 指南按真实按钮写七段：选Lab/chamber/category和原图短ID；复制已保存图与命名；本浏览器默认≠正式执行选择；“应用”/保存/放弃草稿区别；误保存恢复合法修订和r1缺声明422；409/未知写只读核查及显式采用；独立PA映射/unknown/标称/confirmed一次及采集未知锁。每段包含成功回读、拒绝原因、保守恢复动作；链接 `topology-device-contract.md`，不照旧指南建议修改用户原CAICT。
-- [ ] 2. 明确用户落地源/副本只作定位说明；5d没有更新它们。新备份不是本片动作，不重新恢复PG。旧部署回执在 `output/pc04a5c-deployment.md` 为本机资料，远程读者可能不可得，不能提供不存在的公开下载；repo可追溯依据为PR547、5c validation与本片新证据摘要。浏览器截图均为隔离Mock样例，历史synthetic confirmed另列，不能显示“新实测合格”。
-- [ ] 3. 摘要逐分支列D01～D12输入、图/run/execution/application UUID、真实HTTP/SQL/DOM/消费者证据、退出码/统计/警告与未验边界；一个case部分通过不整行PASS。保存失败尝试及复验差别；未取得真实running、鼠标连接或消费者source_kind时如实未验并由主任务裁决，不以计划文字补齐。
-- [ ] 4. 最终影响分类与输入复用：对BASE→最终diff逐文件标“生产/shared fixture/schema/依赖/生成契约/专用验收/文档”，列命令、环境、依赖与tracked/untracked输入起止hash。若只有本片独立验收文件及文档，跑新相关集+浏览器+GUI/build+受影响文档门，写“本片未跑新版全后端”；旧5c统计仅前片参考，不冒新版全量，也不声称本片全部测试输入与5c相同（新增测试已不同）。可复用仅指逐项证明未变输入的既有结果，明确哪些未重跑。
-- [ ] 5. 若获批准的真实bug修复改变共享生产行为、共享fixture、依赖/schema或影响面无法说明，则当前共享输入变化触发**本Task唯一执行者**稳定后新full.sqlite跑一次最终全量；Task1/2与reviewer不重复。由于既有全量包含 `real_capture` 等脚本transport语义fixture，本片全Mock新验收约束不能被偷偷扩大：触发前先报告主任务确认旧测试严格无外部I/O的范围例外，禁止自行解除全局Mock或连接用户仪器。缺确认就保留该最终责任与阻塞，不以相关集冒全量。
+- [x] 1. 指南按真实按钮写七段：选Lab/chamber/category和原图短ID；复制已保存图与命名；本浏览器默认≠正式执行选择；“应用”/保存/放弃草稿区别；误保存恢复合法修订和r1缺声明422；409/未知写只读核查及显式采用；独立PA映射/unknown/标称/confirmed一次及采集未知锁。每段包含成功回读、拒绝原因、保守恢复动作；链接 `topology-device-contract.md`，不照旧指南建议修改用户原CAICT。
+- [x] 2. 明确用户落地源/副本只作定位说明；5d没有更新它们。新备份不是本片动作，不重新恢复PG。旧部署回执在 `output/pc04a5c-deployment.md` 为本机资料，远程读者可能不可得，不能提供不存在的公开下载；repo可追溯依据为PR547、5c validation与本片新证据摘要。浏览器截图均为隔离Mock样例，历史synthetic confirmed另列，不能显示“新实测合格”。
+- [x] 3. 摘要逐分支列D01～D12输入、图/run/execution/application UUID、真实HTTP/SQL/DOM/消费者证据、退出码/统计/警告与未验边界；一个case部分通过不整行PASS。保存失败尝试及复验差别；未取得真实running、鼠标连接或消费者source_kind时如实未验并由主任务裁决，不以计划文字补齐。
+- [x] 4. 最终影响分类与输入复用：对BASE→最终diff逐文件标“生产/shared fixture/schema/依赖/生成契约/专用验收/文档”，列命令、环境、依赖与tracked/untracked输入起止hash。若只有本片独立验收文件及文档，跑新相关集+浏览器+GUI/build+受影响文档门，写“本片未跑新版全后端”；旧5c统计仅前片参考，不冒新版全量，也不声称本片全部测试输入与5c相同（新增测试已不同）。可复用仅指逐项证明未变输入的既有结果，明确哪些未重跑。
+- [x] 5. 若获批准的真实bug修复改变共享生产行为、共享fixture、依赖/schema或影响面无法说明，则当前共享输入变化触发**本Task唯一执行者**稳定后新full.sqlite跑一次最终全量；Task1/2与reviewer不重复。由于既有全量包含 `real_capture` 等脚本transport语义fixture，本片全Mock新验收约束不能被偷偷扩大：触发前先报告主任务确认旧测试严格无外部I/O的范围例外，禁止自行解除全局Mock或连接用户仪器。缺确认就保留该最终责任与阻塞，不以相关集冒全量。
 
 ```bash
 # 只有Step5条件成立且旧suite的脚本transport边界已获主任务确认才执行；cwd api-service。
@@ -295,7 +297,7 @@ export LOG_DIR="$acceptance_dir/logs"
 
 全量后新增文档如果是规则门输入，另跑受影响门，不为文档再跑一遍全量。功能/fixture/配置再次变化则重新判影响；不能只看HEAD相同或不同决定复用。
 
-- [ ] 6. 本计划/指南/摘要作为文档门输入，最终新库单独运行下列门；发现旧失败逐条核BASE与失败位置无diff，不能写“3旧门”然后漏掉本片新失败。失败不改历史或放宽门刷绿。
+- [x] 6. 本计划/指南/摘要作为文档门输入，最终新库单独运行下列门；发现旧失败逐条核BASE与失败位置无diff，不能写“3旧门”然后漏掉本片新失败。失败不改历史或放宽门刷绿。
 
 ```bash
 # cwd api-service；复用已安全bootstrap的本片test环境，仅非破坏检查。
