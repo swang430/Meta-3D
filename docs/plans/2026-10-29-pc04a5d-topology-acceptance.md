@@ -235,7 +235,7 @@ export LOG_DIR="$acceptance_dir/logs"
 | 旅程 | 真实操作与持久断言 |
 |---|---|
 | D01/D02 | 原图只读留raw→点击“复制已保存版本为…”（201/r1）→重命名（trim后名/r2）→“设为本浏览器默认编辑图”→reload仍选副本；清洁切回原图仍可选。副本inactive/nondefault，原图全列/历史/绑定/resolver不变；独立context无偏好；同名图区分短ID |
-| D03 | 属性表单实改标签，观察dirty→尝试库/category/Lab/复制/命名被阻止→放弃确认取消仍dirty→显式确认放弃，网络无写且raw/revision不变。再新改标签并真正保存，reload确认不是只改toast |
+| D03 | 使用D04已合法声明的隔离PA演练副本（主任务2026-10-29载体裁决：原raw副本缺ports，现有严格门不放宽）；属性表单实改标签，观察dirty→尝试库/category/Lab/复制/命名被阻止→放弃确认取消仍dirty→显式确认放弃，网络无写且raw/revision不变。再新改标签并真正保存为后续修订，reload确认不是只改toast；D04 r1～r4原件保留 |
 | D04/D05 | 在单独PA演练副本完成copy r1→真实API候选r2（这是准备，不冒称鼠标改接）→r1历史可读/preview422→鼠标拖B1仅位置保存r3→历史选r2预览零写→checkbox二次确认→恢复r4，raw精确等r2；r1～r3快照不改 |
 | D05 双页面 | A/B都读同revision；B真实表单形成dirty并截图；A真实命名保存200；B旧token保存409，草稿/输入及“放弃未保存改动”保留。只读“刷新查看服务器最新”不自动采用，取消核对不覆盖；另核旧restore409零写。不要把没有dirty的409算草稿保护通过 |
 | D06 | A与A共享同chamber看同图、分别设浏览器默认并reload，偏好各自独立；清洁切B不同chamber再回A，原图不变。延迟真实list/detail回包（route.fetch后等待再原样fulfill），切上下文后迟到回包不夺选择；不得改JSON制造另一Lab结果 |
