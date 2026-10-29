@@ -1,12 +1,13 @@
 """5d 真实HTTP→原始持久化→正式消费者；不替换资格，不制造新实测。"""
 import asyncio
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, closing
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import os
 from pathlib import Path
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -34,8 +35,12 @@ from tests.pc04a5d_browser_fixture import (SOURCE, audit_mock, canonical_hash,
 ROOT = '/api/v1/switch-topologies'
 HISTORY = ('route_calibration_applications', 'route_calibration_selections',
            'probe_path_loss_calibrations', 'diagnostic_runs')
-EVIDENCE_ATTEMPT = (
-    'attempt-' + datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S') + '-' + uuid4().hex[:8])
+
+
+@pytest.fixture(scope='session')
+def evidence_directory():
+    # 不受pytest保留轮数清理，也不从全局数据库位置派生。
+    return Path(tempfile.mkdtemp(prefix='pc04a5d-',dir='/tmp'))
 
 
 def raw_table(db, table):
@@ -65,12 +70,12 @@ def graph(db, ident):
 
 
 @pytest.fixture
-def world(tmp_path, monkeypatch, request):
+def world(tmp_path, monkeypatch, request, evidence_directory):
     # 收集不依赖全局DB命名；实际写入只落pytest新库，仍拒绝非Mock执行。
     assert os.environ.get('USE_MOCK_INSTRUMENTS') == 'true'
     path = tmp_path / 'pc04a5d-world.sqlite'
     assert not path.exists()
-    evidence = tmp_path.parent / 'pc04a5d-receipts' / EVIDENCE_ATTEMPT
+    evidence = evidence_directory
     engine = create_engine(f'sqlite:///{path}', connect_args={'check_same_thread':False})
     Base.metadata.create_all(engine)
     factory = sessionmaker(bind=engine, expire_on_commit=False)
@@ -104,7 +109,12 @@ def world(tmp_path, monkeypatch, request):
                 receipts['final_mock_audit'] = audit_mock(db)
                 receipts['final_persistence'] = {table:raw_table(db,table) for table in
                     ('switch_topologies','switch_topology_revisions',*HISTORY)}
-                evidence.mkdir(parents=True,exist_ok=True)
+                archive = evidence / (request.node.name + '.sqlite')
+                with closing(sqlite3.connect(path)) as original, closing(sqlite3.connect(archive)) as archived:
+                    original.backup(archived)
+                receipts['database_archive'] = dict(original=str(path),path=str(archive),
+                    source_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                    sha256=hashlib.sha256(archive.read_bytes()).hexdigest())
                 (evidence / (request.node.name + '.json')).write_text(
                     json.dumps(receipts,ensure_ascii=False,sort_keys=True,default=str,indent=2))
                 app.dependency_overrides.clear(); app.dependency_overrides.update(previous)
