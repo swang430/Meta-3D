@@ -330,7 +330,8 @@ function withDeclaredPorts(Component: any) {
     const isConnectable=props.isConnectable!==false;
     useEffect(()=>updateInternals(props.id),[props.id,signature,updateInternals]);
     if (!parsed.declared && !Array.isArray(node.params.ports)) return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><Component {...props}/><Text size="xs" c="dimmed">{portCountLabel(node)}</Text></DeclaredPortsContext.Provider>;
-    return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><div className="topology-declared-node" style={{position:'relative'}}>
+    // 端口文字保持至少28px行距；只增显示高度，不改变端口顺序、方向和接线能力。
+    return <DeclaredPortsContext.Provider value={{declared:false,isConnectable}}><div className="topology-declared-node" style={{position:'relative',minHeight:(parsed.ports.length+1)*28}}>
       <DeclaredPortsContext.Provider value={{declared:true,isConnectable}}><Component {...props}/></DeclaredPortsContext.Provider>
       <Text size="xs" c="dimmed">{portCountLabel(node)}</Text>
       {parsed.ports.flatMap((port,index,list)=>{
