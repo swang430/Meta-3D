@@ -184,7 +184,7 @@ def copy_restore_receipts(client, source_id, lab_id, raw_source, audit):
 
 D07 使用 `test_pc04a5c_copy_roundtrip.py::full_bindings` 的完整模式方式；DB原图调用 `orchestrate_switch_topology` 与 `resolve_rf_chains` 核正式选择，inactive副本不为获得选图而激活。原/副本完整JSON分别调用 `_build_probe_binding` 与纯 `TopologyService(complete_graph).resolve_paths('mimo_ota')`，32路期望直接比source与manifest集合，不只断言数量。
 
-- [ ] 3. D08 逐路只在**明确标注的输出子图**调用 `resolve_saved_rf_path`/`loss_sources_for_path`/`loss_source_for_terminal`/`TopologyService` 检查 None；原/候选完整模式解析另存证，不拿子图冒充完整模式。首/中/末 B1/B16/B32 UI只抽样，不能代替本步骤32路机器核验。正反例至少包含错pin/反pair/缺一边、CE身份冲突，HTTP拒绝后零修订；0样本在独立小图而非改unknown候选。
+- [ ] 3. D08 逐路只在**明确标注的输出子图**调用 `resolve_saved_rf_path`/`loss_sources_for_path`/`loss_source_for_terminal`/`TopologyService` 检查 None；原/候选完整模式解析另存证，不拿子图冒充完整模式。首/中/末 B1/B16/B32 UI只抽样，不能代替本步骤32路机器核验。错pin/反pair/缺一边按实际结构校验检查HTTP拒绝后零修订；CE身份冲突允许保存，但必须由正式 `_build_probe_binding` 消费者抛出明确异常拒绝，保存不等于可执行，不宣称HTTP拒绝。0样本在独立小图而非改unknown候选。（2026-10-29主任务裁决C：不在验收片新增生产保存门。）
 - [ ] 4. 在独立、已活动的小型声明图创建明确 synthetic 旧 DiagnosticRun/Application/Selection 输入，所有绑定仍 Mock。`selection_snapshot` 必须取真实 `route-calibration-paths` 响应并用 `RouteSelection` 验证；不手拼伪 route digest、不patch qualification/freeze。根据当前 `RouteApplicationRecord` 完整构造：
 
 ```python
@@ -216,10 +216,10 @@ export DATABASE_URL="sqlite:///$acceptance_dir/test.sqlite"
 export USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true
 export LOG_DIR="$acceptance_dir/logs"
 .venv/bin/python -m tests.pc04a5d_browser_fixture --bootstrap-only --kind test
-.venv/bin/python -m pytest tests/test_pc04a5d_topology_acceptance.py tests/test_pc04a5a_topology_library.py tests/test_pc04a5b_topology_revisions.py tests/test_pc04a5b_topology_restore.py tests/test_pc04a5b_restore_contract.py tests/test_pc04a5c_independent_pa.py tests/test_pc04a5c_copy_roundtrip.py tests/test_pc04a4d_loss_truth.py tests/test_pc04a4c_internal_identity.py -q
+.venv/bin/python -m pytest tests/test_pc04a5d_topology_acceptance.py tests/test_pc04a5a_topology_library.py tests/test_pc04a5b_topology_revisions.py tests/test_pc04a5b_topology_restore.py tests/test_pc04a5b_restore_contract.py tests/test_pc04a5c_independent_pa.py tests/test_pc04a5c_copy_roundtrip.py tests/test_pc04a4d_loss_truth.py tests/test_pc04a4c_internal_identity.py -q -k 'not test_confirmed_whole_chain_not_readded_and_history_not_rewritten and not test_confirmed_source_history_projects_own_internal_snapshot_only'
 ```
 
-测试旧文件中的 memory/tmp_path fixture 不访问默认库；新全局 app DB 同样已bootstrap核Mock。旧5b confirmed/4a2 eligibility/freeze文件不加入该相关命令；前片测试结果只能作背景。
+测试旧文件中的 memory/tmp_path fixture 不访问默认库；新全局 app DB 同样已bootstrap核Mock。旧5b confirmed/4a2 eligibility/freeze文件不加入该相关命令；前片测试结果只能作背景。2026-10-29执行前核实4d/4c上述两个测试各有两参数例会调用 `real_capture`，原命令漏排除；主任务批准明确deselect共4例，不能写成这四例已通过。
 
 - [ ] 6. 写 task回执（命令/输出/exit/输入/每个分支），自查核心消费者真实命中；独立规格/质量审查后提交本任务。若只新增验收且GREEN，不做无意义的生产回退/变异；若批准新增产品修复或新守门，按仓库规则补核心变异并恢复输入hash。Task1不push、不最终全量。
 
