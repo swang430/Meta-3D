@@ -54,6 +54,42 @@ def test_passive_hops_and_calibration_references_remain_separate(client, configu
     assert route['calibration_nodes'][0]['params']['serial'] == 'REF1'
 
 
+def test_unrelated_uplink_reference_does_not_block_selected_downlink(client, configured, graph, db_session):
+    from app.services.calibration.route_calibration import resolve_explicit_route_selection
+
+    nodes = copy.deepcopy(graph.nodes)
+    edges = copy.deepcopy(graph.connections)
+    modes = copy.deepcopy(graph.operating_modes)
+    nodes += [dict(id='link', type='reference_antenna', params={}),
+              dict(id='bse', type='bse_port', params={})]
+    edges.append(dict(id='uplink', source='link', target='bse', source_pin='rf', target_pin='UL1'))
+    modes[0]['active_connections'].append('uplink')
+    graph.nodes, graph.connections, graph.operating_modes = nodes, edges, modes
+    db_session.commit()
+    before = copy.deepcopy((graph.nodes, graph.connections, graph.operating_modes))
+    for params in ({}, {'selection_scope':'individual'}):
+        response = paths(client, configured, graph, **params)
+        assert response.status_code == 200, response.text
+        route = response.json()[0]
+        assert route['node_ids'] == ['ce1','pad1','probe1v']
+        assert route['connection_ids'] == ['ce-pad','pad-probe']
+        assert route['calibration_node_ids'] == ['reference1','rx-cable1','sa1']
+    explicit = resolve_explicit_route_selection(db_session, configured.id, graph.id, 'mimo_ota',
+        'pad-probe', ['ce-pad','pad-probe'])
+    assert explicit.connection_ids == route['connection_ids']
+    assert (graph.nodes, graph.connections, graph.operating_modes) == before
+
+
+@pytest.mark.parametrize('kind', ['reference_antenna','receive_cable','signal_analyzer','air_path'])
+def test_reference_type_on_selected_downlink_still_rejected(client, configured, graph, db_session, kind):
+    nodes = copy.deepcopy(graph.nodes)
+    nodes[1]['type'] = kind
+    graph.nodes = nodes
+    db_session.commit()
+    response = paths(client, configured, graph)
+    assert response.status_code == 422, response.text
+
+
 @pytest.mark.parametrize('failure', ['branch','cycle','unknown_ce'])
 def test_ambiguous_or_unknown_paths_are_rejected(client, configured, graph, db_session, failure):
     nodes,connections,modes=copy.deepcopy(graph.nodes),copy.deepcopy(graph.connections),copy.deepcopy(graph.operating_modes)

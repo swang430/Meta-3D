@@ -204,17 +204,10 @@ def test_reference_type_on_selected_downlink_still_rejected(client, configured, 
 ```
 
 - [ ] **2. RED。** `cd api-service && .venv/bin/python -m pytest tests/test_pc04a2_route_selection.py -q`；新增无关上行正例应因现有422变红，记录实际输出。
-- [ ] **3. 最小修复。** 从 `for c in active` 删除节点类型/connection_scope 检查，仅保留 incoming/outgoing 建索引；在 `route_nodes,route_edges=resolve_saved_rf_path(...)` 后、switch_steps 前插入原条件，不改条件本身。
-
-```python
-for node in route_nodes:
-    if (node.get('params', {}).get('connection_scope') == 'calibration' or
-        node.get('type') in ('reference_antenna','receive_cable','signal_analyzer','air_path')):
-        raise ValueError('校准参考接线不能作为正常测试通路')
-```
+- [ ] **3. 最小修复。** 从 `for c in active` 删除节点类型/connection_scope 检查，仅保留 incoming/outgoing 建索引。复用 `resolve_saved_rf_path` 对 `path_nodes` 已有的相同参考类型/scope 禁入检查，不在调用后新增重复检查，不修改该解析器。实施裁决：既有权威所选防线已覆盖三入口，直接删除错误的全图检查。
 
 - [ ] **4. GREEN 与对称回归。** 运行 `tests/test_pc04a2_route_selection.py tests/test_pc04a4c_internal_routes.py tests/test_pc06a1_batch_plan.py`；补直接 explicit 调用正例并断言 connection_ids 相等。原分支/回路/端口缺损反例继续红于错误输入，不全局放宽正式集合。
-- [ ] **5. 核心变异。** 暂恢复全图检查，新无关上行正例应失败；删除新所选检查，非法参考类型测试应失败。每次恢复后 `git diff` 确认仅预期实现，不在变异版提交。
+- [ ] **5. 核心变异。** 暂恢复全图检查，新无关上行正例应失败；临时删除 `declared_rf_routes.py::resolve_saved_rf_path` 既有所选参考类型/scope 防线，非法参考类型测试应失败。第二项只验证既有防线，非本片新增；解析器不作为交付改动，每次恢复后核对文件 hash 和 `git diff`，确认其零变动且仅保留预期实现，不在变异版提交。
 - [ ] **6. 提交并独立审查。**
 
 ```bash
