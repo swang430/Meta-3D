@@ -185,8 +185,9 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
         const change=(field:'antenna'|'cable'|'cableSource',value:string)=>{clearPreview();setReferences(old=>[...old.filter(r=>r.chainId!==chainId||r.frequency!==frequency),{...ref,[field]:value}])}
         return <Card withBorder key={`${chainId}:${frequency}`} padding="xs"><Stack gap="xs"><Text size="sm">{chainId} · {frequency} MHz</Text>
           <TextInput label={`参考天线／位置 ${chainId} @${frequency}`} value={ref.antenna} onChange={e=>change('antenna',e.currentTarget.value)}/>
-          <TextInput label={`接收线损（dB） ${chainId} @${frequency}`} value={ref.cable} onChange={e=>change('cable',e.currentTarget.value)}/>
-          <TextInput label={`接收线依据 ${chainId} @${frequency}`} value={ref.cableSource} onChange={e=>change('cableSource',e.currentTarget.value)}/>
+          <TextInput label={`接收线损（dB） ${chainId} @${frequency}`} value={ref.cable} readOnly={mockEnabled} onChange={e=>change('cable',e.currentTarget.value)}/>
+          <TextInput label={`接收线依据 ${chainId} @${frequency}`} value={ref.cableSource} readOnly={mockEnabled} onChange={e=>change('cableSource',e.currentTarget.value)}/>
+          {mockEnabled&&<Text size="xs" c="dimmed">接收线损与依据由CSV提供，为只读；修改CSV后重新预览。</Text>}
         </Stack></Card>
       }))}
       {mockEnabled&&<Stack gap="xs"><Alert color="yellow">仅导入所选路径×频点，样本编号须完整1..N；参考天线／位置须先明确填写。CSV线损与来源为空时只留样本，不计算损耗。expected仅显示差值，非PASS。</Alert>

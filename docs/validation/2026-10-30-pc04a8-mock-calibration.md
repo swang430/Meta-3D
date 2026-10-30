@@ -1,6 +1,6 @@
 # PC-04A-8 全Mock校准软件验证（2026-10-30）
 
-范围：本地实现与隔离软件验收，未创建/合并PR、未部署，不代表真机、计量认证或现场B/HOLD解除。实际测试统计及最终输入冻结见文末；独立任务/累计审查与同一Ready PR外审由主代理后续执行。
+范围：本地实现与隔离软件验收，未创建/合并PR、未部署，不代表真机、计量认证或现场B/HOLD解除。实际统计及输入冻结见下文；累计审查F1局部修复待增量核验，同一Ready PR外审由主代理后续执行。
 
 ## 原r6：真实阻塞与声明缺项
 
@@ -33,7 +33,7 @@ API使用真实FastAPI路由、数据库、作业与HAL Mock实例，preview/sta
 ## 用户操作
 
 1. 在全Mock实验室选择已保存启用图。单路从完整校准通路选路，批量明确选择路径与频点；填写参考天线身份、极化与位置并核对安全条件。
-2. 单路主动开启“模拟演练样本”再填写每样本三功率；默认关闭，不自动随机生成数值。批量主动开启CSV模式，导入所选路径×频点完整唯一的样本矩阵。CSV列为 `chain_id,frequency_mhz,sample_index,source_before_dbm,received_dbm,source_after_dbm,receive_cable_loss_db,receive_cable_source,expected_loss_db`。
+2. 单路主动开启“模拟演练样本”再填写每样本三功率；默认关闭，不自动随机生成数值。批量主动开启CSV模式，导入所选路径×频点完整唯一的样本矩阵。CSV模式的接收线损/依据为只读，修改CSV后重新预览；参考身份仍须明确填写，普通模式线损/依据可编辑。CSV列为 `chain_id,frequency_mhz,sample_index,source_before_dbm,received_dbm,source_after_dbm,receive_cable_loss_db,receive_cable_source,expected_loss_db`。
 3. 样本编号完整1..N，必需数字不能空、bool、NaN/Inf；每组线损/来源/expected一致。参考身份先明确填写。预览后再次明确开始；等待时重新输入当前参考位置并勾选当前步骤确认，不能重用旧transition。
 4. 从服务器历史读取模拟结果，点击“下载模拟演练 CSV（非正式报告）”。每样本一行，null空白、0保留，带run/Lab/chain/frequency、来源、处理时间与formal=false。文件是浏览器Blob演练导出，不是服务器签发的正式报告。
 
@@ -82,4 +82,12 @@ Task1–3生产消费者审计与局部变异记录保留在本机SDD报告；�
 
 仅停止已核PID/cwd的本任务API57981、Vite58044；后续实际 `ports-after-stop.txt` 为0字节、lsof退出1，非仅凭SIGTERM推断。没有删除数据库或关用户Chrome/默认服务。
 
-本地实现/验收已留痕，仍待独立任务/累计审查与同一Ready PR外审，未部署。未验：真机/现场接线、真实仪器停发及计量追溯、正式采用资格、原图完整校准、B/HOLD、PR外审和部署。
+本地实现/验收已留痕，累计审查F1局部修复待增量核验，仍待同一Ready PR外审，未部署。未验：真机/现场接线、真实仪器停发及计量追溯、正式采用资格、原图完整校准、B/HOLD、PR外审和部署。
+
+### 累计审查F1局部修复验证
+
+基准 `5e55716a`。真实浏览器在新 `/tmp/pc04a8-SXaPB5/browser.sqlite` 全Mock世界仅选择synthetic单路b、2595 MHz、2样本做preview，不启动采集。RED实际见表单 `2 / CSV cable` 可改成 `3 / edited cable`，随后HTTP请求及表单被CSV重置为 `2 / CSV cable`；只读断言exit1。只给两个字段增加 `readOnly={mockEnabled}` 并提示“修改CSV后重新预览”，未加状态或双向同步。
+
+GREEN实际核验：CSV模式两字段不可编辑，真实键盘输入也不改变值，参考身份仍可编辑；修改CSV为 `3 / new CSV cable` 后重新预览，实际POST发送新值及新参考身份；关闭CSV后两字段可编辑，普通预览发送 `4 / manual cable` 且不带 `mock_inputs`。39条GUI回归通过，build成功11.94秒，原warnings保留。证据为 `output/playwright/pc04a8-final-fix/` 的RED/GREEN DOM、截图和真实preview请求/响应；实现输入与命令详见本机SDD `final-fix-report.md`。待原累计审查者增量核验。
+
+本次只改GUI编辑条件和本文/计划状态；后端生产、测试、契约和依赖未变，不重复后端全量。上述Task4的32路浏览器及唯一全量仍归属原输入；**新GUI字节已变化，不称与旧32路/全量GUI输入同hash**，只限定复用未受影响的后端与矩阵证据，本次差异由单路真实交互及GUI回归/构建覆盖。既有F2“成功continue后旧人工错误提示残留”未修，不自动加入backlog。
