@@ -10,10 +10,18 @@
 
 **Spec:** `docs/design/2026-10-30-pc04a8-mock-calibration.md`（用户已确认）。
 
+**实施状态（2026-10-30）：** Task1–3已本地实现并通过独立任务审查；Task4已执行API/浏览器64组合320样本对账、相关回归及唯一全后端，3个历史门失败保留。下面Task1–3原步骤保留为施工清单，不代替各提交与审查记录；实跑统计及输入复用边界以[验证摘要](../validation/2026-10-30-pc04a8-mock-calibration.md)为准。待Task4/累计独立审查和PR外审，未PR、未部署。
+
+- [x] Task1：选路窄修，本地实现/独立任务审查。
+- [x] Task2：显式输入、共享公式、来源/采用隔离，本地实现/独立任务审查。
+- [x] Task3：GUI/CSV，本地实现/独立任务审查；初始Node RED原stdout未由Task4独立核验。
+- [x] Task4：本地32路API/浏览器演练与唯一全量执行，实际失败/未验保留；全量后只修测试建目录命名并定点审计，不重跑全量。
+- [ ] Task4/累计独立审查、同一Ready PR外审及发布；原图缺口和B/HOLD仍未完成。
+
 ## Global Constraints
 
 - 本片 P1、WIP=1、一个 PR；四任务串行，每任务完成后由主代理安排独立规格与质量审查，再进入下一任务。
-- 本文基准为 `codex/pc04a8-mock-calibration`、`7492488b`。本次只编写计划；下面代码、测试和验收均未执行。
+- 计划编写基准为 `codex/pc04a8-mock-calibration`、`7492488b`；实际实现与验收输入另存冻结清单，不能把计划代码当执行证据。
 - “未提供模拟输入时保留原命令预览兼容行为，不自动生成数值。”
 - “缺接收线缆值/来源不计算损耗、不填0。”
 - “模拟结果保持simulated与formal_eligible=false，并显式保存模拟输入来源。”
@@ -529,9 +537,9 @@ export default mergeConfig(base,defineConfig({server:{host:'127.0.0.1',port:1514
 - Create: `docs/validation/2026-10-30-pc04a8-mock-calibration.md`
 - Update: 本计划复选框、设计状态、`docs/roadmap-first-call.md` PC-04A-8条目；不得将原图缺口标完成。
 
-**Interfaces:** 消费任务3的 `bootstrap_mock_database(kind: str = 'browser') -> dict`、`seed_world(db) -> dict` 和现有独立Vite配置。新增 `synthetic_graph_32() -> dict`；扩展 `seed_world` 在原最小世界外增加r6与synthetic32，保留原 `collection_id/lab_id/chamber_id` 返回键，并新增 `source_id/source_lab_id/matrix_id/matrix_lab_id/chain_to_index`。CLI `--bootstrap-only --kind {browser,test,full}`、路径守卫、全Mock审计不变。
+**Interfaces（实施裁决）：** 消费任务3的 `bootstrap_mock_database(kind: str = 'browser') -> dict` 和现有独立Vite配置；`seed_world(db, source_path: Path | None = None) -> dict`默认保留原最小世界并增加synthetic32，保留 `collection_id/lab_id/chamber_id`，新增 `matrix_id/matrix_lab_id/chain_to_index`。原r6仅由本地CLI显式 `--source-snapshot` 导入并返回source键及三数组hash，缺快照明确失败，常规测试不因本机快照缺失跳过矩阵。新增验收在子进程app导入前自建 `/tmp/pc04a8-.../test.sqlite`、全Mock/bootstrap与HAL审计，不要求CI默认数据库URL具有本机前缀。CLI原参数与路径守卫保持；矩阵等待上限600秒。非batch单路重入重读默认simultaneous整图scope，不复用批/individual摘要。
 
-- [ ] **1. 写32路图与独立期望表测试。** 用 `declaration_graph()` 深拷贝32次，节点/连接ID全部前缀 `synthetic-01-` 到 `synthetic-32-`，CE端口为B1..B32，probe编号为`(i-1)//2`、奇数V偶数H；显式路径ID、参考段ID同步前缀。保留PA标称20作为“不重复补偿”反例，线缆声明仅属synthetic。SA节点填当前隔离signalAnalyzer category ID；不得引用原r6真实声明。
+- [x] **1. 写32路图与独立期望表测试。** 用 `declaration_graph()` 深拷贝32次，节点/连接ID全部前缀 `synthetic-01-` 到 `synthetic-32-`，CE端口为B1..B32，probe编号为`(i-1)//2`、奇数V偶数H；显式路径ID、参考段ID同步前缀。保留PA标称20作为“不重复补偿”反例，线缆声明仅属synthetic。SA节点填当前隔离signalAnalyzer category ID；不得引用原r6真实声明。
 
 ```python
 def samples_for(route_index, frequency_index):
@@ -548,7 +556,7 @@ def expected_for(route_index, frequency_index):
 
 索引route_index=0..31、frequency_index=0..1，频点2595/3500MHz，仅演练输入不是仪器频段承诺。该矩阵同时含正损耗、负增益；已知0/未知线缆由任务2另例验证。expected_loss_db可填独立期望值用于显示差值；服务端只从样本算。
 
-- [ ] **2. 隔离前置与RED。** 复用任务3已有脚本的导入前路径/环境守卫及bootstrap审计，保持最小世界不变；新增两个实验室/暗室：一个只导入r6三个数组，一个synthetic32；原默认库不查写。fixture manifest追加source SHA256、三数组canonical hash与32路映射，继续保留输入commit/diff hash、类别/绑定/实际HAL分类。
+- [x] **2. 隔离前置与RED。** 复用任务3已有脚本的导入前路径/环境守卫及bootstrap审计，保持最小世界不变；新增两个实验室/暗室：一个只导入r6三个数组，一个synthetic32；原默认库不查写。fixture manifest追加source SHA256、三数组canonical hash与32路映射，继续保留输入commit/diff hash、类别/绑定/实际HAL分类。
 
 ```bash
 cd api-service
@@ -562,7 +570,7 @@ export LOG_DIR="$pc04a8_dir/logs"
 
 夹具/测试只用现有依赖；不要以安装包“修环境”，也不要改之前验收fixture。RED要捕获预期新矩阵/标记或尚未实现完整链路的断言，若任务2/3已使新增验收初次全绿，诚实记“集成验收初次绿”，不声称虚构RED。
 
-- [ ] **3. 完整生产API验收。** `test_pc04a8_acceptance.py` 通过真实 FastAPI路由（TestClient/ASGI不是浏览器）取synthetic32选路→构造64项preview→start→逐manual transition确认→终态→按run_id读64子记录，不能用默认history limit20代表全量。使用既有批HTTP测试的轮询方式，给出有界超时，失败保留父/子回执。断言：
+- [x] **3. 完整生产API验收。** `test_pc04a8_acceptance.py` 通过真实 FastAPI路由（TestClient/ASGI不是浏览器）取synthetic32选路→构造64项preview→start→逐manual transition确认→终态→按run_id读64子记录，不能用默认history limit20代表全量。使用既有批HTTP测试的轮询方式，给出有界超时，失败保留父/子回执。断言：
 
 ```python
 assert len(routes) == 32
@@ -583,11 +591,11 @@ for record in children:
 
 `chain_to_index`由图构造时的synthetic编号与最终终端connection_id manifest建立，不能用服务器result数值反推。请求、preview、parent、children、独立期望、actual diff、采用拒绝、正式freeze无confirmed_route分别保存JSON。记录父finalization真实值，f64_control_released null不补true。完成后再启动单路及取消重入验证，非完整/失败运行不得计入64项成功。
 
-- [ ] **4. 原r6诊断独立留痕。** 先对导入前三数组hash与读回hash相等；调用生产 `route-calibration-paths?selection_scope=individual`，保存实际HTTP状态/详情及每路参考段缺项。窄修后若仍422，记录具体生产阻塞；若200但参考段为空，报告“下行入口解除误挡，参考段未声明”，不能据此宣称当前图32路全流程完成。原r6不提交校准start来掩盖参考段缺失、不更改mode或节点。该结果与synthetic32对账物理分栏。
+- [x] **4. 原r6诊断独立留痕。** 先对导入前三数组hash与读回hash相等；调用生产 `route-calibration-paths?selection_scope=individual`，保存实际HTTP状态/详情及每路参考段缺项。窄修后仍422“CE源端存在回接”；另有32路静态参考边缺项，不宣称当前图32路全流程完成。原r6不提交校准start、不更改mode或节点。该结果与synthetic32对账物理分栏。
 
-- [ ] **5. 扩展真实浏览器验收到32路。** 使用任务3已创建的隔离fixture/Vite配置与启动命令，新建一个`/tmp/pc04a8-.../browser.sqlite`，先核端口空闲，再bootstrap和扩展后的seed；不复用或覆盖任务3的DB。真实浏览器选择manifest中的matrix_id/matrix_lab_id，按已验证的录入流程运行32路，保存截图、HTTP回执和下载CSV；64组合/320行及列值与同批JSON逐项比对。浏览器需确认当前transition，不制造接口回复。测试后仅停止本片新建PID，不关闭用户Chrome/既有服务。本步骤是矩阵扩展验收，不负责补做任务3的基本交互检查。
+- [x] **5. 扩展真实浏览器验收到32路。** 使用任务3已创建的隔离fixture/Vite配置与启动命令，新建一个`/tmp/pc04a8-.../browser.sqlite`，先核端口空闲，再bootstrap和扩展后的seed；不复用或覆盖任务3的DB。真实浏览器选择manifest中的matrix_id/matrix_lab_id，按已验证的录入流程运行32路，保存截图、HTTP回执和下载CSV；64组合/320行及列值与同批JSON逐项比对。浏览器需确认当前transition，不制造接口回复。测试后仅停止本片新建PID，不关闭用户Chrome/既有服务。本步骤是矩阵扩展验收，不负责补做任务3的基本交互检查。
 
-- [ ] **6. 稳定版相关回归、构建与最终全量。** 先跑前3任务相关集、GUI构建、独立审查修复；全部稳定后新建第三个SQLite，在app导入前隔离，bootstrap后核全Mock，再唯一一次：
+- [x] **6. 稳定版相关回归、构建与最终全量执行。** 相关425 passed/3历史门failed，GUI39 passed/build成功；最终全量8213 passed/3历史门failed/17 skipped。全量后只修新增测试建目录命名、定点bootstrap通过，产品与断言不变；旧全量不冒称同hash新版测试。完整命令：
 
 ```bash
 cd api-service
@@ -602,13 +610,13 @@ export LOG_DIR="$pc04a8_full_dir/logs"
 记录完整命令、环境（不含凭据）、输入commit/diff/hash、退出码、末尾passed/skipped/warnings/failed、日志位置。已有警告与新回归分别说明；不能为绿而跳过失败或改旧fixture。仅文档状态更改可复用同输入输出；产品修复后不得称旧全量覆盖新版。
 
 - [ ] **7. 文档、累计独立审查与单PR。** 验收文档含：原图缺项、synthetic32结果、用户操作指南、三态/公式/expected边界、软件/真机区别、完整消费者审计、测试输入清单与未验项。计划/设计/roadmap只写实际完成状态；创建Ready PR与R1/R2由主代理按AGENTS执行，最新HEAD仍有P1则续审。最终不自动部署。
-- [ ] **8. 最终提交。** `git commit -m "test: 完成模拟校准32路对账与隔离验收说明"`。提交内容限本片fixture/test/docs；不提交临时SQLite、日志、用户快照或凭据。
+- [x] **8. 最终提交。** `git commit -m "test: 完成模拟校准32路对账与隔离验收说明"`。提交内容限本片fixture/test/docs；不提交临时SQLite、日志、用户快照或凭据。
 
 ## 4. 自审与完成判据
 
 - [x] 计划规格覆盖自查：路径识别→任务1；样本/缺值/公式/来源/安全/采用冻结→任务2；CSV/显示/导出/锁→任务3；32×2×5、原图缺项、真实浏览器、最终全量→任务4。
 - [x] 计划类型一致自查：`mock_input: ExplicitMockInput | None`（单路）与`mock_inputs: tuple[BatchMockInput,...] | None`（批），最终均冻结为子request.mock_input；simulation_input_source仅服务器结果；expected仅请求字段，不是实测。
-- [x] 新接口在本计划定义，既有生产路径与测试路径只读核实；四个任务尚未执行。
+- [x] 新接口在本计划定义，既有生产路径与测试路径已核实；四任务本地实施/验证状态与未完成审查见开头及验证摘要，不将计划代码当执行证据。
 - [x] 已扫描空白实现占位；任务2不能在未覆盖正式消费者时通过独立审查。
 - [x] 读图/导入/校准生成/历史读取/采用/冻结/导出均已列生产关系及验收断言。
 - [x] 计划编写阶段未修改原用户数据或服务；r6不完整参考声明与synthetic32验收分开。
