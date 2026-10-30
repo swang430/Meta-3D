@@ -6,6 +6,10 @@ export const acquisitionStatus: Record<string, string> = {
   interrupted: '采集中断：停发状态需现场确认', incomplete: '记录不完整',
 }
 
+export function withSimulationMarker(label:string,simulated:boolean) {
+  return simulated?`${label} · 模拟演练（非实测）`:label
+}
+
 export function fixedRouteStillActive(runId: string | null, record: FixedRouteRecord | undefined) {
   if (!runId) return false
   if (!record || record.run_id !== runId) return true
@@ -27,7 +31,7 @@ export function fixedRouteDisplay(record: FixedRouteRecord) {
   const finite=(v:number|null|undefined)=>typeof v==='number'&&Number.isFinite(v)?v:null
   const net=finite(result?.net_loss_db),expected=finite(result?.request?.mock_input?.expected_loss_db)
   return {
-    label: simulated?'模拟演练（非实测）':acquisitionStatus[record.status] ?? '状态未知',
+    label: withSimulationMarker(acquisitionStatus[record.status] ?? '状态未知',simulated),
     mock:explicit?{netLoss:net,std:finite(result?.sample_std_db),expected,expectedDelta:net!==null&&expected!==null?net-expected:null}:undefined,
     source: reading(last?.source_after_dbm), received: reading(last?.received_dbm),
     cleanup: simulated ? '模拟模式，未操作真实仪器' : result?.cleanup_confirmed === true

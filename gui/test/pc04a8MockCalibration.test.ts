@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import test from 'node:test'
 import {parseMockCalibrationCsv,exportMockCalibrationCsv} from '../src/features/TopologyEditor/mockCalibrationCsv.ts'
 import {fixedRouteDisplay} from '../src/features/LabWorkspace/fixedRouteDisplay.ts'
+import * as routeDisplay from '../src/features/LabWorkspace/fixedRouteDisplay.ts'
 import {buildRouteAcquisitionRequest,buildBatchRequest} from '../src/features/TopologyEditor/routeCalibrationState.ts'
 const header='chain_id,frequency_mhz,sample_index,source_before_dbm,received_dbm,source_after_dbm,receive_cable_loss_db,receive_cable_source,expected_loss_db'
 const csv=[header,'route-a,2595,1,-20,-50,-18,2,"synthetic, cable",29','route-a,2595,2,-22,-52,-20,2,"synthetic, cable",29'].join('\n')
@@ -58,4 +59,25 @@ test('单路显式输入及批矩阵沿已存路径构造；旧模式不附模�
  assert.throws(()=>buildBatchRequest(scope as never,[route] as never,['route-a'],[2595],refs,fields,[{...input,chain_id:'unknown'}]))
  assert.throws(()=>buildRouteAcquisitionRequest({...scope,dirty:true} as never,route as never,fields,input))
  assert.throws(()=>buildRouteAcquisitionRequest(scope as never,route as never,fields,{samples:input.samples.slice(1)}))
+})
+test('单路详情和历史保留服务器状态，显式输入或驱动模拟来源只追加标记',()=>{
+ const labels={running:'正在采集',failed:'采集失败',cancelled:'已取消',interrupted:'采集中断：停发状态需现场确认',simulated:'模拟流程完成（无真实测量）',completed:'采集完成（未签发校准资格）',cleanup_unconfirmed:'可能仍在发射：停止未确认',incomplete:'记录不完整'}
+ const sources=[{request:{mock_input:{samples:[]}}},{simulation_input_source:'operator_supplied_synthetic'},{configuration:{binding:{execution_mode:'simulated'}}}]
+ for(const [status,label] of Object.entries(labels))for(const source of sources){
+  const shown=fixedRouteDisplay({status,result:{status,cleanup_confirmed:true,...source}} as never)
+  assert.equal(shown.label,`${label} · 模拟演练（非实测）`)
+  assert.equal(shown.source,'无实测读数')
+ }
+})
+test('普通单路状态文案不附加模拟标记，未知状态仍未知',()=>{
+ for(const [status,label] of Object.entries({running:'正在采集',failed:'采集失败',cancelled:'已取消',interrupted:'采集中断：停发状态需现场确认',completed:'采集完成（未签发校准资格）'}))
+  assert.equal(fixedRouteDisplay({status,result:{status}} as never).label,label)
+ assert.equal(fixedRouteDisplay({status:'unrecognized'} as never).label,'状态未知')
+})
+test('批逐项文案保留待执行运行失败取消中断和模拟完成，普通模式原样返回',()=>{
+ const labels=['待执行','运行中','测量中','批失败（保留其余结果）','已请求结束/取消','中断，需核验','模拟，不可采用','未知']
+ for(const label of labels){
+  assert.equal(routeDisplay.withSimulationMarker(label,true),`${label} · 模拟演练（非实测）`)
+  assert.equal(routeDisplay.withSimulationMarker(label,false),label)
+ }
 })

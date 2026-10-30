@@ -7,6 +7,7 @@ import { previewRouteCalibrationBatch, startRouteCalibrationBatch, fetchRouteCal
 import { useOperationalLab } from '../OperationalLab'
 import {parseMockCalibrationCsv} from './mockCalibrationCsv'
 import {MockCalibrationResult} from './MockCalibrationResult'
+import {withSimulationMarker} from '../LabWorkspace/fixedRouteDisplay'
 import { batchCanRelease, batchItemRoute, batchPureSimulationEnded, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
   buildBatchRequest, routeMatchesSaved, routeGraphMatchesSaved, type BatchStartAttempt, type BatchReferenceFields, type RouteScope } from './routeCalibrationState'
 
@@ -161,7 +162,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       {row.error&&<Alert color="red">{row.error}</Alert>}
       {row.items.map((item,index)=><Card key={item.item_id} withBorder padding="xs"><Stack gap={3}>
         <Text size="sm">{index+1}. {item.request.chain_id} · {item.request.frequency_mhz} MHz · {item.request.reference_antenna}</Text>
-        <Text size="sm" c={item.request.mock_input||item.status==='simulated'?'yellow':undefined}>{item.request.mock_input||item.status==='simulated'?'模拟演练（非实测）':statusLabels[item.status]??item.status}{index===row.current_index?'（当前项）':''}</Text>
+        <Text size="sm" c={item.request.mock_input||item.status==='simulated'?'yellow':undefined}>{withSimulationMarker(statusLabels[item.status]??item.status,Boolean(item.request.mock_input)||item.status==='simulated')}{index===row.current_index?'（当前项）':''}</Text>
         {item.error&&<Text size="xs" c="red">{item.error}</Text>}
         <Text size="xs">所属批{row.job_id}；{row.f64_control_released===true&&row.finalization_committed&&row.finalization_id?'父批外层释放及最终提交已确认，仍需服务器逐项核验采用资格':'外层释放／最终提交未确认，不可采用'}</Text>
         {item.status==='simulated'&&<Text size="xs" c="yellow">模拟项只能结束软件流程，不证明实物停发，不能正式采用。</Text>}
