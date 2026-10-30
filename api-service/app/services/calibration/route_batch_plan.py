@@ -6,7 +6,7 @@ from uuid import UUID
 from sqlalchemy.orm import Session
 from app.models.lab_profile import LabProfile
 from app.models.switch_topology import SwitchTopology
-from app.schemas.fixed_route_acquisition import FixedRouteRequest
+from app.schemas.fixed_route_acquisition import FixedRouteRequest, ExplicitMockInput
 from app.schemas.route_batch import BatchPlanRequest,BatchPlan,BatchPlanItem
 from app.services.calibration.configuration_scope import build_selected_route_calibration_scope
 from app.services.calibration.route_calibration import resolve_explicit_route_selection,route_switch_steps,RouteScopeConflict
@@ -46,6 +46,7 @@ def build_batch_plan(db: Session,lab_id: UUID,request: BatchPlanRequest,hal) -> 
     active_ids=mode.get('active_connections') or [c['id'] for c in topology.connections or [] if request.operating_mode in c.get('modes',[])]
     active=[c for c in topology.connections or [] if c.get('id') in active_ids]
     references={(r.chain_id,r.frequency_mhz):r for r in request.references}
+    mock_by_key={(r.chain_id,r.frequency_mhz):r for r in request.mock_inputs or ()}
     items=[]
     selected=[]
     for chain in sorted(request.chain_ids):
@@ -62,15 +63,21 @@ def build_batch_plan(db: Session,lab_id: UUID,request: BatchPlanRequest,hal) -> 
         selected.append((route,steps))
         for frequency in sorted(request.frequencies_mhz):
             ref=references[(chain,frequency)]
+            entry=mock_by_key.get((chain,frequency))
+            mock_input=ExplicitMockInput(samples=entry.samples,expected_loss_db=entry.expected_loss_db) if entry else None
             child=FixedRouteRequest(chain_id=chain,configuration_digest=scope.digest,topology_id=topology.id,
                 operating_mode=request.operating_mode,route_digest=route.route_digest,frequency_mhz=frequency,
                 requested_power_dbm=request.requested_power_dbm,reference_antenna=ref.reference_antenna,
                 receive_cable_loss_db=ref.receive_cable_loss_db,receive_cable_source=ref.receive_cable_source,
                 fixed_route_confirmed=request.fixed_route_confirmed,safety_confirmed=request.safety_confirmed,
-                sample_count=request.sample_count)
+                sample_count=request.sample_count,mock_input=mock_input)
             items.append(BatchPlanItem(item_id=_digest([chain,frequency]),request=child,route_selection=route,
                 configuration_scope=scope,switch_steps=steps,transition_kind='manual',
                 transition_reasons=('核对本项参考天线位置与接线；自动资格须由本次作业严格写读核验',)))
+    if request.mock_inputs is not None:
+        from app.services.calibration.fixed_route_jobs import require_explicit_mock_context
+        for item in items:
+            require_explicit_mock_context(db,lab_id,hal,switch_steps=item.switch_steps)
     # 批复用同一物理CE只能由同继电器不同位置的互斥保存映射实现，不把分配器当开关。
     from app.hal.propsim_f64 import RealPropsimF64Driver
     for index,(route,steps) in enumerate(selected):

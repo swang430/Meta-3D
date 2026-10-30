@@ -13,6 +13,7 @@ from app.services.calibration import route_batch_jobs as jobs
 from app.services.calibration.fixed_route_jobs import AcquisitionBusy
 from app.services.calibration.route_batch_plan import build_batch_plan
 from app.services.calibration.route_calibration import RouteScopeConflict
+from app.services.instrument_hal_service import get_hal_service
 
 router=APIRouter(prefix='/lab-profiles',tags=['拓扑逐通路批采集'])
 BASE='/{lab_profile_id}/route-calibration-batches'
@@ -43,7 +44,7 @@ def _record(db,row):
 @router.post(BASE+'/preview',response_model=BatchPlan)
 def preview(lab_profile_id: UUID,request: BatchPlanRequest,db: Session=Depends(get_db)):
     try:
-        return build_batch_plan(db,lab_profile_id,request,None)
+        return build_batch_plan(db,lab_profile_id,request,get_hal_service() if request.mock_inputs is not None else None)
     except RouteScopeConflict as exc:
         raise HTTPException(409,str(exc)) from exc
     except LookupError as exc:

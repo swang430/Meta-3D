@@ -7,6 +7,7 @@ from uuid import UUID, uuid4
 
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
+from sqlalchemy.exc import MultipleResultsFound
 
 from app.db.database import SessionLocal
 from app.hal.base import resolve_configured_tcpip_connection
@@ -19,6 +20,7 @@ from app.schemas.fixed_route_acquisition import FixedRouteRequest, FixedRouteRes
 from app.schemas.diagnostic_evidence import SequenceEvidence
 from app.services.calibration.configuration_scope import build_calibration_scope, build_selected_route_calibration_scope
 from app.services.calibration.fixed_route_acquisition import collect_fixed_route
+from app.services.calibration.fixed_route_evidence import has_explicit_mock_input
 from app.services.calibration.route_calibration import list_route_selections
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
 from app.services.instrument_hal_service import get_hal_service, get_real_driver_class, is_mock_driver
@@ -36,15 +38,57 @@ class AcquisitionBusy(ValueError):
     pass
 
 
+def require_explicit_mock_context(db: Session, lab_id: UUID, hal, *, switch_steps=()) -> None:
+    """只核对当前保存身份与运行驱动；不连接、不查询、不修补绑定。"""
+    lab = db.get(LabProfile, lab_id)
+    if lab is None or not lab.is_active or not lab.instrument_bindings:
+        raise ValueError('显式模拟需要当前实验室的完整Mock绑定')
+    seen = set()
+    try:
+        for binding in lab.instrument_bindings:
+            if not isinstance(binding, dict):
+                raise ValueError('实验室绑定缺损')
+            try:
+                category_id = UUID(binding['category_id'])
+            except (KeyError, TypeError, ValueError, AttributeError) as exc:
+                raise ValueError('实验室绑定身份缺损') from exc
+            if category_id in seen:
+                raise ValueError('实验室绑定重复')
+            seen.add(category_id)
+            category = db.get(InstrumentCategory, category_id)
+            connection = db.query(InstrumentConnection).filter_by(category_id=category_id).one_or_none()
+            model = db.get(InstrumentModel, category.selected_model_id) if category and category.selected_model_id else None
+            if (category is None or connection is None or model is None or model.category_id != category_id or
+                category.driver_mode != 'mock' or binding.get('driver_mode') != 'mock' or
+                str(category.selected_model_id) != binding.get('instrument_model_id') or
+                connection.endpoint != binding.get('connection_endpoint')):
+                raise ValueError('显式模拟需要一致的全Mock实验室绑定')
+        required = {'channelEmulator', 'signalAnalyzer'} | ({'rfSwitch'} if switch_steps else set())
+        for key in required:
+            category = db.query(InstrumentCategory).filter_by(category_key=key).one_or_none()
+            driver = hal.drivers.get(key) if hal is not None else None
+            if category is None or not category.is_active or category.id not in seen or not is_mock_driver(driver):
+                raise ValueError('显式模拟的参与仪器未获全Mock运行时证明')
+        for step in switch_steps:
+            if step.driver_mode != 'mock' or step.category_id not in seen:
+                raise ValueError('显式模拟的开关绑定不是Mock')
+    except MultipleResultsFound as exc:
+        raise ValueError('显式模拟的仪器配置不唯一') from exc
+
+
 def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest, hal, *, batch_item_context=None):
     """保存、绑定及装载驱动同次核对；零I/O，不将配置声明升级成实物确认。"""
     lab = db.get(LabProfile, lab_id)
     if lab is None or not lab.is_active:
         raise ValueError('实验室配置不存在或已停用')
+    if request.mock_input is not None and batch_item_context is None:
+        require_explicit_mock_context(db, lab_id, hal)
     try:
         if batch_item_context is not None:
             from app.services.calibration.route_batch_jobs import validated_batch_item
             item = validated_batch_item(db, lab_id, request, batch_item_context)
+            if request.mock_input is not None:
+                require_explicit_mock_context(db, lab_id, hal, switch_steps=item.switch_steps)
             snapshot = build_selected_route_calibration_scope(db, lab_id, request.operating_mode,
                 topology_id=item.route_selection.topology_id, chain_id=item.request.chain_id)
         else:
@@ -157,6 +201,8 @@ def record(row: DiagnosticRun, *, batch_context=None) -> FixedRouteRecord:
             value = None
     except (ValidationError, TypeError):
         pass  # 缺损历史返回incomplete；不从当前配置或仪器回填。
+    if value is not None and has_explicit_mock_input(value) and value.status == 'completed':
+        value = value.model_copy(deep=True, update={'status': 'simulated', 'cleanup_confirmed': None})
     status = value.status if value else 'incomplete'
     batch_id = value.states.get('batch_job_id') if value else None
     if batch_id and batch_context is not None:
@@ -243,6 +289,7 @@ async def _execute(result, token, cancel):
         detail = str(exc) or '采集已被服务取消'
         result.error = f'{result.error}；归还控制权或采集失败：{detail}' if result.error else detail
         result.net_loss_db = None
+        result.sample_std_db = None
     finally:
         # 持有互斥直到最终记录保存，失败仍释放，日志不声称已持久化成功。
         try:

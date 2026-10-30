@@ -26,6 +26,16 @@ def _number(raw):
     return value
 
 
+def calculate_sample_losses(samples: list[FixedRouteSample], receive_cable_loss_db: float | None,
+                            receive_cable_source: str | None) -> tuple[float | None, float | None]:
+    """与真实采集共用逐样本计算；缺线缆声明不补零，期待值不参与。"""
+    if receive_cable_loss_db is None or not receive_cable_source:
+        return None, None
+    losses = [(s.source_before_dbm + s.source_after_dbm) / 2 -
+              (s.received_dbm + receive_cable_loss_db) for s in samples]
+    return _number(str(statistics.mean(losses))), _number(str(statistics.stdev(losses)))
+
+
 async def collect_fixed_route(ce, sa, result: FixedRouteResult, *, output_port: int, cancel: asyncio.Event):
     """调用者持有实验控制权；只使用本次传入的驱动和冻结配置。"""
     request = result.request
@@ -93,6 +103,10 @@ async def collect_fixed_route(ce, sa, result: FixedRouteResult, *, output_port: 
         raise ValueError('F64输出口实测仍未就绪；不使用设定值或旧读数')
 
     try:
+        if request.mock_input is not None:
+            result.simulation_input_source = 'operator_supplied_synthetic'
+            if not (is_mock_driver(ce) and is_mock_driver(sa)):
+                raise ValueError('显式模拟样本仅允许全Mock驱动，未操作仪器')
         check_cancel()
         if simulated:
             if not (is_mock_driver(ce) and is_mock_driver(sa)):
@@ -102,6 +116,14 @@ async def collect_fixed_route(ce, sa, result: FixedRouteResult, *, output_port: 
                 result.exchanges.append(PowerExchange(instrument_id=ce.instrument_id if command.startswith('OUTPut:') else sa.instrument_id,
                     command=command, simulated=True))
                 await asyncio.sleep(0.05)
+            if request.mock_input is not None:
+                for sample in request.mock_input.samples:
+                    check_cancel()
+                    result.samples.append(FixedRouteSample(**sample.model_dump()))
+                result.net_loss_db, result.sample_std_db = calculate_sample_losses(
+                    result.samples, request.receive_cable_loss_db, request.receive_cable_source)
+                if result.net_loss_db is None:
+                    result.missing_items.append('缺少本频率的接收线缆损耗及来源，未计算整条路径损耗')
             result.status = 'simulated'
             result.cleanup_confirmed = None
             result.missing_items.append('模拟流程未连接仪器，不含真实功率、损耗或停发确认')
@@ -160,10 +182,8 @@ async def collect_fixed_route(ce, sa, result: FixedRouteResult, *, output_port: 
                 if request.receive_cable_loss_db is None or not request.receive_cable_source:
                     result.missing_items.append('缺少本频率的接收线缆损耗及来源，未计算整条路径损耗')
                 else:
-                    losses = [(s.source_before_dbm + s.source_after_dbm) / 2 -
-                        (s.received_dbm + request.receive_cable_loss_db) for s in result.samples]
-                    result.net_loss_db = _number(str(statistics.mean(losses)))
-                    result.sample_std_db = _number(str(statistics.stdev(losses)))
+                    result.net_loss_db, result.sample_std_db = calculate_sample_losses(
+                        result.samples, request.receive_cable_loss_db, request.receive_cable_source)
                 result.status = 'completed'
         finally:
             if started:
@@ -184,11 +204,14 @@ async def collect_fixed_route(ce, sa, result: FixedRouteResult, *, output_port: 
                 if stopped.error:
                     result.status, result.error = 'cleanup_unconfirmed', f'可能仍在发射；停止未确认：{stopped.error}'
                     result.net_loss_db = None
+                    result.sample_std_db = None
                 elif stopped.delayed_cancellation:
                     result.status, result.net_loss_db = 'cancelled', None
+                    result.sample_std_db = None
     except (Exception, asyncio.CancelledError) as exc:
         if result.status != 'cleanup_unconfirmed':
             result.status = 'cancelled' if isinstance(exc, asyncio.CancelledError) else 'failed'
             result.error = '已请求取消' if isinstance(exc, asyncio.CancelledError) else str(exc)
         result.net_loss_db = None
+        result.sample_std_db = None
     return result

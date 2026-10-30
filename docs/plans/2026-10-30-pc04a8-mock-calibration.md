@@ -347,9 +347,9 @@ for step in switch_steps:
 调用站点必须全部接通：
 
 1. `build_batch_plan` 展开完 items 后，explicit mock 时对每项 switch_steps 调守卫；API preview 仅 explicit 分支以 `get_hal_service()` 传入现有运行 HAL，不初始化它；无运行 HAL 返回422，不启动真实仪器。
-2. 单路 `resolve_configuration`：start 和 `_execute.validate_before_remote` 均已调用，守卫置于返回之前。
+2. 单路 `resolve_configuration`：start 和 `_execute.validate_before_remote` 均已调用；显式守卫在读Lab后（批路径在 `validated_batch_item` 取到冻结steps后）立即检查一次，后续型号、manifest及endpoint校验保留。现行 `InstrumentConnection.category_id` 有唯一约束，不为不可构造的重复行另加批异常机制或改变数据库约束。
 3. 批 start 通过 build + resolve；`_execute.validate` 对每项在 lease 前调守卫（含该项 switch_steps）。
-4. `_prepare_item`：人工等待后的现有 SessionLocal 重核块内、`apply_batch_switch_steps` 前调守卫；此时重新读 binding/category/driver，不用预览快照判是否 Mock。
+4. `_prepare_item`：人工等待后的现有 SessionLocal 重核块内、`apply_batch_switch_steps` 前，通过已有带 `BatchItemContext` 的 `resolve_configuration` 调守卫；此时重新读 binding/category/driver，不用预览快照判是否 Mock。批 `_execute.validate` 同样复用该调用，不另加重复守卫。
 5. `collect_fixed_route` 的参数驱动防线如上。
 
 固定直连不要求不存在的 rfSwitch 驱动；有实际 switch_steps 才要求该参与驱动。所有 Lab 保存 binding 必须显式 Mock，真实/auto/未知声明不允许显式样本模式；不影响旧普通请求对 auto 的现有策略。

@@ -3856,6 +3856,8 @@ export interface components {
             /** Preview Digest */
             preview_digest?: string | null;
             switch_wiring_confirmation?: components["schemas"]["BatchSwitchWiringConfirmation"] | null;
+            /** Mock Inputs */
+            mock_inputs?: components["schemas"]["BatchMockInput"][] | null;
         };
         /** BatchPlan */
         BatchPlan: {
@@ -3934,9 +3936,9 @@ export interface components {
             /** Reference Antenna */
             reference_antenna: string;
             /** Receive Cable Loss Db */
-            receive_cable_loss_db: number;
+            receive_cable_loss_db?: number | null;
             /** Receive Cable Source */
-            receive_cable_source: string;
+            receive_cable_source?: string | null;
         };
         /**
          * BatchSwitchStep
@@ -4350,6 +4352,7 @@ export interface components {
              * @default 5
              */
             sample_count: number;
+            mock_input?: components["schemas"]["ExplicitMockInput"] | null;
         };
         /** FixedRouteResult */
         FixedRouteResult: {
@@ -4410,6 +4413,8 @@ export interface components {
              * @constant
              */
             formal_eligible: false;
+            /** Simulation Input Source */
+            simulation_input_source?: "operator_supplied_synthetic" | null;
         };
         /** FixedRouteSample */
         FixedRouteSample: {
@@ -4424,6 +4429,33 @@ export interface components {
              * Format: date-time
              */
             host_time?: string;
+        };
+        /** MockPowerSample */
+        MockPowerSample: {
+            /** Source Before Dbm */
+            source_before_dbm: number;
+            /** Received Dbm */
+            received_dbm: number;
+            /** Source After Dbm */
+            source_after_dbm: number;
+        };
+        /** ExplicitMockInput */
+        ExplicitMockInput: {
+            /** Samples */
+            samples: components["schemas"]["MockPowerSample"][];
+            /** Expected Loss Db */
+            expected_loss_db?: number | null;
+        };
+        /** BatchMockInput */
+        BatchMockInput: {
+            /** Samples */
+            samples: components["schemas"]["MockPowerSample"][];
+            /** Expected Loss Db */
+            expected_loss_db?: number | null;
+            /** Chain Id */
+            chain_id: string;
+            /** Frequency Mhz */
+            frequency_mhz: number;
         };
         /** FixedRouteRecord */
         FixedRouteRecord: {
