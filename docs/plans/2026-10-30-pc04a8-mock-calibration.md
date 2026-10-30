@@ -10,7 +10,7 @@
 
 **Spec:** `docs/design/2026-10-30-pc04a8-mock-calibration.md`（用户已确认）。
 
-## 全局约束
+## Global Constraints
 
 - 本片 P1、WIP=1、一个 PR；四任务串行，每任务完成后由主代理安排独立规格与质量审查，再进入下一任务。
 - 本文基准为 `codex/pc04a8-mock-calibration`、`7492488b`。本次只编写计划；下面代码、测试和验收均未执行。
@@ -25,7 +25,7 @@
 - 全后端只在最终稳定测试输入执行一次；任何后续产品/测试输入变化按影响重新判断，不能复用不相同输入的全量。
 - 不宣称真机、计量认证、现场清理、B/HOLD 通过。测试/门意见等级遵循 AGENTS 第 0 条。
 
-任务1/2每次开启新的后端验证终端，先执行下列隔离前置，再执行任务中的 pytest 命令。这里复用现有5d bootstrap-only脚本及其路径守卫，目录每次新建，既有fixture源码不改；任务4改用本片专用脚本。不得省略前置直接让 app 读取默认DB。
+任务1/2每次开启新的后端验证终端，先执行下列隔离前置，再执行任务中的 pytest 命令。这里复用现有5d bootstrap-only脚本及其路径守卫，目录每次新建，既有fixture源码不改；任务3创建本片专用脚本，任务4沿用。不得省略前置直接让 app 读取默认DB。
 
 ```bash
 cd /Users/simon/.codex/worktrees/restore-editable-topology/MIMO-First/api-service
@@ -85,9 +85,10 @@ jq '[.connections[] | select(.source|startswith("hprobe"))]' /tmp/pc04a5d-BVAwTu
 | `services/calibration/fixed_route_method.py` + `schemas/calibration_method.py` | 另一个人工公式预览 | 没有自动采集结果消费，不改；不可用它替代本片生产入口 |
 | `hal/rs_fsva.py` | 真实功率样本生产 | 不改；模拟输入在服务层消费，不伪造 SCPI response |
 | `api/openapi.yaml`、`gui/src/types/api.generated.ts`、`gui/src/types/api.ts` | 四镜像类型契约 | 任务2同步 YAML/生成类型/手写别名；任务3服务函数仍传原请求并校验 lab/run/job identity |
-| `gui/src/features/LabWorkspace/fixedRouteDisplay.ts` | 旧实测展示与两处卡片 | 旧 `.loss/.source/.received` 不放行模拟；任务3新增独立 mock 展示结构，明确“模拟演练” |
+| `gui/src/features/LabWorkspace/fixedRouteDisplay.ts` | `RouteCalibrationPanel` 的自动采集结果格式化 | 旧 `.loss/.source/.received` 不放行模拟；任务3新增独立 mock 展示结构，明确“模拟演练” |
 | `RouteCalibrationPanel.tsx`、`RouteBatchPanel.tsx`、`routeCalibrationState.ts` | 保存图、锁、preview identity、历史/子项 | 任务3输入、CSV校验、结果/历史标记与导出；dirty/busy/unknown/跨对象迟到仍拒绝 |
-| `FixedRouteCalibrationCard.tsx`、`FixedRouteAcquisitionCard.tsx` | 老工作台展示/共享表单 | 共享展示保持标记；不新开第二套批入口，旧表单默认不发送 mock_input |
+| `FixedRouteCalibrationCard.tsx` | PC-02A人工公式预览，调用 `previewFixedRouteCalibration`，不是自动采集结果消费者 | 不改，不接入模拟结果组件，不新增采集历史入口 |
+| `FixedRouteAcquisitionCard.tsx::FixedRouteAcquisitionFields` | 自动采集共用参数字段；实际自动采集入口及结果位于 `RouteCalibrationPanel` | 本片保持现有字段组件；新增模拟输入放在拓扑面板，不恢复旧自动采集入口 |
 | 新演练 CSV | 只读服务器回存的 FixedRouteRecord | 任务3仅导出明确模拟输入记录，每行模拟标记及 formal_eligible=false；不新增正式报告/证书 |
 
 再次审计命令：
@@ -164,7 +165,7 @@ return self
 
 客户端不得传 `host_time/simulated/formal_eligible/measurement_provenance/simulation_input_source` 到 mock_input 或样本；`extra='forbid'` 拒绝。`Number` 拒 bool、数字字符串、NaN/Inf；样本数2–10不变。
 
-## 任务1：把参考节点禁入限定到所选下行路径
+## Task 1: 把参考节点禁入限定到所选下行路径
 
 **Files（均为“修”）:**
 - Modify: `api-service/app/services/calibration/route_calibration.py::_route_selections`
@@ -223,7 +224,7 @@ git commit -m "fix: 限定校准参考禁入检查到所选下行路径"
 
 任务1不承诺 r6 完整参考段，也不增加 `calibration_e2e` 支持。
 
-## 任务2：显式 Mock 契约、共享计算与全入口安全
+## Task 2: 显式 Mock 契约、共享计算与全入口安全
 
 **Files（修）:**
 - Modify: `api-service/app/schemas/fixed_route_acquisition.py`、`api-service/app/schemas/route_batch.py`
@@ -413,13 +414,14 @@ def test_http_explicit_mock_two_runs_do_not_gain_adoption(client, configured):
 - [ ] **9. GREEN/相关回归。** 执行新两文件及本任务 Files 所列旧测试，另跑 `tests/test_rule_gates.py` 受契约影响门；此时不全后端。核心变异仅暂去掉显式来源门、把 Lrx 加两次、移除首动作前 mock 检查；对应反例分别应失败，恢复核 hash/diff。
 - [ ] **10. 提交并独立审查。** 暂存本任务明确文件（包括 generated）后 `git commit -m "feat: 增加全Mock显式校准样本与来源隔离"`。提交说明附实际测试命令、结尾统计、输入版本，不提前写“全量通过”。
 
-## 任务3：界面显式样本、严格 CSV 导入及模拟结果导出
+## Task 3: 界面显式样本、严格 CSV 导入及模拟结果导出
 
 **Files（修）:**
 - Modify: `gui/src/features/TopologyEditor/RouteCalibrationPanel.tsx`、`RouteBatchPanel.tsx`、`routeCalibrationState.ts`
-- Modify: `gui/src/features/LabWorkspace/fixedRouteDisplay.ts`、`FixedRouteCalibrationCard.tsx`
+- Modify: `gui/src/features/LabWorkspace/fixedRouteDisplay.ts`
 - Create: `gui/src/features/TopologyEditor/mockCalibrationCsv.ts`、`MockCalibrationResult.tsx`
 - Create: `gui/test/pc04a8MockCalibration.test.ts`
+- Create: `api-service/tests/pc04a8_browser_fixture.py`、`gui/test/pc04a8.vite.config.ts`（本任务真实浏览器验证的最小隔离夹具与代理配置）
 - Test: `gui/test/pc04FixedRoute.test.ts`、`gui/test/pc06a1Batch.test.ts`、`gui/test/pc04a2RouteCalibration.test.ts`（三个路径均已核实存在）。
 
 **Interfaces（新模块）:**
@@ -438,6 +440,10 @@ export function exportMockCalibrationCsv(records: FixedRouteRecord[]): string
 ```
 
 `referenceAntennas` 按 chain_id 填写已核对参考天线/位置，CSV 无此列不能偷偷默认参考身份。批量导入先在表单已有路径/频点/参考身份之内校验；不会自动选择未知通路或另造 topology。
+
+**浏览器夹具接口:** 本任务创建 `bootstrap_mock_database(kind: str = 'browser') -> dict`、`seed_world(db) -> dict`；CLI支持 `--bootstrap-only --kind {browser,test,full}`，未指定bootstrap-only时先bootstrap再seed。`seed_world`先仅创建一个独立暗室、一个全Mock Lab及一个 `declaration_graph()` 合成单路图，返回 `collection_id/lab_id/chamber_id`；SA节点填隔离signalAnalyzer category ID。任务4扩展同一seed增加原r6诊断世界和synthetic32，不使本任务依赖任务4。
+
+新脚本沿已有pc04a5d结构，但自己检查 `/tmp/pc04a8-[A-Za-z0-9]+/(browser|test|full).sqlite`、父目录存在且DB不存在、Mock/BOOTSTRAP精确true，再导入app。流程为Base.metadata.create_all→bootstrap→configure_mock→audit_mock→verify_hal→seed_world→再次audit/verify；manifest记录输入commit/diff hash、类别/连接/绑定/实际HAL。只读复用既有 `configure_mock/audit_mock/verify_hal/declaration_graph`，不改其实现，不能复用固定pc04a5d前缀的 `checked_path`。
 
 - [ ] **1. 写解析/导出失败测试。** Node test沿现有方式，不增vitest。使用以下实际 CSV：
 
@@ -483,7 +489,7 @@ const key=(chain:string,frequency:number)=>JSON.stringify([chain,frequency])
 同组 cable/source/expected 必须逐行相等（空视为null），不同组独立；线损/来源空可输入显式模拟，预览明确“只留样本，不计算损耗”。每组 reference_antenna 来自 selection.referenceAntennas，不从expected或图标签猜。错误消息包含行号/组/字段；导入失败不得部分覆盖表单、旧preview必须失效。
 
 - [ ] **4. 接入现有状态。** 单路增加默认关闭的“模拟演练样本”开关与每样本三功率输入、可选expected。开启后 `buildRouteAcquisitionRequest` 额外接收 `mockInput?: ExplicitMockInput`；不开启省略字段。批构造函数尾部增加可选 `mockInputs?: BatchMockInput[]`；仅显式矩阵放宽表单线缆非空要求，schema语义与任务2完全相同。每次模式/路径/频点/样本数/CSV/公共值/expected修改都清preview；切换 Lab/topology/运行真实输入模式清模拟草稿，不能静默携带。dirty/busy/unknown/pending禁录入和启动，沿已有请求身份与幂等重试，不新增持久锁系统。
-- [ ] **5. 独立模拟结果组件。** `MockCalibrationResult({records}:{records:FixedRouteRecord[]})` 只接服务器记录；显示每条run、chain、freq、全样本、服务器net/std、expected与差值、模拟来源、时间性质、formal=false。`fixedRouteDisplay` 原实测字段继续不给模拟数值；新增 `mock` 返回字段仅在request.mock_input或simulation_input_source明确时出现，旧无样本preview仍“未计算”。两个面板及老工作台使用同一模拟结果组件，避免模拟数字旁边仍写“F64实测”。批历史/列表显示“模拟演练（非实测）”，不是只换颜色。
+- [ ] **5. 独立模拟结果组件。** `MockCalibrationResult({records}:{records:FixedRouteRecord[]})` 只接服务器记录；显示每条run、chain、freq、全样本、服务器net/std、expected与差值、模拟来源、时间性质、formal=false。`fixedRouteDisplay` 原实测字段继续不给模拟数值；新增 `mock` 返回字段仅在request.mock_input或simulation_input_source明确时出现，旧无样本preview仍“未计算”。组件仅接入现有 `RouteCalibrationPanel` 和 `RouteBatchPanel`，避免模拟数字旁边仍写“F64实测”。不接入PC-02A人工公式卡片；`FixedRouteAcquisitionCard.tsx`目前只有共享字段，不把它改造成结果卡片。批历史/列表显示“模拟演练（非实测）”，不是只换颜色。
 - [ ] **6. 导出。** 每样本一行，字段为 `run_id,lab_profile_id,chain_id,frequency_mhz,sample_index,source_before_dbm,received_dbm,source_after_dbm,receive_cable_loss_db,receive_cable_source,expected_loss_db,net_loss_db,sample_std_db,expected_delta_db,simulation_input_source,formal_eligible,host_time,time_basis`。source固定服务器来源、formal固定false、time_basis=`simulation_processing_time`；null为空单元格，0保留。拒绝导出缺run/result/source的记录；CSV引用逗号/引号/换行，文本字段首个非空白字符为`= + - @`时前置单引号防公式（数字列原样数值）。下载 `mock-calibration-<job或run UUID>.csv`，Blob URL下载后revoke；不是正式报告。
 - [ ] **7. GREEN与真实交互。**
 
@@ -493,18 +499,44 @@ node --experimental-strip-types --test test/pc04a8MockCalibration.test.ts test/p
 npm run build
 ```
 
-扩展测试覆盖quoted/CRLF/BOM、空线损null/已知0/负增益、expected不改服务器数值、公式转义、旧preview不导出模拟数值、status篡改仍mock标记、跨lab/run不串结果。浏览器使用任务4隔离服务：单路编辑→批CSV→逐项校验→服务端preview→明确start→history→下载检查；不 mock HTTP 响应。
-- [ ] **8. 提交与独立审查。** `git commit -m "feat: 提供模拟校准样本录入与演练CSV导出"`，仅暂存本任务明确文件。审查重点为用户看见的数据来源及锁行为，而非增加新的导航机制。
+扩展测试覆盖quoted/CRLF/BOM、空线损null/已知0/负增益、expected不改服务器数值、公式转义、旧preview不导出模拟数值、status篡改仍mock标记、跨lab/run不串结果。
 
-## 任务4：隔离32路完整对账、原图缺项回执、最终唯一全后端
+- [ ] **8. 创建并运行本任务最小隔离浏览器世界。** 按本任务的夹具接口实现新脚本后，先以 `lsof -nP -iTCP:18048 -iTCP:15148 -sTCP:LISTEN` 核端口空闲；占用则停止本次启动，选择空闲值同步本片配置及manifest，不杀已有服务。使用新SQLite且app导入前设置环境：
+
+```bash
+cd api-service
+pc04a8_browser_dir=$(mktemp -d /tmp/pc04a8-XXXXXX)
+export DATABASE_URL="sqlite:///$pc04a8_browser_dir/browser.sqlite"
+export USE_MOCK_INSTRUMENTS=true BOOTSTRAP_ON_STARTUP=true AUTH_MODE=disabled
+export LOG_DIR="$pc04a8_browser_dir/logs"
+.venv/bin/python -m tests.pc04a8_browser_fixture --kind browser
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18048
+```
+
+已核实默认Vite代理固定8000/8001，不能只改GUI端口；本任务创建独立 `gui/test/pc04a8.vite.config.ts`，沿现有5d配置形式：
+
+```typescript
+import {defineConfig,mergeConfig} from 'vite'
+import base from '../vite.config'
+export default mergeConfig(base,defineConfig({server:{host:'127.0.0.1',port:15148,strictPort:true,
+  proxy:{'/api/v1/ws':{target:'http://127.0.0.1:18048',ws:true},
+    '/api/v1/ota':{target:'http://127.0.0.1:18048'},
+    '/api':{target:'http://127.0.0.1:18048'}}}}))
+```
+
+另一终端从仓库根目录执行 `cd gui && node node_modules/vite/bin/vite.js --config test/pc04a8.vite.config.ts`。在真实浏览器对该合成单路图检查：单路显式样本编辑→同路两频点批CSV→逐项校验→服务端preview→明确start→history→下载并核对服务器JSON；至少核2组合、每组合5样本、10行CSV及模拟标签。保留截图、HTTP回执和导出，不能 mock HTTP响应。核dirty/busy/unknown/切换上下文不串结果，完成后仅停止本片新建PID，不关闭用户浏览器或既有服务。
+
+- [ ] **9. 提交与独立审查。** 上述本任务浏览器检查必须在独立审查前完成，不等待任务4。`git commit -m "feat: 提供模拟校准样本录入与演练CSV导出"`，仅暂存本任务明确文件。审查重点为用户看见的数据来源及锁行为，而非增加新的导航机制。
+
+## Task 4: 隔离32路完整对账、原图缺项回执、最终唯一全后端
 
 **Files（修）:**
-- Create: `api-service/tests/pc04a8_browser_fixture.py`、`test_pc04a8_acceptance.py`
-- Create: `gui/test/pc04a8.vite.config.ts`
+- Modify: `api-service/tests/pc04a8_browser_fixture.py`（扩展任务3已有夹具，保留最小世界和接口）
+- Create: `api-service/tests/test_pc04a8_acceptance.py`
 - Create: `docs/validation/2026-10-30-pc04a8-mock-calibration.md`
 - Update: 本计划复选框、设计状态、`docs/roadmap-first-call.md` PC-04A-8条目；不得将原图缺口标完成。
 
-**Interfaces:** 新 fixture导出 `bootstrap_mock_database(kind: str = 'browser') -> dict`、`synthetic_graph_32() -> dict`、`seed_world(db) -> dict`。CLI `--bootstrap-only --kind {browser,test,full}`，遵循已有 pc04a5d 脚本结构，但检查 `/tmp/pc04a8-.../` 且不改旧脚本；复用旧 `configure_mock/audit_mock/verify_hal/declaration_graph` 函数时仅新库调用，不能复用旧 `checked_path`（它绑定pc04a5d前缀）。
+**Interfaces:** 消费任务3的 `bootstrap_mock_database(kind: str = 'browser') -> dict`、`seed_world(db) -> dict` 和现有独立Vite配置。新增 `synthetic_graph_32() -> dict`；扩展 `seed_world` 在原最小世界外增加r6与synthetic32，保留原 `collection_id/lab_id/chamber_id` 返回键，并新增 `source_id/source_lab_id/matrix_id/matrix_lab_id/chain_to_index`。CLI `--bootstrap-only --kind {browser,test,full}`、路径守卫、全Mock审计不变。
 
 - [ ] **1. 写32路图与独立期望表测试。** 用 `declaration_graph()` 深拷贝32次，节点/连接ID全部前缀 `synthetic-01-` 到 `synthetic-32-`，CE端口为B1..B32，probe编号为`(i-1)//2`、奇数V偶数H；显式路径ID、参考段ID同步前缀。保留PA标称20作为“不重复补偿”反例，线缆声明仅属synthetic。SA节点填当前隔离signalAnalyzer category ID；不得引用原r6真实声明。
 
@@ -523,7 +555,7 @@ def expected_for(route_index, frequency_index):
 
 索引route_index=0..31、frequency_index=0..1，频点2595/3500MHz，仅演练输入不是仪器频段承诺。该矩阵同时含正损耗、负增益；已知0/未知线缆由任务2另例验证。expected_loss_db可填独立期望值用于显示差值；服务端只从样本算。
 
-- [ ] **2. 隔离前置与RED。** 新脚本严格验证路径不存在、父目录存在、Mock/BOOTSTRAP环境精确true后才import app；Base.metadata.create_all→bootstrap→configure_mock→audit_mock→verify_hal→seed_world→再次audit/verify。新建两实验室/暗室：一个只导入r6三个数组，一个synthetic32；原默认库不查写。fixture manifest记录source SHA256、三数组canonical hash、输入commit/diff hash、类别/绑定/实际HAL分类。
+- [ ] **2. 隔离前置与RED。** 复用任务3已有脚本的导入前路径/环境守卫及bootstrap审计，保持最小世界不变；新增两个实验室/暗室：一个只导入r6三个数组，一个synthetic32；原默认库不查写。fixture manifest追加source SHA256、三数组canonical hash与32路映射，继续保留输入commit/diff hash、类别/绑定/实际HAL分类。
 
 ```bash
 cd api-service
@@ -560,18 +592,7 @@ for record in children:
 
 - [ ] **4. 原r6诊断独立留痕。** 先对导入前三数组hash与读回hash相等；调用生产 `route-calibration-paths?selection_scope=individual`，保存实际HTTP状态/详情及每路参考段缺项。窄修后若仍422，记录具体生产阻塞；若200但参考段为空，报告“下行入口解除误挡，参考段未声明”，不能据此宣称当前图32路全流程完成。原r6不提交校准start来掩盖参考段缺失、不更改mode或节点。该结果与synthetic32对账物理分栏。
 
-- [ ] **5. 真实TCP服务与浏览器。** 新建第二个`/tmp/pc04a8-.../browser.sqlite`，同环境前置bootstrap/seed，使用独立端口18048/15148，先以 `lsof -nP -iTCP:18048 -iTCP:15148 -sTCP:LISTEN` 检查；占用则停止本次启动并选空闲端口同步本片配置/manifest，不杀已有服务。后端 `.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 18048`。已核实默认Vite代理固定8000/8001，不能只改GUI端口；新增本片独立配置，模式与既有`gui/test/pc04a5d.vite.config.ts`一致：
-
-```typescript
-import {defineConfig,mergeConfig} from 'vite'
-import base from '../vite.config'
-export default mergeConfig(base,defineConfig({server:{host:'127.0.0.1',port:15148,strictPort:true,
-  proxy:{'/api/v1/ws':{target:'http://127.0.0.1:18048',ws:true},
-    '/api/v1/ota':{target:'http://127.0.0.1:18048'},
-    '/api':{target:'http://127.0.0.1:18048'}}}}))
-```
-
-GUI命令：`cd gui && node node_modules/vite/bin/vite.js --config test/pc04a8.vite.config.ts`。真实浏览器按任务3流程录入并运行32路，保存截图、HTTP回执和下载CSV；64组合/320行及列值与同批JSON逐项比对。浏览器需确认当前transition，不制造接口回复。测试后仅停止本片新建PID，不关闭用户Chrome/既有服务。
+- [ ] **5. 扩展真实浏览器验收到32路。** 使用任务3已创建的隔离fixture/Vite配置与启动命令，新建一个`/tmp/pc04a8-.../browser.sqlite`，先核端口空闲，再bootstrap和扩展后的seed；不复用或覆盖任务3的DB。真实浏览器选择manifest中的matrix_id/matrix_lab_id，按已验证的录入流程运行32路，保存截图、HTTP回执和下载CSV；64组合/320行及列值与同批JSON逐项比对。浏览器需确认当前transition，不制造接口回复。测试后仅停止本片新建PID，不关闭用户Chrome/既有服务。本步骤是矩阵扩展验收，不负责补做任务3的基本交互检查。
 
 - [ ] **6. 稳定版相关回归、构建与最终全量。** 先跑前3任务相关集、GUI构建、独立审查修复；全部稳定后新建第三个SQLite，在app导入前隔离，bootstrap后核全Mock，再唯一一次：
 
