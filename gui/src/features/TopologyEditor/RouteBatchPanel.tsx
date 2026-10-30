@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Badge, Button, Card, Checkbox, Code, Group, MultiSelect, Stack, Text, TextInput, Title } from '@mantine/core'
+import { Alert, Badge, Button, Card, Checkbox, Code, Group, MultiSelect, Stack, Text, Textarea, TextInput, Title } from '@mantine/core'
 import type { BatchJobRecord, BatchPlan, BatchPlanRequest, FixedRouteRecord, RouteSelection } from '../../types/api'
 import { previewRouteCalibrationBatch, startRouteCalibrationBatch, fetchRouteCalibrationBatches, fetchRouteCalibrationBatch,
   continueRouteCalibrationBatch, cancelRouteCalibrationBatch, fetchFixedRouteAcquisition } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
+import {parseMockCalibrationCsv} from './mockCalibrationCsv'
+import {MockCalibrationResult} from './MockCalibrationResult'
 import { batchCanRelease, batchItemRoute, batchPureSimulationEnded, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
   buildBatchRequest, routeMatchesSaved, routeGraphMatchesSaved, type BatchStartAttempt, type BatchReferenceFields, type RouteScope } from './routeCalibrationState'
 
@@ -26,6 +28,9 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
   const [ids,setIds]=useState<string[]>([]),[frequencies,setFrequencies]=useState(''),[power,setPower]=useState(''),[samples,setSamples]=useState('5')
   const [fixed,setFixed]=useState(false),[safe,setSafe]=useState(false),[references,setReferences]=useState<BatchReferenceFields[]>([])
   const [plan,setPlan]=useState<BatchPlan|null>(null),[request,setRequest]=useState<BatchPlanRequest|null>(null)
+  const [mockEnabled,setMockEnabled]=useState(false),[csv,setCsv]=useState('')
+  const previewRequest=useRef<BatchPlanRequest|null>(null)
+  const inputVersion=useRef(0)
   const [operator,setOperator]=useState(''),[note,setNote]=useState(''),[error,setError]=useState('')
   const [manual,setManual]=useState(false),[position,setPosition]=useState(''),[transition,setTransition]=useState<{item:string;id:string}|null>(null)
   const [unknown,setUnknown]=useState(Boolean(sessions.get(key)?.attempt&&!sessions.get(key)?.jobId))
@@ -34,6 +39,8 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
   const history=useQuery({queryKey:['route-batches',scope.labId],queryFn:()=>fetchRouteCalibrationBatches(scope.labId),retry:false})
   const active=useQuery({queryKey:['route-batch',scope.labId,activeId],queryFn:()=>fetchRouteCalibrationBatch(scope.labId,activeId!),enabled:Boolean(activeId),retry:false})
   const viewed=useQuery({queryKey:['route-batch',scope.labId,viewId],queryFn:()=>fetchRouteCalibrationBatch(scope.labId,viewId!),enabled:Boolean(viewId),retry:false})
+  const viewedChildren=useQuery({queryKey:['route-batch-view-children',scope.labId,viewId,JSON.stringify(viewed.data?.items)],
+    queryFn:()=>Promise.all((viewed.data?.items??[]).flatMap(i=>i.run_id?[fetchFixedRouteAcquisition(scope.labId,i.run_id)]:[])),enabled:Boolean(viewed.data&&viewId),retry:false})
   const current=active.isError||active.isPaused?undefined:active.data
   const childIds=current?.items.flatMap(item=>item.run_id?[item.run_id]:[])??[]
   const children=useQuery({queryKey:['route-batch-children',scope.labId,current?.job_id,JSON.stringify(current?.items)],
@@ -56,8 +63,9 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     setManual(false);setPosition('');setTransition(item&&current?.transition_id?{item:item.item_id,id:current.transition_id}:null)
   },[current?.transition_id,current?.job_id])
   useEffect(()=>{
-    setPlan(null);setRequest(null);setOperator('');setNote('')
-  },[scope.graph,scope.mode])
+    inputVersion.current++;previewRequest.current=null;setPlan(null);setRequest(null);setOperator('');setNote('')
+  },[scope.graph,scope.mode,scope.dirty])
+  useEffect(()=>{setMockEnabled(false);setCsv('');setReferences([]);setIds([]);setViewId(null)},[scope.labId,scope.topologyId,scope.mode])
   useEffect(()=>{
     if(current&&batchCanRelease(current,childRecords)){setViewId(current.job_id);setActiveId(null);onSelectRoute(null)}
   },[current,children.data,onSelectRoute])
@@ -107,9 +115,10 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       if(row)track(row)
     }
   },[history.data])
-  const clearPreview=()=>{setPlan(null);setRequest(null);setOperator('');setNote('');setError('')}
+  const clearPreview=()=>{inputVersion.current++;previewRequest.current=null;setPlan(null);setRequest(null);setOperator('');setNote('');setError('')}
   const preview=useMutation({mutationFn:(body:BatchPlanRequest)=>previewRouteCalibrationBatch(scope.labId,body),
-    onSuccess:(value,body)=>{setPlan(value);setRequest(body);setError('')},onError:cause=>setError(message(cause))})
+    onMutate:body=>{previewRequest.current=body},
+    onSuccess:(value,body)=>{if(previewRequest.current===body&&value.lab_profile_id===scope.labId&&value.topology_id===scope.topologyId){setPlan(value);setRequest(body);setError('')}},onError:cause=>setError(message(cause))})
   const start=useMutation({mutationFn:(attempt:BatchStartAttempt)=>startRouteCalibrationBatch(scope.labId,attempt.request,attempt.key),
     onSuccess:track,onError:async(cause,attempt)=>{
       setUnknown(true);setError(`开始回执未确认：${message(cause)}。保留同一请求和幂等键；不要另起测量。`)
@@ -133,7 +142,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     setUnknown(true);start.mutate(attempt)
   }catch(cause){setError(message(cause))}}
   const frequencyList=frequencies.split(/[,，\s]+/).filter(Boolean).map(Number)
-  const formBlocked=blocked||unknown||Boolean(activeId)||scope.dirty||scope.mode!=='mimo_ota'
+  const formBlocked=blocked||unknown||Boolean(activeId)||scope.dirty||scope.mode!=='mimo_ota'||history.isPending||history.isError
   const tone=current?batchToneState(current,childRecords):'unknown'
   const waiting=Boolean(current&&['waiting_manual','paused_failure'].includes(current.status))
   const renderJob=(row:BatchJobRecord,readonly:boolean)=>{
@@ -152,7 +161,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       {row.error&&<Alert color="red">{row.error}</Alert>}
       {row.items.map((item,index)=><Card key={item.item_id} withBorder padding="xs"><Stack gap={3}>
         <Text size="sm">{index+1}. {item.request.chain_id} · {item.request.frequency_mhz} MHz · {item.request.reference_antenna}</Text>
-        <Text size="sm" c={item.status==='simulated'?'yellow':undefined}>{statusLabels[item.status]??item.status}{index===row.current_index?'（当前项）':''}</Text>
+        <Text size="sm" c={item.request.mock_input||item.status==='simulated'?'yellow':undefined}>{item.request.mock_input||item.status==='simulated'?'模拟演练（非实测）':statusLabels[item.status]??item.status}{index===row.current_index?'（当前项）':''}</Text>
         {item.error&&<Text size="xs" c="red">{item.error}</Text>}
         <Text size="xs">所属批{row.job_id}；{row.f64_control_released===true&&row.finalization_committed&&row.finalization_id?'父批外层释放及最终提交已确认，仍需服务器逐项核验采用资格':'外层释放／最终提交未确认，不可采用'}</Text>
         {item.status==='simulated'&&<Text size="xs" c="yellow">模拟项只能结束软件流程，不证明实物停发，不能正式采用。</Text>}
@@ -170,6 +179,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       <TextInput label="批量频点（MHz，逗号分隔）" value={frequencies} onChange={e=>{clearPreview();setFrequencies(e.currentTarget.value)}}/>
       <TextInput label="批量请求功率（dBm，不作实测值）" value={power} onChange={e=>{clearPreview();setPower(e.currentTarget.value)}}/>
       <TextInput label="每项采样数（2–10）" value={samples} onChange={e=>{clearPreview();setSamples(e.currentTarget.value)}}/>
+      <Checkbox label="批量模拟演练样本（CSV）" checked={mockEnabled} onChange={e=>{clearPreview();setMockEnabled(e.currentTarget.checked);setCsv('')}}/>
       {ids.flatMap(chainId=>frequencyList.filter(f=>Number.isFinite(f)&&f>0).map(frequency=>{
         const ref=references.find(r=>r.chainId===chainId&&r.frequency===frequency)??{chainId,frequency,antenna:'',cable:'',cableSource:''}
         const change=(field:'antenna'|'cable'|'cableSource',value:string)=>{clearPreview();setReferences(old=>[...old.filter(r=>r.chainId!==chainId||r.frequency!==frequency),{...ref,[field]:value}])}
@@ -179,13 +189,30 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
           <TextInput label={`接收线依据 ${chainId} @${frequency}`} value={ref.cableSource} onChange={e=>change('cableSource',e.currentTarget.value)}/>
         </Stack></Card>
       }))}
+      {mockEnabled&&<Stack gap="xs"><Alert color="yellow">仅导入所选路径×频点，样本编号须完整1..N；参考天线／位置须先明确填写。CSV线损与来源为空时只留样本，不计算损耗。expected仅显示差值，非PASS。</Alert>
+        <Text size="xs">列：chain_id,frequency_mhz,sample_index,source_before_dbm,received_dbm,source_after_dbm,receive_cable_loss_db,receive_cable_source,expected_loss_db</Text>
+        <TextInput label="选择模拟样本 CSV 文件" type="file" accept=".csv,text/csv" onChange={e=>{const file=e.currentTarget.files?.[0];clearPreview();setCsv('');const version=inputVersion.current;if(file)void file.text().then(text=>{if(inputVersion.current===version&&mounted.current)setCsv(text)}).catch(cause=>{if(inputVersion.current===version&&mounted.current)setError(message(cause))})}}/>
+        <Textarea label="模拟样本 CSV 内容" minRows={5} value={csv} onChange={e=>{clearPreview();setCsv(e.currentTarget.value)}}/>
+      </Stack>}
       <Checkbox label="已核对清单的固定接线条件" checked={fixed} onChange={e=>{clearPreview();setFixed(e.currentTarget.checked)}}/>
       <Checkbox label="已确认请求功率及现场安全条件" checked={safe} onChange={e=>{clearPreview();setSafe(e.currentTarget.checked)}}/>
-      <Button loading={preview.isPending} onClick={()=>{try{const body=buildBatchRequest(scope,paths,ids,frequencyList,references,{power,samples,fixed,safe});preview.mutate(body)}catch(cause){setError(message(cause))}}}>预览完整批清单</Button>
+      <Button loading={preview.isPending} onClick={()=>{clearPreview();try{
+        let refs=references,matrix:BatchPlanRequest['mock_inputs']|undefined
+        if(mockEnabled){
+          const antennas:Record<string,string>={}
+          for(const id of ids){const values=frequencyList.map(f=>references.find(r=>r.chainId===id&&r.frequency===f)?.antenna.trim()??'');if(!values[0]||values.some(v=>v!==values[0]))throw new Error(`${id}：CSV导入须先填写一致的已核对参考天线／位置`);antennas[id]=values[0]}
+          const imported=parseMockCalibrationCsv(csv,{chainIds:ids,frequenciesMhz:frequencyList,sampleCount:Number(samples),referenceAntennas:antennas})
+          matrix=imported.mockInputs;refs=imported.references.map(r=>({chainId:r.chain_id,frequency:r.frequency_mhz,antenna:r.reference_antenna,cable:r.receive_cable_loss_db==null?'':String(r.receive_cable_loss_db),cableSource:r.receive_cable_source??''}))
+        }
+        const body=buildBatchRequest(scope,paths,ids,frequencyList,refs,{power,samples,fixed,safe},matrix??undefined)
+        if(mockEnabled)setReferences(refs)
+        preview.mutate(body)
+      }catch(cause){setError(message(cause))}}}>预览完整批清单</Button>
     </Stack></fieldset>
     {scope.dirty&&<Alert color="yellow">未保存草稿，批预览与开始均禁用。</Alert>}
     {plan&&request&&<Card withBorder data-testid="batch-plan"><Stack gap="xs"><Text fw={600}>服务器完整清单：{plan.items.length}项</Text>
       {plan.items.map((item,index)=>{const selected=batchItemRoute(item);return <Card key={item.item_id} padding="xs"><Text size="sm">{index+1}. {item.request.chain_id} · {item.request.frequency_mhz} MHz · {item.request.reference_antenna}</Text>
+        {item.request.mock_input&&<Text size="sm" c="yellow">模拟演练（非实测）· {item.request.mock_input.samples.length}样本 · {item.request.receive_cable_loss_db==null||!item.request.receive_cable_source?'只留样本，不计算损耗':'只计算演练损耗，formal=false'}</Text>}
         <Text size="xs">正常段{item.route_selection.node_ids.join(' → ')}；参考段{item.route_selection.calibration_node_ids.join(' → ')}；{item.transition_reasons.join('；')}</Text>
         <Button size="xs" variant="subtle" disabled={Boolean(activeId)||!routeMatchesSaved(scope,selected)} onClick={()=>onSelectRoute(selected??null)}>原图高亮此项正常及参考段</Button></Card>})}
       {plan.switch_scope_digest&&<Stack gap="xs"><Text size="xs" style={{overflowWrap:'anywhere'}}>开关范围摘要：{plan.switch_scope_digest}</Text>
@@ -206,6 +233,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     {error&&<Alert color="red">{error}</Alert>}
     {activeId&&(!current||active.isError)&&<Alert color="yellow">活动批状态未知，保留锁与取消入口，不认为停发、释放或最终提交。</Alert>}
     {current&&renderJob(current,false)}
+    {current&&<MockCalibrationResult key={`${scope.labId}:${current.job_id}`} records={childRecords.filter(r=>r.lab_profile_id===scope.labId&&current.items.some(i=>i.run_id===r.run_id))}/>}
     {waiting&&current&&<Alert color={tone==='simulated'?'yellow':'blue'} data-testid="batch-manual"><Stack gap="xs">
       <Text>{current.status==='paused_failure'?'失败暂停：确认后只跳过失败项，不重测':'等待当前参考位置与接线确认'}</Text>
       <Text>{tone==='simulated'?'模拟人工步骤；未确认实物停发或换线安全':tone==='confirmed'?'已读取所有已启动项的真实单音清理确认；仅可核对此步骤接线／位置':'单音清理未知，禁止换线或移动参考天线，也不允许继续。'}</Text>
@@ -219,9 +247,10 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     {activeId&&<Button color="red" loading={cancel.isPending} onClick={()=>cancel.mutate()}>取消批校准并等待真实停发／释放</Button>}
     {history.isError&&<Alert color="red">批历史读取失败：{message(history.error)}；没有据此解锁。</Alert>}
     <Title order={5}>批历史（不覆盖活动身份）</Title>
-    {history.data?.map(row=><Group key={row.job_id} justify="space-between"><Text size="xs">{row.job_id} · {statusLabels[row.status]}</Text><Button size="xs" variant="subtle" onClick={()=>setViewId(row.job_id)}>只读查看</Button></Group>)}
+    {history.data?.map(row=><Group key={row.job_id} justify="space-between"><Text size="xs">{row.job_id} · {statusLabels[row.status]}{row.items.some(i=>i.request.mock_input||i.status==='simulated')?' · 模拟演练（非实测）':''}</Text><Button size="xs" variant="subtle" onClick={()=>setViewId(row.job_id)}>只读查看</Button></Group>)}
     {!history.data?.length&&!history.isError&&<Text size="sm">暂无批历史；不是停发或未启动的证明。</Text>}
     {viewed.isError&&<Alert color="red">只读历史读取失败：{message(viewed.error)}</Alert>}
     {viewed.data&&!viewed.isError&&renderJob(viewed.data,true)}
+    {viewed.data&&!viewed.isError&&!viewed.isPaused&&!viewedChildren.isError&&!viewedChildren.isPaused&&<MockCalibrationResult key={`${scope.labId}:${viewId}`} records={(viewedChildren.data??[]).filter(r=>r.lab_profile_id===scope.labId&&viewed.data!.items.some(i=>i.run_id===r.run_id))}/>}
   </Stack>
 }

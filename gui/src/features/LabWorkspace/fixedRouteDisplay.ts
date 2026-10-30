@@ -16,15 +16,19 @@ export function fixedRouteStillActive(runId: string | null, record: FixedRouteRe
 export function fixedRouteDisplay(record: FixedRouteRecord) {
   const result = record.result
   const binding = result?.configuration?.binding
-  const simulated = record.status === 'simulated' || (typeof binding === 'object' && binding !== null
+  const explicit=Boolean(result?.request?.mock_input||result?.simulation_input_source)
+  const simulated = explicit || record.status === 'simulated' || (typeof binding === 'object' && binding !== null
     && !Array.isArray(binding) && 'execution_mode' in binding && binding.execution_mode === 'simulated')
-  const measured = record.status === 'completed' && result?.status === 'completed' && result.cleanup_confirmed === true
+  const measured = !simulated && record.status === 'completed' && result?.status === 'completed' && result.cleanup_confirmed === true
   const samples = measured ? result.samples ?? [] : []
   const last = samples.at(-1)
   const reading = (value: number | undefined | null) => typeof value === 'number' && Number.isFinite(value) ? `${value.toFixed(2)} dBm` : '无实测读数'
   const loss = measured ? result.net_loss_db : null
+  const finite=(v:number|null|undefined)=>typeof v==='number'&&Number.isFinite(v)?v:null
+  const net=finite(result?.net_loss_db),expected=finite(result?.request?.mock_input?.expected_loss_db)
   return {
-    label: acquisitionStatus[record.status] ?? '状态未知',
+    label: simulated?'模拟演练（非实测）':acquisitionStatus[record.status] ?? '状态未知',
+    mock:explicit?{netLoss:net,std:finite(result?.sample_std_db),expected,expectedDelta:net!==null&&expected!==null?net-expected:null}:undefined,
     source: reading(last?.source_after_dbm), received: reading(last?.received_dbm),
     cleanup: simulated ? '模拟模式，未操作真实仪器' : result?.cleanup_confirmed === true
       ? '已确认停止本次单音' : '尚未确认；请结合现场状态处理',
