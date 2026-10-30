@@ -10,6 +10,19 @@ Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max
 Number = Annotated[float, Field(strict=True, allow_inf_nan=False)]
 
 
+class MockPowerSample(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    source_before_dbm: Number
+    received_dbm: Number
+    source_after_dbm: Number
+
+
+class ExplicitMockInput(BaseModel):
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    samples: tuple[MockPowerSample, ...] = Field(min_length=2, max_length=10)
+    expected_loss_db: Number | None = None
+
+
 class FixedRouteRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     chain_id: Text
@@ -26,6 +39,13 @@ class FixedRouteRequest(BaseModel):
     fixed_route_confirmed: Literal[True]
     safety_confirmed: Literal[True] = Field(description='操作员已确认专用校准仿真、固定接线、无其它混入信号及允许功率')
     sample_count: int = Field(default=5, ge=2, le=10, strict=True)
+    mock_input: ExplicitMockInput | None = None
+
+    @model_validator(mode='after')
+    def explicit_sample_count(self):
+        if self.mock_input is not None and len(self.mock_input.samples) != self.sample_count:
+            raise ValueError('模拟样本数必须等于本次sample_count')
+        return self
 
     @field_validator('fixed_route_confirmed', 'safety_confirmed', mode='before')
     @classmethod
@@ -70,6 +90,7 @@ class FixedRouteResult(BaseModel):
     missing_items: list[str] = Field(default_factory=lambda: ['仪器绝对准确度、参考件证书及完整不确定度预算仍需现场核验；本记录不签发校准资格'])
     method: Literal['fixed_route_port_to_reference_v1'] = 'fixed_route_port_to_reference_v1'
     formal_eligible: Literal[False] = False
+    simulation_input_source: Literal['operator_supplied_synthetic'] | None = None
 
     @model_validator(mode='after')
     def require_version2_route_snapshot(self):

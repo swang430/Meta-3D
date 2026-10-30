@@ -4,7 +4,7 @@ from typing import Literal
 from uuid import UUID
 
 from pydantic import AwareDatetime,BaseModel,ConfigDict,Field,JsonValue,model_validator,field_validator
-from app.schemas.fixed_route_acquisition import FixedRouteRequest,Text,Number
+from app.schemas.fixed_route_acquisition import FixedRouteRequest,ExplicitMockInput,Text,Number
 from app.schemas.route_calibration import RouteSelection
 from app.schemas.calibration_scope import CalibrationScopeSnapshot
 
@@ -14,8 +14,13 @@ class BatchReference(BaseModel):
     chain_id: Text
     frequency_mhz: Number=Field(gt=0)
     reference_antenna: Text
-    receive_cable_loss_db: Number
-    receive_cable_source: Text
+    receive_cable_loss_db: Number | None = None
+    receive_cable_source: Text | None = None
+
+
+class BatchMockInput(ExplicitMockInput):
+    chain_id: Text
+    frequency_mhz: Number=Field(gt=0)
 
 
 class BatchSwitchWiringConfirmation(BaseModel):
@@ -40,6 +45,7 @@ class BatchPlanRequest(BaseModel):
     safety_confirmed: Literal[True]
     preview_digest: str | None=Field(default=None,pattern=r'^[a-f0-9]{64}$')
     switch_wiring_confirmation: BatchSwitchWiringConfirmation | None=None
+    mock_inputs: tuple[BatchMockInput,...] | None=Field(default=None,min_length=1)
 
     @field_validator('fixed_route_confirmed','safety_confirmed',mode='before')
     @classmethod
@@ -59,6 +65,14 @@ class BatchPlanRequest(BaseModel):
             raise ValueError('每条通路每个频点必须有唯一参考件与线缆来源')
         if self.fixed_route_confirmed is not True or self.safety_confirmed is not True:
             raise ValueError('必须明确确认固定接线和安全条件')
+        if self.mock_inputs is None:
+            if any(r.receive_cable_loss_db is None or not r.receive_cable_source for r in self.references):
+                raise ValueError('普通批采集每个频点必须有线缆损耗与来源')
+        else:
+            mock_keys=[(r.chain_id,r.frequency_mhz) for r in self.mock_inputs]
+            if (len(mock_keys)!=len(set(mock_keys)) or set(mock_keys)!=set(keys) or
+                any(len(r.samples)!=self.sample_count for r in self.mock_inputs)):
+                raise ValueError('显式模拟矩阵须完整唯一，且每组样本数必须一致')
         return self
 
 

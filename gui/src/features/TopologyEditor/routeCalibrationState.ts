@@ -1,5 +1,5 @@
 import type { FixedRouteRequest, FixedRouteRecord, RouteSelection, RouteApplicationPreview, ConfirmRouteApplication,
-  BatchPlanRequest, BatchPlan, BatchJobRecord, BatchContinueRequest } from '../../types/api'
+  BatchPlanRequest, BatchPlan, BatchJobRecord, BatchContinueRequest, ExplicitMockInput, BatchMockInput } from '../../types/api'
 import type { SwitchTopology } from '../../api/switchTopologyService'
 import { getDraftModeConnectionIds } from './topologyDraft'
 
@@ -35,13 +35,14 @@ export function routeGraphMatchesSaved(graph:SwitchTopology,route:RouteSelection
     String(root.params?.ce_port??(root.type==='ce_port'?root.label:'' )).trim()===route.ce_port
 }
 
-export function buildRouteAcquisitionRequest(scope:RouteScope,route:RouteSelection,form:RouteFields):FixedRouteRequest {
+export function buildRouteAcquisitionRequest(scope:RouteScope,route:RouteSelection,form:RouteFields,mockInput?:ExplicitMockInput):FixedRouteRequest {
   const frequency=Number(form.frequency),power=Number(form.power),count=Number(form.samples)
   if (!routeMatchesSaved(scope,route) || !form.frequency.trim() || !form.power.trim() ||
     !Number.isFinite(frequency) || frequency<=0 || !Number.isFinite(power) || power< -100 || power>0 ||
     !Number.isInteger(count) || count<2 || count>10 || !form.antenna.trim() || !form.fixed || !form.safe ||
     (form.cable.trim() && !Number.isFinite(Number(form.cable)))) throw new Error('请先保存拓扑、选择当前完整路径，填写有效采集参数并确认固定接线和安全条件。')
-  return {chain_id:route.chain_id,topology_id:route.topology_id,operating_mode:route.operating_mode,
+  if(mockInput&&(mockInput.samples.length!==count||mockInput.samples.some(s=>[s.source_before_dbm,s.received_dbm,s.source_after_dbm].some(v=>typeof v!=='number'||!Number.isFinite(v)))||mockInput.expected_loss_db!=null&&!Number.isFinite(mockInput.expected_loss_db)))throw new Error('模拟样本须完整且数量匹配，每项为有限数值')
+  return {...(mockInput?{mock_input:mockInput}:{}),chain_id:route.chain_id,topology_id:route.topology_id,operating_mode:route.operating_mode,
     route_digest:route.route_digest,configuration_digest:route.configuration_digest!,frequency_mhz:frequency,
     requested_power_dbm:power,sample_count:count,reference_antenna:form.antenna.trim(),
     receive_cable_loss_db:form.cable.trim()?Number(form.cable):null,receive_cable_source:form.cableSource.trim()||null,
@@ -105,17 +106,19 @@ export function routeForAdoption(scope:RouteScope,record:FixedRouteRecord|undefi
   const selected=frozen&&snapshot?batchItemRoute({route_selection:frozen,configuration_scope:snapshot,request:record.result.request}):undefined
   return routeMatchesSaved(scope,selected)?selected:undefined
 }
-export function buildBatchRequest(scope:RouteScope,paths:RouteSelection[],ids:string[],frequencies:number[],references:BatchReferenceFields[],fields:Pick<RouteFields,'power'|'samples'|'fixed'|'safe'>):BatchPlanRequest {
+export function buildBatchRequest(scope:RouteScope,paths:RouteSelection[],ids:string[],frequencies:number[],references:BatchReferenceFields[],fields:Pick<RouteFields,'power'|'samples'|'fixed'|'safe'>,mockInputs?:BatchMockInput[]):BatchPlanRequest {
   if(scope.mode!=='mimo_ota'||!ids.length||new Set(ids).size!==ids.length||!frequencies.length||
     new Set(frequencies).size!==frequencies.length||frequencies.some(f=>!Number.isFinite(f)||f<=0))throw new Error('请选择已保存的MIMO完整路径及不重复的正频点。')
   const rows=ids.flatMap(id=>frequencies.map(frequency=>{
     const route=paths.find(p=>p.chain_id===id),reference=references.find(r=>r.chainId===id&&r.frequency===frequency)
-    if(!route||!reference||!reference.cable.trim()||!reference.cableSource.trim())throw new Error('每条路径、每个频点均须填写参考位置、接收线损与来源。')
-    const single=buildRouteAcquisitionRequest(scope,route,{...fields,frequency:String(frequency),antenna:reference.antenna,cable:reference.cable,cableSource:reference.cableSource})
+    if(!route||!reference||!mockInputs&&(!reference.cable.trim()||!reference.cableSource.trim()))throw new Error('每条路径、每个频点均须填写参考位置、接收线损与来源。')
+    const input=mockInputs?.find(r=>r.chain_id===id&&r.frequency_mhz===frequency)
+    const single=buildRouteAcquisitionRequest(scope,route,{...fields,frequency:String(frequency),antenna:reference.antenna,cable:reference.cable,cableSource:reference.cableSource},input)
     return {chain_id:id,frequency_mhz:frequency,reference_antenna:single.reference_antenna,
       receive_cable_loss_db:single.receive_cable_loss_db!,receive_cable_source:single.receive_cable_source!}
   }))
-  return {topology_id:scope.topologyId,operating_mode:'mimo_ota',chain_ids:[...ids],frequencies_mhz:[...frequencies],references:rows,
+  if(mockInputs&&(mockInputs.length!==ids.length*frequencies.length||new Set(mockInputs.map(r=>JSON.stringify([r.chain_id,r.frequency_mhz]))).size!==mockInputs.length||mockInputs.some(r=>!ids.includes(r.chain_id)||!frequencies.includes(r.frequency_mhz))))throw new Error('显式模拟矩阵须完整唯一')
+  return {...(mockInputs?{mock_inputs:mockInputs}:{}),topology_id:scope.topologyId,operating_mode:'mimo_ota',chain_ids:[...ids],frequencies_mhz:[...frequencies],references:rows,
     requested_power_dbm:Number(fields.power),sample_count:Number(fields.samples),fixed_route_confirmed:true,safety_confirmed:true}
 }
 

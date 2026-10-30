@@ -104,11 +104,6 @@ def _route_selections(db, lab_id: UUID, topology_id: UUID, operating_mode: str, 
     calibration = effective('calibration')
     incoming, outgoing = {}, {}
     for c in active:
-        for end in ('source', 'target'):
-            n = nodes[c[end]]
-            if (n.get('params', {}).get('connection_scope') == 'calibration' or
-                n.get('type') in ('reference_antenna','receive_cable','signal_analyzer','air_path')):
-                raise ValueError('校准参考接线不能作为正常测试通路')
         incoming.setdefault(c['target'], []).append(c)
         outgoing.setdefault(c['source'], []).append(c)
 

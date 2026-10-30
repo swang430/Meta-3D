@@ -9,9 +9,14 @@ from app.schemas.fixed_route_acquisition import FixedRouteResult
 from app.schemas.route_calibration import RouteSelection
 
 
+def has_explicit_mock_input(result: FixedRouteResult) -> bool:
+    return (result.request.mock_input is not None or
+            result.simulation_input_source == 'operator_supplied_synthetic')
+
+
 def check_fixed_route_evidence(result: FixedRouteResult) -> tuple[str,list[str]]:
     """白名单沿原采集事务的顺序及数值核对，不从completed布尔倒推真实来源。"""
-    if result.status=='simulated' or any(e.simulated for e in result.exchanges):
+    if has_explicit_mock_input(result) or result.status=='simulated' or any(e.simulated for e in result.exchanges):
         return 'simulated',['simulated_measurement']
     try:
         def require(condition,code):
