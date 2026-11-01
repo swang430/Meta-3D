@@ -1,6 +1,6 @@
 # PC-04A-10：CE源端边界软件验证
 
-日期：2026-11-02。实现基准 `f9822f5b52fdc1dbfdbf059c64506a2faa04bbc4`（含独立审查F1修复）。当前为本地实现与隔离软件验收，待Task2独立审查、累计审查及同一PR外审；未部署、未更改用户图或重启用户服务，不代表现场校准或认证。
+日期：2026-11-02。最新实现基准 `ddb9aa4d50e35d60635738f17e3acccd5a09958c`；累计F1修复已由原reviewer独立ADDRESSED、规格通过/质量Approved，修后唯一新版全量见下。当前待最终记录复核与同一PR外审；未部署、未更改用户图或重启用户服务，不代表现场校准或认证。首轮`f9822f5b`的API/浏览器与旧全量保留原版本，不冒称新版重跑。
 
 ## 实现与边界
 
@@ -8,7 +8,11 @@
 
 返回身份仍只含CE输出→Probe；上游输入不进connection_ids或正常损耗补偿。未知损耗不补0；不改变采用资格、历史冻结、真实停发判据或B/HOLD。
 
-## 原样GET与声明副本分栏
+累计F1还修正路径外上游多跳pair被直接前驱筛选漏掉的问题：核完整相关前驱链而非只看直接to_port，逐pair核声明、相关unknown与当前栈环；合法唯一多跳、DAG汇合及不同CE inputs共源不误拒，不把无关未知分支扩大成整图运行门。没有新增CE中转、开关控制、资格或冻结机制。
+
+## 首轮旧输入：原样GET与声明副本分栏
+
+本节为首轮`f9822f5b`的真实HTTP/浏览器记录，未在本轮重开用户GET副本或浏览器旅程；新版证据另见后文的HTTP定点及全后端，不混用版本。
 
 源为只读GET快照 `/tmp/pc04a10-readonly-RDxFCl/pa-copy-r8-get.json`，不是数据库raw原保存证据：图 `f5883b11-f7ae-462c-acb1-a42062e51711`、revision8、120节点/122边，SHA256 `8755ec1fd8a4acb6b336eaefc9f6f474aa4c801533d9bee81f45fb9fbb0729c9`。所有导入/修改仅在新临时SQLite，全Mock，无真实仪器。
 
@@ -29,27 +33,37 @@
 
 ## 资格、冻结与一次补偿
 
-当前HEAD的264源边界+16消费者均由本次全后端实际覆盖：合法BSE DL/独立UL、被动pair/同节点独立pair；端口返回、同output、unknown、缺pins、重复input、当前链环、其他mode隔离；显式/隐式、直接/PA、两CE类型，以及同时/串行资源差异。此为后端矩阵，不冒全部浏览器实测，也不复用F1修复前旧966当新证据。
+累计F1修复后的本轮全量实际覆盖280源边界+16消费者（296项全部PASSED）：合法BSE DL/独立UL、被动pair/同节点独立pair；端口返回、同output、unknown、缺pins、重复input、当前链环、其他mode隔离；显式/隐式、直接/PA、两CE类型，以及同时/串行资源差异。新增16项还覆盖路径外直接/多跳返回、合法唯一多跳、共源、DAG汇合、相关内部环及unknown并存分支。此为后端矩阵，不冒全部浏览器实测，也不复用修前旧966/8492当新版结果。
 
-另新库综合补验使用完整保存参考段+BSE独立输入+PA，但隔离范围**不止替换VISA**：采集复用`test_pc04a2_route_eligibility.py::real_capture`，使用真实驱动类与脚本化VISA，同时注入ready状态、局部HAL和租约，并将本测试隔离绑定/类别设为real；这些设置不是实际仪器状态或资格证据。执行创建复用`test_pc04a2_route_freeze.py::launch`，跳过基站适配profile、信道仿真器binding、plan、执行qualification及转台coordinate profile这五项冻结，替换runner HAL getter与后台`_run_case`，并手动将execution置completed，不能视为后台真实执行完成。
+首轮旧后端的独立综合补验使用完整保存参考段+BSE独立输入+PA，本轮未重跑，不称其为ddb版新通过。其隔离范围**不止替换VISA**：采集复用`test_pc04a2_route_eligibility.py::real_capture`，使用真实驱动类与脚本化VISA，同时注入ready状态、局部HAL和租约，并将本测试隔离绑定/类别设为real；这些设置不是实际仪器状态或资格证据。执行创建复用`test_pc04a2_route_freeze.py::launch`，跳过基站适配profile、信道仿真器binding、plan、执行qualification及转台coordinate profile这五项冻结，替换runner HAL getter与后台`_run_case`，并手动将execution置completed，不能视为后台真实执行完成。
 
-该补验只证明未被替换的**目标route冻结、当前身份重核与直接ChannelEngine取值**：confirmed 28dB在直接调用`_query_calibration_entries`时只计一次、probe_gain=0，上游不累计；确认前旧执行不补填，当前input声明变坏重核拒绝，历史冻结不重写。它不是完整后台执行阶段到达此消费者的证据，不证明其他仪表资格冻结、硬件流程、现场实测或认证。既有结果1 passed/19 warnings/2.82s仅按此范围复用，与纯Mock浏览器证据分开。
+该补验只证明未被替换的**目标route冻结、当前身份重核与直接ChannelEngine取值**：confirmed 28dB在直接调用`_query_calibration_entries`时只计一次、probe_gain=0，上游不累计；确认前旧执行不补填，当前input声明变坏重核拒绝，历史冻结不重写。它不是完整后台执行阶段到达此消费者的证据，不证明其他仪表资格冻结、硬件流程、现场实测或认证。首轮结果1 passed/19 warnings/2.82s仅保留为旧后端上述有限场景的证据，与纯Mock浏览器分开，不参与新版通过统计。
 
-## 命令、统计与输入复用
+## 累计F1修后：新HTTP定点与最终全量
 
-证据根目录 `/tmp/pc04a10-task2-HFVaNt/`；请求/响应、脚本、最终截图、失败日志和新SQLite保留，首轮截图覆盖例外已在上节显著披露。本机SDD `task-2-report.md`提供矩阵、完整命令、身份/关闭、错误预设更正及最终提交定位。
+新证据根目录 `/tmp/pc04a10-final-validation-KpqoLm/`。app导入前新SQLite/Mock，bootstrap后7类别、7保留地址连接及全部Lab非空Mock绑定显式核验。真实网络HTTP定点使用独立新http.sqlite与专用18310：正常独立输入、合法唯一多跳在simultaneous/individual各200/1，多跳CE返回两个入口各422并定位mimo_ota/feed/up.d，共6请求；保存port/pair写契约先实核。该服务PID14738按精确身份关闭，端口无监听；不证明仪器或后台执行，也不是浏览器。
+
+本轮全量自带的独立32×2×5合成API矩阵亦通过：`/tmp/pc04a8-WbFv5r/evidence/`确记ddb9aa4d/new test.sqlite，64记录/320样本全simulated/formal=false；parent completed/finalization_committed=true，但release=null、cleanup=false保留。它不是用户r8副本或浏览器重跑。
+
+首轮证据仍在`/tmp/pc04a10-task2-HFVaNt/`，截图覆盖例外保留。最新本机SDD `final-validation-report.md`记录完整原件/起止hash/版本/关闭及提交定位；旧`task-2-report.md`只作首轮与其文档修订记录。
+
+### 命令、统计与复用边界
 
 | 验证 | 实际命令（对应目录） | 实际结果 |
 |---|---|---|
-| 唯一完整后端 | api-service：`.venv/bin/python /tmp/pc04a10-task2-HFVaNt/run_full.py tests -q --log-cli-level=WARNING --log-level=WARNING` | 8514 collected；exit1，**5 failed/8492 passed/17 skipped/10292 warnings，1051.00s** |
-| 全量后旧fixture专用声明定点 | api-service：`.venv/bin/python /tmp/pc04a10-task2-HFVaNt/run_fixture_regression.py tests/test_p1_73a_base_station_topology.py -q --log-cli-level=WARNING --log-level=WARNING` | exit0，10 passed/2 warnings，0.05s |
-| 综合transport | api-service：`.venv/bin/python /tmp/pc04a10-task2-HFVaNt/run_supplement.py /tmp/pc04a10-task2-HFVaNt/test_integrated_boundary.py -q -o asyncio_mode=auto` | exit0，1 passed/19 warnings，2.82s |
-| GUI | gui：`npx --no-install tsx --test test/pc04a2RouteCalibration.test.ts test/pc06a1Batch.test.ts test/topologyPortContract.test.ts test/topologyInternalPaths.test.ts test/topologyRevisionTransport.test.ts test/pc04a8MockCalibration.test.ts` | exit0，63 pass/0 fail/0 skipped，977.763125ms |
-| production build | gui：`npm run build` | exit0，12.02s；既有混合import/chunk-size警告保留 |
+| 修后唯一新版完整后端 | api-service：`.venv/bin/python /tmp/pc04a10-final-validation-KpqoLm/run_full.py tests -q --log-cli-level=WARNING --log-level=WARNING` | 8530 collected；exit1，**3 failed/8510 passed/17 skipped/10292 warnings，1041.56s**；仅下列历史三门，不称全绿 |
+| 新版真实HTTP定点 | 仓库根：`api-service/.venv/bin/python /tmp/pc04a10-final-validation-KpqoLm/http_probe.py` | exit0，6请求全部符合上述正反例 |
+| 首轮旧输入全量（非新版） | api-service：`.venv/bin/python /tmp/pc04a10-task2-HFVaNt/run_full.py tests -q --log-cli-level=WARNING --log-level=WARNING` | 8514 collected；exit1，5 failed/8492 passed/17 skipped/10292 warnings，1051.00s |
+| 首轮后旧fixture声明定点（旧执行） | api-service：`.venv/bin/python /tmp/pc04a10-task2-HFVaNt/run_fixture_regression.py tests/test_p1_73a_base_station_topology.py -q --log-cli-level=WARNING --log-level=WARNING` | exit0，10 passed/2 warnings，0.05s；该模块已由新版全量再次整体通过 |
+| 首轮综合transport（旧后端、未重跑） | api-service：`.venv/bin/python /tmp/pc04a10-task2-HFVaNt/run_supplement.py /tmp/pc04a10-task2-HFVaNt/test_integrated_boundary.py -q -o asyncio_mode=auto` | 旧结果exit0，1 passed/19 warnings，2.82s；范围限制见上 |
+| GUI（仅前端输入不变，复用旧执行） | gui：`npx --no-install tsx --test test/pc04a2RouteCalibration.test.ts test/pc06a1Batch.test.ts test/topologyPortContract.test.ts test/topologyInternalPaths.test.ts test/topologyRevisionTransport.test.ts test/pc04a8MockCalibration.test.ts` | 旧结果exit0，63 pass/0 fail/0 skipped，977.763125ms |
+| production build（复用旧执行） | gui：`npm run build` | 旧结果exit0，12.02s；既有混合import/chunk-size警告保留 |
 
-全量在生产/收集输入稳定后唯一运行，起止811项代码/测试/脚本/配置逐项hash全部一致，清单自身SHA `770ca1ee3595c18d78670bc3c54fc366bfb20005b241949d39b67187700cad9e`；760项文档/API/GUI补充清单同样核对。测试期间tracked diff为空，完整BASE树清单另存。后端安装版本清单SHA `b22f9ea3081a08af8c77eadb5e17e1205c8deb562cfdb688ee775fb1b30d5d30`（Python3.13.14/pytest9.1.1）；GUI Node26.5.1/tsx4.23.15/Vite7.3.0。没有安装或修改依赖。
+新版在ddb9aa4d稳定输入后只运行一次全量，UTC命令记录2026-11-01T17:19:34Z–2026-11-01T17:37:04Z；起止全部1808项tracked文件hash完全相等，清单SHA `daa4929e1446233f1cb7bd72ee5b63b0111be62454d46dd65f87d91634614e79`，测试期间及结束时tracked diff为空。后端安装版本清单起止同SHA `b22f9ea3081a08af8c77eadb5e17e1205c8deb562cfdb688ee775fb1b30d5d30`（Python3.13.14/pytest9.1.1）。全量结束后仅本摘要与roadmap状态同步，代码/测试/配置未变。
 
-全量两个新增失败只来自P1-73a旧CAICT模板正例：通用out未列真实ports。root批准全量结束核hash后仅在这两用例专用深拷贝补CE输入/输出方向，并按原ce_port显式声明B端source_pin；保35活动边、3个逻辑基站端口等原assert。模板、原raw、生产和其他fixture不改。全量后原811清单**只此测试文件一项变化**，新hash `54e096440246c3a57c4b8c69425a119a63eddd4d35fc77d3fb40d4423049d278`，该文件整个模块10项定点通过（也是resolve_base_station_port_mapping唯一直接测试模块）。最终文档差异另列，不称最终测试输入与原全量相同、不重复全量，也不称最终HEAD全绿。
+GUI在f9d3821d..ddb9aa4d差异0，385项tracked GUI输入清单SHA `6a5df9db915c672f12ba61cdb3b3cb893eaaee84d86218cdb4b8a9a5e556b395`，故仅限定复用旧前端回归/build，不重称新版执行或浏览器。GUI仍Node26.5.1/tsx4.23.15/Vite7.3.0；没有安装或修改依赖。累计F1的455相关/296恢复与核心回退2红原件已独立核验，本轮重核其789输入全部一致，不重复跑该集。
+
+首轮旧全量的两个非历史失败来自P1-73a旧CAICT模板正例：通用out未列真实ports。root当时批准只给两用例专用深拷贝补声明，保35活动边/3基站端口原assert，模板及raw不改；原811清单只此测试文件变化，随后10项定点通过。这是首轮旧输入归因，不是本轮的全量豁免：新版已整体重新覆盖，P1-73a十项及source/consumer296项均在新原件PASSED。
 
 ### 三项历史规则门：精确对照，不改历史
 
@@ -59,7 +73,7 @@
 - `test_g11_docs_cite_live_api_routes_full_domain`：`.superpowers/sdd/2026-10-27-pc04a4e-device-contract-acceptance/task-2-report.md:128`、`.superpowers/sdd/2026-10-29-pc04a5d-topology-acceptance/task-2-report.md:16` 的ws路径记载。
 - `test_gitignore_does_not_shadow_tracked_sources`：`2026-10-27-pc04a4e-device-contract-acceptance`下delivery-status-report、final-doc-report、progress、r1-fix-report、task-1/2/3-report；`2026-10-27-pc04a5a-topology-library`下task-1-fix-report、task-1-report；`2026-10-29-pc04a5d-topology-acceptance`下task-2-report（均为`.superpowers/sdd/`中的`.md`）。共10项，逐项同旧日志。
 
-本片对上述历史文件、test_rule_gates与.gitignore的git diff均为零，未删历史、改门或ignore。新全量原件 `full-backend.log` SHA256 `da333d486894221b173b21b63ed32cd03392d64abeb1185abb2bae013751911f`；完整失败列表保留，不能只简称“历史G8”。warnings未逐条消除或重新归因。
+本轮直接对新旧原始日志剥ANSI比较上述30行失败块，`historical-gates-block.diff`为0字节；对历史文件、test_rule_gates与.gitignore的本轮diff亦为零，未删历史、改门或ignore。新版`/tmp/pc04a10-final-validation-KpqoLm/full-backend.log` SHA256 `2ccec7a86a33448eb528525c8038e8cb6022de87a5a5bfd8f52cb91c62776662`；首轮旧全量日志SHA `da333d486894221b173b21b63ed32cd03392d64abeb1185abb2bae013751911f`保留，不把它改名为新结果。完整三失败与warnings保留，不称全绿，warnings未逐条消除或重新归因。
 
 ## 未验/未做
 
