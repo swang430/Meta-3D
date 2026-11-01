@@ -63,10 +63,37 @@ def _validate_ce_source_boundary(nodes, incoming, outgoing, path_nodes, path_edg
             raise ValueError(f'{context} 无法证明独立上游来源，不能推定端点/开关中转')
         previous = incoming.get(source['id'], [])
         params = source.get('params') or {}
+        selected_pins = {port for ident, port in selected_ports if ident == source['id']}
         if 'internal_paths' in params:
             pairs = params['internal_paths']
             if not isinstance(pairs, list):
                 raise ValueError(f'{context} 上游内部通路声明不足')
+
+            def pair_reaches(starts, targets):
+                # 先找真实保存的定向链，再逐pair核证；不审查与目标无关的未知分支。
+                frontier, parents = list(starts), {}
+                seen = set(starts)
+                for current in frontier:
+                    if current in targets:
+                        while current in parents:
+                            parent = parents[current]
+                            try:
+                                internal_transition(source, parent, current,
+                                    incoming_count=len(incoming.get(source['id'], [])),
+                                    outgoing_count=len(outgoing.get(source['id'], [])))
+                            except ValueError as exc:
+                                raise ValueError(f'{context} 上游pair声明不足：{exc}') from exc
+                            current = parent
+                        return True
+                    for pair in pairs:
+                        if (isinstance(pair, dict) and pair.get('from_port') == current and
+                                isinstance(pair.get('to_port'), str) and pair['to_port'] not in seen):
+                            target = pair['to_port']
+                            seen.add(target); parents[target] = current; frontier.append(target)
+                return False
+
+            if pair_reaches(selected_pins, {pin}):
+                raise ValueError(f'{context} 保存内部pair可达所选路径，构成回接')
             input_pins = {pair.get('from_port') for pair in pairs
                 if isinstance(pair, dict) and pair.get('to_port') == pin
                 and isinstance(pair.get('from_port'), str)}
@@ -79,6 +106,8 @@ def _validate_ce_source_boundary(nodes, incoming, outgoing, path_nodes, path_edg
         input_state = (source['id'], input_pin)
         if input_state in selected_ports:
             raise ValueError(f"连接 {before['id']} 的 {source['id']}.{input_pin} 回接所选路径内部pair")
+        if selected_pins and 'internal_paths' in params and pair_reaches({input_pin}, selected_pins):
+            raise ValueError(f"连接 {before['id']} 的 {source['id']}.{input_pin} 保存内部pair可达所选路径，构成回接")
         if input_state in stack or input_state == state:
             raise ValueError(f'{context} 上游端口链存在回路')
         try:

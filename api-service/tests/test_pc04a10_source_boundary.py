@@ -119,8 +119,12 @@ def test_upstream_passive_pair_uses_only_its_saved_input_and_not_unrelated_ports
     resolve(nodes, edges, consumer)
 
 
-@pytest.mark.parametrize('fault', [None, 'selected_port', 'reachable_selected_pair', 'missing_pair'])
-def test_shared_node_independent_pairs_are_not_node_level_return(fault):
+@pytest.mark.parametrize('consumer', ['shared', 'execution'])
+@pytest.mark.parametrize('fault', [None, 'selected_port', 'reachable_selected_pair', 'missing_pair',
+    'input_to_selected_output', 'selected_output_to_upstream_output',
+    'multi_hop_input_to_selected_output', 'multi_hop_selected_to_upstream_output',
+    'unknown_crossing_pair', 'unrelated_unknown_pair'])
+def test_shared_node_independent_pairs_are_not_node_level_return(consumer, fault):
     nodes, edges = boundary_graph(explicit=True)
     nodes.append(node('x', 'combiner', {'a': 'input', 'b': 'output', 'c': 'input', 'd': 'output'},
         internal_paths=[dict(from_port='a', to_port='b'), dict(from_port='c', to_port='d')]))
@@ -134,10 +138,30 @@ def test_shared_node_independent_pairs_are_not_node_level_return(fault):
     elif fault == 'reachable_selected_pair':
         nodes[-1]['params']['internal_paths'].append(dict(from_port='a', to_port='d'))
     elif fault == 'missing_pair': nodes[-1]['params']['internal_paths'].pop()
-    if fault:
-        with pytest.raises(ValueError): resolve_saved_rf_path(nodes, edges, 'terminal')
+    elif fault == 'input_to_selected_output':
+        nodes[-1]['params']['internal_paths'].append(dict(from_port='c', to_port='b'))
+    elif fault == 'selected_output_to_upstream_output':
+        nodes[-1]['params']['port_directions']['b'] = 'bidirectional'
+        nodes[-1]['params']['internal_paths'].append(dict(from_port='b', to_port='d'))
+    elif fault in ('multi_hop_input_to_selected_output', 'multi_hop_selected_to_upstream_output',
+                   'unknown_crossing_pair', 'unrelated_unknown_pair'):
+        params = nodes[-1]['params']
+        params['ports'].append('m')
+        params['port_directions']['m'] = 'unknown' if fault in (
+            'unknown_crossing_pair', 'unrelated_unknown_pair') else 'bidirectional'
+        if fault == 'multi_hop_selected_to_upstream_output':
+            params['port_directions']['b'] = 'bidirectional'
+            params['internal_paths'] += [dict(from_port='b', to_port='m'), dict(from_port='m', to_port='d')]
+        else:
+            params['internal_paths'].append(dict(from_port='c', to_port='m'))
+            if fault != 'unrelated_unknown_pair':
+                params['internal_paths'].append(dict(from_port='m', to_port='b'))
+    if fault not in (None, 'unrelated_unknown_pair'):
+        with pytest.raises(ValueError) as failure: resolve(nodes, edges, consumer)
+        if fault == 'unknown_crossing_pair':
+            assert 'feed' in str(failure.value) and 'x.d' in str(failure.value)
     else:
-        for consumer in ('shared', 'execution'): resolve(nodes, edges, consumer)
+        resolve(nodes, edges, consumer)
 
 
 @pytest.mark.parametrize('consumer', ['shared', 'execution'])
