@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import inspect
+from copy import deepcopy
 from pathlib import Path
 from types import SimpleNamespace
 from uuid import uuid4
@@ -30,6 +31,25 @@ def _template_module():
 
 def _logical_physical(mapping):
     return {port.logical_port: port.physical_port for port in mapping.ports}
+
+
+def _declared_runtime_topology():
+    """仅两项运行正例补合成声明；旧模板原件与其他模板断言不变。"""
+    topology = deepcopy(_template_module().generate_caict_mimo_topology())
+    ce = next(node for node in topology['nodes'] if node['id'] == 'ce_f64')
+    outputs = [edge for edge in topology['connections'] if edge['source'] == 'ce_f64']
+    input_pins = [edge['target_pin'] for edge in topology['connections']
+                  if edge['target'] == 'ce_f64']
+    output_pins = [edge['ce_port'] for edge in outputs]
+    ce['params']['ports'] = list(dict.fromkeys(input_pins + output_pins))
+    ce['params']['port_directions'] = {
+        **{pin: 'input' for pin in input_pins},
+        **{pin: 'output' for pin in output_pins},
+    }
+    # fixture已保存ce_port对应关系；显式声明，不把通用out当作真实B端证据。
+    for edge in outputs:
+        edge['source_pin'] = edge['ce_port']
+    return topology
 
 
 def test_uxm_route_snapshot_preserves_normal_alternate_and_4x4_profiles():
@@ -118,7 +138,7 @@ def test_caict_template_migrates_only_mimo_connections_to_logical_base_station()
 
 
 def test_orchestrator_filters_logical_dl_connections_by_applied_2x2_mapping():
-    topology = _template_module().generate_caict_mimo_topology()
+    topology = _declared_runtime_topology()
     row = SimpleNamespace(
         id=uuid4(),
         name="CAICT runtime",
@@ -163,7 +183,7 @@ def test_orchestrator_filters_logical_dl_connections_by_applied_2x2_mapping():
 
 
 def test_orchestrator_filters_ports_for_a_custom_mimo_mode_id():
-    topology = _template_module().generate_caict_mimo_topology()
+    topology = _declared_runtime_topology()
     custom_mode = dict(topology["operating_modes"][0])
     custom_mode["id"] = "customer_lte_2x2"
     row = SimpleNamespace(

@@ -28,12 +28,13 @@ def insert_pad(topology, *, explicit):
 
 
 def legacy_bse_direct_topology(topology):
-    # 旧正式解析允许 BSE→CE→probe；采集解析仍应拒绝 CE 入边，不能为修冻结而放宽它。
+    # 测试专用显式方向声明：正常BSE输入可读，但不因此制造confirmed测量或改旧证书来源。
     nodes = copy.deepcopy(topology.nodes)
     for node in nodes:
         if node['type'] == 'ce_port':
             node['type'] = 'channel_emulator'
-            node['params'] = {'ports': ['in', 'out'], 'ce_port': node['label']}
+            node['params'] = {'ports': ['in', 'out'], 'ce_port': node['label'],
+                'port_directions': {'in': 'input', 'out': 'output'}}
         else:
             node['params']['ports'] = ['in']
     nodes += [dict(id='bse', type='communication_tester', label='BSE',
@@ -74,8 +75,9 @@ async def test_mixed_legacy_and_declared_routes_freeze_formal_identity_without_c
     else:
         legacy.use_mock = {'real': False, 'simulated': True, 'unknown': None}[provenance]
     db_session.commit()
-    with pytest.raises(ValueError, match='CE源端存在回接'):
-        list_route_selections(db_session, configured.id, topology_two_chains.id, 'mimo_ota')
+    selections = list_route_selections(db_session, configured.id, topology_two_chains.id, 'mimo_ota')
+    assert {route.chain_id for route in selections} == {'conn_p0v', 'conn_p0h'}
+    digests = {route.chain_id: route.route_digest for route in selections}
     first = await launch()
     frozen_before = read_execution_route_compensation(first)
     for execution in (first, await launch()):
@@ -87,7 +89,7 @@ async def test_mixed_legacy_and_declared_routes_freeze_formal_identity_without_c
         selected = next(row for row in frozen['route_entries'] if row['chain_id'] == 'conn_p0h')
         assert selected['execution_route_identity']['internal_paths'] == [
             {'node_id': 'selected-pad', 'from_port': 'in', 'to_port': 'out'}]
-        assert all(row['route_digest'] is None for row in frozen['route_entries'])
+        assert {row['chain_id']: row['route_digest'] for row in frozen['route_entries']} == digests
         assert all(row['source_kind'] == ('legacy_certificate' if provenance == 'real' else 'unavailable')
             for row in frozen['route_entries'])
         assert all(source['source_kind'] != 'confirmed_route' for source in frozen['source_records'])
@@ -149,7 +151,7 @@ async def test_unrelated_internal_declaration_preserves_legacy_direct_freeze_and
     execution = await launch()
     frozen = read_execution_route_compensation(execution)
     before = copy.deepcopy(frozen)
-    assert all(row['execution_route_identity'] is None for row in frozen['route_entries'])
+    assert all(row['execution_route_identity'] is not None for row in frozen['route_entries'])
     actual_before = orchestrate_switch_topology(db_session, configured.chamber_config_id)
     assert frozen_route_identity_error(db_session, frozen) is None
     assert frozen_route_identity_error(db_session, frozen, resolved_topology=actual_before) is None
@@ -159,8 +161,8 @@ async def test_unrelated_internal_declaration_preserves_legacy_direct_freeze_and
     saved = client.patch(f'/api/v1/switch-topologies/{topology_two_chains.id}',
         params={'lab_profile_id': str(configured.id)}, json={**({'nodes': nodes}), 'expected_revision': _saved_revision(client, f'/api/v1/switch-topologies/{topology_two_chains.id}', {'lab_profile_id': str(configured.id)})})
     assert saved.status_code == 200, saved.text
-    with pytest.raises(ValueError, match='CE源端存在回接'):
-        list_route_selections(db_session, configured.id, topology_two_chains.id, 'mimo_ota')
+    selections = list_route_selections(db_session, configured.id, topology_two_chains.id, 'mimo_ota')
+    assert {route.chain_id for route in selections} == {'conn_p0v', 'conn_p0h'}
     actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
     assert actual.probe_bindings == actual_before.probe_bindings
     assert frozen_route_identity_error(db_session, frozen, resolved_topology=actual) is None
@@ -189,6 +191,16 @@ async def test_absent_frozen_identity_rejects_new_selected_internal_identity_on_
     mixed_bse_pad_topology(topology_two_chains, explicit=False)
     db_session.commit()
     execution = await launch()
+    # synthetic历史缺identity快照，仅构造本用例临时库；不是当前builder的自然输出。
+    historical = copy.deepcopy(execution.config)
+    for entry in historical['route_calibration_freeze']['route_entries']:
+        entry['execution_route_identity'] = None
+        entry['route_digest'] = None
+    from app.hal.base_station_compatibility import canonical_payload_digest
+    historical['route_calibration_freeze']['digest'] = canonical_payload_digest({
+        key: value for key, value in historical['route_calibration_freeze'].items() if key != 'digest'})
+    execution.config = historical
+    db_session.commit()
     frozen = read_execution_route_compensation(execution)
     before = copy.deepcopy(frozen)
     assert all(row['execution_route_identity'] is None for row in frozen['route_entries'])

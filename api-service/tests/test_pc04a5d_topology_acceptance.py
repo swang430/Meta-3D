@@ -31,6 +31,7 @@ from app.services.topology_service import TopologyService
 from scripts.pc04a5c_independent_pa import build_candidate
 from tests.pc04a5d_browser_fixture import (SOURCE, audit_mock, canonical_hash,
     configure_mock, declaration_graph, seed_world, verify_hal)
+from tests.test_pc04a5c_copy_roundtrip import declare_ce_boundary
 
 ROOT = '/api/v1/switch-topologies'
 HISTORY = ('route_calibration_applications', 'route_calibration_selections',
@@ -141,6 +142,18 @@ def candidate_saved(world):
     return url, scope, candidate, routes
 
 
+def declare_source_boundary_for_test(world):
+    """仅两个消费正例的操作员声明fixture；不改通用seed或原SOURCE raw。"""
+    db, _, manifest, checks, _ = world
+    source = db.get(SwitchTopology, UUID(manifest['source_id']))
+    declared = declare_ce_boundary(graph(db, source.id))
+    source.nodes, source.connections = declared['nodes'], declared['connections']
+    db.commit()
+    checks['source_boundary_fixture'] = dict(synthetic_fixture=True,
+        boundary='测试专用显式ports/pins/方向；原raw与转换器不变')
+    return declared
+
+
 def test_import_guard_rejects_without_app_import_or_database(tmp_path):
     # 失败守卫在独立Python进程中验证；不借用已导入app的pytest进程证明。
     code = "from tests.pc04a5d_browser_fixture import checked_path; import sys\ntry: checked_path('browser')\nexcept AssertionError: assert 'app.main' not in sys.modules; print('guard-before-app'); sys.exit(7)\nsys.exit(9)"
@@ -161,6 +174,7 @@ def test_d01_copy_rename_keep_source_raw_and_execution_choice(world):
     db, client, manifest, checks, _ = world
     source_id = manifest['source_id']; lab = UUID(manifest['labs'][0]['lab_id'])
     chamber = UUID(manifest['labs'][0]['chamber_id'])
+    declare_source_boundary_for_test(world)  # 声明先于protected before，全列保形比较仍完整。
     before = protected(db, source_id)
     original = graph(db,source_id)
     selected = orchestrate_switch_topology(db,chamber).topology_id
@@ -275,8 +289,16 @@ def test_d07_d08_complete_32_routes_and_unknown_nominal_consumers(world):
     from app.schemas.topology_internal_paths import validate_internal_traversals
     from app.services.topology_loss import effective_connection_loss, loss_sources_for_path, loss_source_for_terminal
     db,client,manifest,checks,_ = world
-    url,scope,candidate,routes = candidate_saved(world)
-    saved = graph(db,url.rsplit('/',1)[1]); source = json.loads(SOURCE.read_text())
+    raw = json.loads(SOURCE.read_text())
+    with pytest.raises(ValueError, match='声明不足'):
+        full_bindings(raw)
+    source = declare_source_boundary_for_test(world)
+    url,scope = copy_source(world)
+    candidate,routes = build_candidate(raw)  # 原raw哈希门照常执行，声明不归功于转换器。
+    candidate = declare_ce_boundary(candidate)
+    response = client.patch(url,params=scope,json={'expected_revision':1,**candidate})
+    assert response.status_code == 200 and response.json()['revision'] == 2, response.text
+    saved = graph(db,url.rsplit('/',1)[1])
     expected = {(f'B{i+1}',p,q) for i,(p,q) in enumerate(
         (p,q) for p in [1,9,2,10,3,11,4,12,5,13,6,14,7,15,8,16] for q in 'VH')}
     identities = lambda rows:{(r.ce_port,r.probe_id,r.polarization) for r in rows}

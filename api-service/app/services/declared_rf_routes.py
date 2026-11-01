@@ -13,6 +13,130 @@ def _index(rows, label):
     return result
 
 
+def _validate_ce_source_boundary(nodes, incoming, outgoing, path_nodes, path_edges):
+    """核对真实保存的独立输入；只沿准确端口/pair回溯，不把节点入度当导通。"""
+    from app.schemas.topology_ports import BSE_TYPES, resolve_port_direction
+    from app.schemas.topology_internal_paths import internal_transition
+
+    ce = path_nodes[0]
+    feeds = incoming.get(ce['id'], [])
+    if not feeds:
+        return  # 无入边的旧输出链不因此增加方向迁移门。
+
+    def saved_pin(node, edge, end, allowed):
+        pin = edge.get(f'{end}_pin')
+        params = node.get('params') or {}
+        ports = params.get('ports')
+        context = f"连接 {edge['id']} 的 {node['id']}.{pin}"
+        if (not isinstance(pin, str) or not pin or pin.strip() != pin or
+                not isinstance(ports, list) or pin not in ports):
+            raise ValueError(f'{context} 上游端口声明不足：必须保存真实 pin 并列入 ports')
+        direction, _ = resolve_port_direction(node, pin)
+        if node.get('type') in BSE_TYPES:
+            roles, directions = params.get('port_roles'), params.get('port_directions')
+            role = roles.get(pin) if isinstance(roles, dict) else None
+            explicit = directions.get(pin, 'unknown') if isinstance(directions, dict) else 'unknown'
+            if role in ('dl', 'ul') and explicit not in (
+                    'unknown', 'output' if role == 'dl' else 'input'):
+                raise ValueError(f'{context} BSE角色与方向冲突')
+        if direction not in allowed:
+            raise ValueError(f'{context} 上游端口方向声明不足或冲突：{direction}')
+        return pin
+
+    output = saved_pin(ce, path_edges[0], 'source', {'output'})
+    selected_ports = {(edge[end], edge.get(f'{end}_pin'))
+        for edge in path_edges for end in ('source', 'target')}
+
+    def trace(edge, stack):
+        source = nodes[edge['source']]
+        pin = saved_pin(source, edge, 'source',
+            {'output'} if source.get('type') in BSE_TYPES else {'output', 'bidirectional'})
+        state = (source['id'], pin)
+        context = f"连接 {edge['id']} 的 {source['id']}.{pin}"
+        if source['id'] == ce['id'] or state in selected_ports:
+            raise ValueError(f'{context} 回接所选CE输出路径')
+        if state in stack:
+            raise ValueError(f'{context} 上游端口链存在回路')
+        if source.get('type') in BSE_TYPES:
+            return  # BSE已证实输出是端点；不能跨其独立UL输入推导内部边。
+        if source.get('type') in ('ce_port', 'channel_emulator', 'switch_slot'):
+            raise ValueError(f'{context} 无法证明独立上游来源，不能推定端点/开关中转')
+        previous = incoming.get(source['id'], [])
+        params = source.get('params') or {}
+        selected_pins = {port for ident, port in selected_ports if ident == source['id']}
+        if 'internal_paths' in params:
+            pairs = params['internal_paths']
+            if not isinstance(pairs, list):
+                raise ValueError(f'{context} 上游内部通路声明不足')
+
+            def pair_reaches(starts, targets):
+                # 先反查目标的完整前驱，再核起点可达的相关链；无关未知分支不参与。
+                relevant, frontier = set(targets), list(targets)
+                for current in frontier:
+                    for pair in pairs:
+                        if (isinstance(pair, dict) and pair.get('to_port') == current and
+                                isinstance(pair.get('from_port'), str) and pair['from_port'] not in relevant):
+                            parent = pair['from_port']
+                            relevant.add(parent); frontier.append(parent)
+                completed = set()
+
+                def walk(current, active):
+                    if current in active or (source['id'], current) in stack:
+                        raise ValueError(f'{context} 上游端口链存在回路（{source["id"]}.{current}）')
+                    if current in completed:
+                        return  # 已完成分支的汇合不是当前栈回边。
+                    for pair in pairs:
+                        if (isinstance(pair, dict) and pair.get('from_port') == current and
+                                pair.get('to_port') in relevant):
+                            target = pair['to_port']
+                            try:
+                                internal_transition(source, current, target,
+                                    incoming_count=len(incoming.get(source['id'], [])),
+                                    outgoing_count=len(outgoing.get(source['id'], [])))
+                            except ValueError as exc:
+                                raise ValueError(f'{context} 上游pair声明不足：{exc}') from exc
+                            walk(target, active | {current})
+                    completed.add(current)
+
+                reachable = starts & relevant
+                for start in reachable:
+                    walk(start, set())
+                return bool(reachable)
+
+            if pair_reaches(selected_pins, {pin}):
+                raise ValueError(f'{context} 保存内部pair可达所选路径，构成回接')
+            previous = [item for item in previous
+                if pair_reaches({item.get('target_pin')}, {pin})]
+        if len(previous) != 1:
+            ids = ','.join(item['id'] for item in previous)
+            raise ValueError(f'{context} 上游来源不唯一或内部通路声明不足（{ids}）')
+        before = previous[0]
+        input_pin = saved_pin(source, before, 'target', {'input', 'bidirectional'})
+        input_state = (source['id'], input_pin)
+        if input_state in selected_ports:
+            raise ValueError(f"连接 {before['id']} 的 {source['id']}.{input_pin} 回接所选路径内部pair")
+        if selected_pins and 'internal_paths' in params and pair_reaches({input_pin}, selected_pins):
+            raise ValueError(f"连接 {before['id']} 的 {source['id']}.{input_pin} 保存内部pair可达所选路径，构成回接")
+        if input_state in stack or input_state == state:
+            raise ValueError(f'{context} 上游端口链存在回路')
+        try:
+            if 'internal_paths' not in params:
+                internal_transition(source, input_pin, pin,
+                    incoming_count=len(incoming.get(source['id'], [])),
+                    outgoing_count=len(outgoing.get(source['id'], [])))
+        except ValueError as exc:
+            raise ValueError(f'{context}（连接 {before["id"]}）上游声明不足：{exc}') from exc
+        trace(before, stack | {state, input_state})
+
+    inputs = set()
+    for feed in feeds:
+        pin = saved_pin(ce, feed, 'target', {'input'})
+        if pin == output or pin in inputs:
+            raise ValueError(f"连接 {feed['id']} 的 {ce['id']}.{pin} 输入重复或回接所选输出，来源歧义")
+        inputs.add(pin)
+        trace(feed, set())  # 每个CE input独立栈；共享已证实前驱不是回边。
+
+
 def resolve_saved_rf_path(nodes, active_connections, terminal_connection_id, *, check_internal_paths=True):
     """返回保存的有序(nodes, edges)；无声明时只接受旧式唯一链。"""
     nodes = _index(list(nodes.values()) if isinstance(nodes, dict) else nodes, '节点')
@@ -79,8 +203,7 @@ def resolve_saved_rf_path(nodes, active_connections, terminal_connection_id, *, 
         for edge in path_edges:
             if any(not isinstance(edge.get(k),str) or not edge[k].strip() for k in ('source_pin','target_pin')):
                 raise ValueError('显式路径必须保存完整端口')
-    if incoming.get(path_nodes[0]['id']):
-        raise ValueError('CE源端存在回接')
+    _validate_ce_source_boundary(nodes, incoming, outgoing, path_nodes, path_edges)
     if any(node.get('type') in ('probe', 'antenna') for node in path_nodes[1:-1]):
         raise ValueError('正常路径的探头/天线只能作为终点，不能中转')
     for node in path_nodes:
