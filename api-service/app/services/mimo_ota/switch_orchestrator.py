@@ -155,6 +155,13 @@ def orchestrate_switch_topology(
     nodes = topology.nodes or []
     nodes_by_id = {n.get("id"): n for n in nodes}
 
+    def resolve_mode_path(terminal_id):
+        from app.services.declared_rf_routes import resolve_saved_rf_path
+        try:
+            return resolve_saved_rf_path(nodes_by_id, active_conns, terminal_id)
+        except ValueError as exc:
+            raise ValueError(f'模式 {mode_id}：{exc}') from exc
+
     for node in nodes:
         if node.get('type')!='probe' or not any(e.get('target')==node.get('id') for e in active_conns):
             continue
@@ -163,8 +170,7 @@ def orchestrate_switch_topology(
             ids=declaration.get('connection_ids') if isinstance(declaration,dict) else None
             if not isinstance(ids,list) or not ids:
                 raise ValueError('保存显式路径缺少连接')
-            from app.services.declared_rf_routes import resolve_saved_rf_path
-            path_nodes,_=resolve_saved_rf_path(nodes_by_id,active_conns,ids[-1])
+            path_nodes,_=resolve_mode_path(ids[-1])
             if path_nodes[-1]['id']!=node['id']:
                 raise ValueError('探头保存声明引用其它探头终端')
 
@@ -174,7 +180,6 @@ def orchestrate_switch_topology(
         target=nodes_by_id.get(conn.get('target'),{})
         declaration=(target.get('params') or {}).get('rf_path_selection')
         if target.get('type')=='probe' and declaration is not None:
-            from app.services.declared_rf_routes import resolve_saved_rf_path
             from app.services.calibration.route_calibration import route_switch_steps
             # 一个探头可能有多个候选终端，只有保存声明所选者产生实际target。
             ids=declaration.get('connection_ids') if isinstance(declaration,dict) else None
@@ -182,12 +187,15 @@ def orchestrate_switch_topology(
                 raise ValueError('保存显式路径缺少连接')
             if conn['id']!=ids[-1]:
                 continue
-            path_nodes,path_edges=resolve_saved_rf_path(nodes_by_id,active_conns,conn['id'])
+            path_nodes,path_edges=resolve_mode_path(conn['id'])
             steps=route_switch_steps(db,topology,path_nodes,path_edges)
             selected_steps.extend(steps)
             from app.services.declared_rf_routes import rf_execution_identity,switch_execution_identity
             execution_identity=rf_execution_identity(path_nodes,path_edges,switch_execution_identity(steps))
-        binding = _build_probe_binding(conn, nodes_by_id,active_conns)
+        try:
+            binding = _build_probe_binding(conn, nodes_by_id,active_conns)
+        except ValueError as exc:
+            raise ValueError(f'模式 {mode_id}：{exc}') from exc
         if binding is not None:
             if execution_identity is not None:
                 binding.execution_route_identity=execution_identity
@@ -258,15 +266,7 @@ def _build_probe_binding(
                 raise ValueError('正常测试通路缺少唯一完整CE源端')
             edge=predecessors[0];path_edges.insert(0,edge)
             current=nodes_by_id[edge['source']]
-        from app.schemas.topology_ports import BSE_TYPES
-        # BSE→CE 是上游输入，不是输出链回接；只按实际节点类型放行，路径内回接仍拒绝。
-        bad_ce_input = any(
-            edge.get('target') == current['id']
-            and (edge.get('source') in seen
-                 or nodes_by_id.get(edge.get('source'), {}).get('type') not in BSE_TYPES)
-            for edge in active_connections or []
-        )
-        if current['id'] in seen or bad_ce_input:
+        if current['id'] in seen:
             raise ValueError('正常测试CE源端存在回接')
         path_nodes.insert(0,current)
         ce_port_label=resolve_declared_calibration_ce_port(path_nodes,path_edges,allow_incomplete=True)
@@ -277,9 +277,10 @@ def _build_probe_binding(
     if source is not None:
         from app.schemas.topology_internal_paths import validate_internal_traversals
         validate_internal_traversals(path_nodes, path_edges, active_connections=active_connections or [])
-        # 复用正常/参考路径边界，只检查正式已选路径；BSE→CE入边不属于CE输出路径。
+        # 正式显式/隐式、直接/中间器件都核完整模式的源端边界；不裁掉上游证据。
         from app.services.declared_rf_routes import resolve_saved_rf_path
-        resolve_saved_rf_path(path_nodes, path_edges, connection['id'], check_internal_paths=False)
+        resolve_saved_rf_path(nodes_by_id, active_connections or path_edges,
+            connection['id'], check_internal_paths=False)
         if (target.get('params') or {}).get('rf_path_selection') is None:
             from app.services.declared_rf_routes import selected_switch_mappings
             selected_switch_mappings(path_nodes, path_edges, {}, category_id=None)

@@ -21,6 +21,26 @@ def raw_source():
     return json.loads((Path(__file__).parent / 'fixtures/pc04a5c_caict_source.json').read_text())
 
 
+def declare_ce_boundary(graph):
+    """仅测试的操作员显式声明；不修改raw，也不是转换器自动生成的证据。"""
+    graph = deepcopy(graph)
+    ce = next(node for node in graph['nodes'] if node['id'] == 'ce_f64')
+    inputs, outputs = [f'in{i}' for i in range(1, 5)], [f'B{i}' for i in range(1, 33)]
+    ce['params']['ports'] = inputs + outputs
+    ce['params']['port_directions'] = {**dict.fromkeys(inputs, 'input'), **dict.fromkeys(outputs, 'output')}
+    for connection in graph['connections']:
+        if connection['source'] == 'ce_f64':
+            # 此fixture已逐路保存ce_port映射；明确声明取代原通用out，不猜端口名。
+            assert connection['ce_port'] in outputs
+            connection['source_pin'] = connection['ce_port']
+    return graph
+
+
+@pytest.fixture
+def declared_source(raw_source):
+    return declare_ce_boundary(raw_source)
+
+
 def full_bindings(graph):
     nodes = {n['id']: n for n in graph['nodes']}
     mode = next(m for m in graph['operating_modes'] if m['id'] == 'mimo_ota')
@@ -29,14 +49,22 @@ def full_bindings(graph):
     return [_build_probe_binding(e, nodes, active) for e in active if nodes[e['target']]['type'] == 'probe']
 
 
-def test_full_mode_preserves_32_bindings_with_four_bse_inputs(raw_source):
+def test_original_raw_without_saved_ce_boundary_is_rejected(raw_source):
+    before = deepcopy(raw_source)
+    with pytest.raises(ValueError, match='声明不足'):
+        full_bindings(raw_source)
+    assert raw_source == before
+
+
+def test_full_mode_preserves_32_bindings_with_four_bse_inputs(raw_source, declared_source):
     graph, manifest = build_candidate(raw_source)
-    original = full_bindings(raw_source)
+    graph = declare_ce_boundary(graph)
+    original = full_bindings(declared_source)
     assert len(original) == 32
     expected = {(f'B{i+1}', probe, pol) for i, (probe, pol) in enumerate(
         (p, q) for p in [1,9,2,10,3,11,4,12,5,13,6,14,7,15,8,16] for q in 'VH')}
     assert {(b.ce_port, b.probe_id, b.polarization) for b in original} == expected
-    print('ORIGINAL complete mimo_ota: 32 bindings; four BSE inputs retained')
+    print('DECLARED TEST COPY complete mimo_ota: 32 bindings; four BSE inputs retained; raw unchanged')
     candidate = full_bindings(graph)
     assert {(b.ce_port, b.probe_id, b.polarization) for b in candidate} == expected
     assert {b.connection_id for b in candidate} == {r['replacement_connection_ids'][1] for r in manifest['routes']}
@@ -105,8 +133,10 @@ def history(db, ident):
             db.query(SwitchTopologyRevision).filter_by(topology_id=UUID(str(ident))).order_by(SwitchTopologyRevision.revision)]
 
 
-def copy_save(client, db, lab, source, raw_source):
+def copy_save(client, db, lab, source, raw_source, *, declare_boundary=False):
     graph, manifest = build_candidate(raw_source)
+    if declare_boundary:
+        graph = declare_ce_boundary(graph)
     assert len([n for n in graph['nodes'] if n['id'].startswith('pc04a5c_pa_')]) == 32
     assert len([e for e in graph['connections'] if e['id'].endswith(('__pa_in','__pa_out'))]) == 64
     params = {'lab_profile_id': str(lab.id)}
@@ -123,9 +153,13 @@ def copy_save(client, db, lab, source, raw_source):
     return url, params, graph, manifest
 
 
-def test_real_copy_patch_history_and_source_every_column_unchanged(client, db, lab, source, raw_source):
+def test_real_copy_patch_history_and_source_every_column_unchanged(client, db, lab, source, raw_source, declared_source):
     from app.services.mimo_ota.switch_orchestrator import orchestrate_switch_topology
     from app.models.test_plan import TestExecution
+    # 本用例临时源行先显式声明，再取全列before；原raw fixture不变。
+    for key in ('nodes', 'connections', 'operating_modes'):
+        setattr(source, key, deepcopy(declared_source[key]))
+    db.commit()
     # 明确synthetic旧执行冻结，只检验写入口绝不触碰；不是新的采集/confirmed证据。
     execution = TestExecution(status='completed', config={'route_calibration_freeze':{
         'synthetic':True, 'legacy_marker':[None,0,'0',False], 'topology_id':str(source.id)}})
@@ -134,7 +168,7 @@ def test_real_copy_patch_history_and_source_every_column_unchanged(client, db, l
     before, old_history, qualification = all_columns(db, source), history(db, source.id), records(db)
     selected = orchestrate_switch_topology(db, lab.chamber_config_id)
     assert selected.success and selected.topology_id == str(source.id)
-    url, params, graph, _ = copy_save(client, db, lab, source, raw_source)
+    url, params, graph, _ = copy_save(client, db, lab, source, raw_source, declare_boundary=True)
     ident = url.rsplit('/',1)[1]
     assert client.patch(url, params=params, json={'expected_revision':1, **graph}).status_code == 409
     assert all_columns(db, source) == before and history(db, source.id) == old_history
@@ -144,7 +178,7 @@ def test_real_copy_patch_history_and_source_every_column_unchanged(client, db, l
     assert orchestrate_switch_topology(db, lab.chamber_config_id).topology_id == str(source.id)
     revisions = history(db, ident)
     assert [r['revision'] for r in revisions] == [1,2]
-    original = {key: deepcopy(raw_source[key]) for key in ('nodes','connections','operating_modes')}
+    original = {key: deepcopy(declared_source[key]) for key in ('nodes','connections','operating_modes')}
     for edge in original['connections']:
         for key in ('calibrated_loss_db','calibrated_phase_deg'):
             if key in edge: edge[key] = None
@@ -158,7 +192,7 @@ def test_real_copy_patch_history_and_source_every_column_unchanged(client, db, l
         params={'topology_id':str(source.id), 'operating_mode':'mimo_ota'})
     print('ORIGINAL explicit calibration:', original_calibration.status_code, original_calibration.text)
     from app.services.topology_service import TopologyService
-    for label, complete in [('original',raw_source),('candidate',graph)]:
+    for label, complete in [('declared-test-original',declared_source),('declared-test-candidate',graph)]:
         try:
             paths = TopologyService(complete).resolve_paths('mimo_ota')
             print('FULL TopologyService',label,'OK',len(paths))

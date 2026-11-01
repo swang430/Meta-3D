@@ -29,7 +29,7 @@ def paths(lab_profile_id: UUID, topology_id: UUID, operating_mode: str, db: Sess
     except LookupError as exc:
         raise HTTPException(404,str(exc)) from exc
     except ValueError as exc:
-        raise HTTPException(422,str(exc)) from exc
+        raise HTTPException(422,f'模式 {operating_mode}：{exc}') from exc
 
 
 @router.get('/{lab_profile_id}/fixed-route-acquisitions/{run_id}/application-preview',response_model=RouteApplicationPreview)
