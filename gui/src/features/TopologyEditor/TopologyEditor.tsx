@@ -108,6 +108,7 @@ interface TopologyFlowProps {
 const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversionEpoch, libraryBusy, isLibraryBusy, onTopologyUpdated, onDirtyChange, onBusyChange, onWriteStart }: TopologyFlowProps) => {
   const { screenToFlowPosition, setCenter,fitView,getNodes } = useReactFlow();
   const [auxiliary,setAuxiliary]=useState(true);
+  const [calibrationExpanded,setCalibrationExpanded]=useState(false);
   const [layoutUndo,setLayoutUndo]=useState<LayoutUndo|null>(null);
   const [layoutLocate,setLayoutLocate]=useState(0);
   useEffect(()=>{setLayoutUndo(null)},[topology,labProfileId]);
@@ -605,8 +606,9 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
             )}
           </Group>
           <Group>
-            <Button variant="default" onClick={()=>{if(!focused)setAuxiliary(false);onFocusChange(!focused)}}>{focused?'退出专注编辑':'专注编辑'}</Button>
+            <Button variant="default" onClick={()=>onFocusChange(!focused)}>{focused?'退出专注编辑':'专注编辑'}</Button>
             <Button variant="default" onClick={()=>setAuxiliary(value=>!value)}>{auxiliary?'收起辅助区':'展开辅助区'}</Button>
+            <Button variant="default" onClick={()=>setCalibrationExpanded(true)}>展开校准面板</Button>
             <Button disabled={editingBlocked} onClick={()=>{
               if(isWriteBlocked())return;
               const undo=captureLayoutUndo(draft,scope);
@@ -693,11 +695,19 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
           <MiniMap nodeStrokeWidth={3} zoomable pannable />
         </ReactFlow>
       </div>
-      <aside style={{display:auxiliary?'block':'none',width:410,maxWidth:'45%',minWidth:300,minHeight:0,overflow:'auto'}}>
+      <aside aria-label="通路校准编辑区" style={{display:auxiliary||calibrationExpanded?'flex':'none',flexDirection:'column',
+        ...(calibrationExpanded?{position:'fixed',inset:16,zIndex:190,background:'var(--mantine-color-body)',width:'auto',maxWidth:'none',minWidth:0}
+          :{width:410,maxWidth:'45%',minWidth:300}),minHeight:0,overflow:'hidden'}}>
+        {calibrationExpanded&&<Group p="xs" justify="space-between" style={{flexShrink:0}}>
+          <Text fw={600}>校准面板专注编辑</Text>
+          <Button variant="default" onClick={()=>setCalibrationExpanded(false)}>返回拓扑与校准</Button>
+        </Group>}
+        <div style={{flex:1,minHeight:0}}>
         {topology.id?<RouteCalibrationPanel key={`${labProfileId}:${topology.id}`} labId={labProfileId} topologyId={topology.id}
           mode={activeMode} dirty={dirty} saving={saving||libraryBusy||unknownWrite} revision={JSON.stringify([topology.nodes,topology.connections,topology.operating_modes])}
           graph={topology}
           onSelectRoute={setHighlightedRoute} onRunningRoute={handleRunningRoute} onBusyChange={handleCollectionBusy}/>:<Alert>请先保存拓扑再读取完整路径。</Alert>}
+        </div>
       </aside>
       </div>
       
@@ -919,11 +929,20 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
 export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorProps) => {
   const [focused,setFocused]=useState(false);
   const canvasFrame=useRef<HTMLDivElement>(null);
-  const [frameHeight,setFrameHeight]=useState(500);
+  const configurationCard=useRef<HTMLDivElement>(null);
+  const [frameHeight,setFrameHeight]=useState(1500);
   useEffect(()=>{
-    const measure=()=>{if(canvasFrame.current)setFrameHeight(Math.max(280,window.innerHeight-canvasFrame.current.getBoundingClientRect().top-16))};
+    if(focused)return;
+    const measure=()=>{
+      const frame=canvasFrame.current;if(!frame)return;
+      // app-main等祖先可能已滚动；恢复未滚动顶部，避免滚动后测量把画布越撑越高。
+      let top=frame.getBoundingClientRect().top+window.scrollY;
+      for(let parent=frame.parentElement;parent;parent=parent.parentElement)top+=parent.scrollTop;
+      setFrameHeight(3*Math.max(280,window.innerHeight-top-16));
+    };
     measure();window.addEventListener('resize',measure);
-    const observer=new ResizeObserver(measure);if(canvasFrame.current?.parentElement)observer.observe(canvasFrame.current.parentElement);
+    // 只观察上方配置卡，不观察会被frame自身撑高的父容器。
+    const observer=new ResizeObserver(measure);if(configurationCard.current)observer.observe(configurationCard.current);
     return()=>{window.removeEventListener('resize',measure);observer.disconnect()};
   },[focused]);
   const editorMounted=useRef(true);
@@ -1140,7 +1159,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
   const busyCallback=React.useMemo(()=>((value:boolean)=>{if(liveFlow.current===flowIdentity)handleFlowBusy(value)}),[flowIdentity,handleFlowBusy]);
 
   return <Stack gap="lg" style={focused?{position:'fixed',inset:8,zIndex:200,background:'var(--mantine-color-body)',padding:8,overflow:'hidden'}:{minHeight:0}}>
-    <Card withBorder radius="md" padding="lg" style={{display:focused?'none':undefined,flexShrink:0}}>
+    <Card ref={configurationCard} withBorder radius="md" padding="lg" style={{display:focused?'none':undefined,flexShrink:0}}>
       <Group justify="space-between">
         <Group><IconTopologyRing size={22}/><Title order={4}>射频开关矩阵拓扑</Title></Group>
         <Badge color={chamberName?'brand':'orange'}>{chamberName?`当前暗室：${chamberName}`:'当前 LabProfile 未绑定暗室'}</Badge>
@@ -1203,7 +1222,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         <Group><Button variant="default" onClick={()=>setLibraryInspection(null)}>保留输入，取消</Button>
           <Button color="orange" onClick={adoptLibraryLatest}>确认采用服务器最新并结束核查</Button></Group></Stack>
     </Modal>
-    <div ref={canvasFrame} style={{height:focused?'100%':frameHeight,minHeight:280,flex:focused?1:undefined,minWidth:0}}>
+    <div ref={canvasFrame} style={{height:focused?'100%':frameHeight,minHeight:focused?0:840,flex:focused?1:undefined,flexShrink:0,minWidth:0}}>
       {!labProfileId?<Center h="100%"><Text>请选择当前 LabProfile。</Text></Center>
         :!chamberId?<Center h="100%"><Text>当前 LabProfile 未绑定暗室。</Text></Center>
         :!selectedSwitchId?<Center h="100%"><Text>请先选择射频开关设备。</Text></Center>
