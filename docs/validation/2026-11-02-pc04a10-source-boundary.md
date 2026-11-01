@@ -31,7 +31,9 @@
 
 当前HEAD的264源边界+16消费者均由本次全后端实际覆盖：合法BSE DL/独立UL、被动pair/同节点独立pair；端口返回、同output、unknown、缺pins、重复input、当前链环、其他mode隔离；显式/隐式、直接/PA、两CE类型，以及同时/串行资源差异。此为后端矩阵，不冒全部浏览器实测，也不复用F1修复前旧966当新证据。
 
-另新库综合补验用完整保存参考段+BSE独立输入+PA，从采集/确认API到runner冻结和ChannelEngine消费者，仅替既有外部VISA transport：confirmed 28dB只补一次、probe_gain=0，上游不重复计入；确认前旧执行不补填，当前input声明变坏重核拒绝，历史冻结不重写。结果1 passed/19 warnings/2.82s。这是脚本化transport软件验证，和纯Mock浏览器分开，不等于现场实测或认证。
+另新库综合补验使用完整保存参考段+BSE独立输入+PA，但隔离范围**不止替换VISA**：采集复用`test_pc04a2_route_eligibility.py::real_capture`，使用真实驱动类与脚本化VISA，同时注入ready状态、局部HAL和租约，并将本测试隔离绑定/类别设为real；这些设置不是实际仪器状态或资格证据。执行创建复用`test_pc04a2_route_freeze.py::launch`，跳过基站适配profile、信道仿真器binding、plan、执行qualification及转台coordinate profile这五项冻结，替换runner HAL getter与后台`_run_case`，并手动将execution置completed，不能视为后台真实执行完成。
+
+该补验只证明未被替换的**目标route冻结、当前身份重核与直接ChannelEngine取值**：confirmed 28dB在直接调用`_query_calibration_entries`时只计一次、probe_gain=0，上游不累计；确认前旧执行不补填，当前input声明变坏重核拒绝，历史冻结不重写。它不是完整后台执行阶段到达此消费者的证据，不证明其他仪表资格冻结、硬件流程、现场实测或认证。既有结果1 passed/19 warnings/2.82s仅按此范围复用，与纯Mock浏览器证据分开。
 
 ## 命令、统计与输入复用
 
