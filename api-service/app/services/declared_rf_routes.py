@@ -70,34 +70,43 @@ def _validate_ce_source_boundary(nodes, incoming, outgoing, path_nodes, path_edg
                 raise ValueError(f'{context} 上游内部通路声明不足')
 
             def pair_reaches(starts, targets):
-                # 先找真实保存的定向链，再逐pair核证；不审查与目标无关的未知分支。
-                frontier, parents = list(starts), {}
-                seen = set(starts)
+                # 先反查目标的完整前驱，再核起点可达的相关链；无关未知分支不参与。
+                relevant, frontier = set(targets), list(targets)
                 for current in frontier:
-                    if current in targets:
-                        while current in parents:
-                            parent = parents[current]
+                    for pair in pairs:
+                        if (isinstance(pair, dict) and pair.get('to_port') == current and
+                                isinstance(pair.get('from_port'), str) and pair['from_port'] not in relevant):
+                            parent = pair['from_port']
+                            relevant.add(parent); frontier.append(parent)
+                completed = set()
+
+                def walk(current, active):
+                    if current in active or (source['id'], current) in stack:
+                        raise ValueError(f'{context} 上游端口链存在回路（{source["id"]}.{current}）')
+                    if current in completed:
+                        return  # 已完成分支的汇合不是当前栈回边。
+                    for pair in pairs:
+                        if (isinstance(pair, dict) and pair.get('from_port') == current and
+                                pair.get('to_port') in relevant):
+                            target = pair['to_port']
                             try:
-                                internal_transition(source, parent, current,
+                                internal_transition(source, current, target,
                                     incoming_count=len(incoming.get(source['id'], [])),
                                     outgoing_count=len(outgoing.get(source['id'], [])))
                             except ValueError as exc:
                                 raise ValueError(f'{context} 上游pair声明不足：{exc}') from exc
-                            current = parent
-                        return True
-                    for pair in pairs:
-                        if (isinstance(pair, dict) and pair.get('from_port') == current and
-                                isinstance(pair.get('to_port'), str) and pair['to_port'] not in seen):
-                            target = pair['to_port']
-                            seen.add(target); parents[target] = current; frontier.append(target)
-                return False
+                            walk(target, active | {current})
+                    completed.add(current)
+
+                reachable = starts & relevant
+                for start in reachable:
+                    walk(start, set())
+                return bool(reachable)
 
             if pair_reaches(selected_pins, {pin}):
                 raise ValueError(f'{context} 保存内部pair可达所选路径，构成回接')
-            input_pins = {pair.get('from_port') for pair in pairs
-                if isinstance(pair, dict) and pair.get('to_port') == pin
-                and isinstance(pair.get('from_port'), str)}
-            previous = [item for item in previous if item.get('target_pin') in input_pins]
+            previous = [item for item in previous
+                if pair_reaches({item.get('target_pin')}, {pin})]
         if len(previous) != 1:
             ids = ','.join(item['id'] for item in previous)
             raise ValueError(f'{context} 上游来源不唯一或内部通路声明不足（{ids}）')
@@ -111,9 +120,10 @@ def _validate_ce_source_boundary(nodes, incoming, outgoing, path_nodes, path_edg
         if input_state in stack or input_state == state:
             raise ValueError(f'{context} 上游端口链存在回路')
         try:
-            internal_transition(source, input_pin, pin,
-                incoming_count=len(incoming.get(source['id'], [])),
-                outgoing_count=len(outgoing.get(source['id'], [])))
+            if 'internal_paths' not in params:
+                internal_transition(source, input_pin, pin,
+                    incoming_count=len(incoming.get(source['id'], [])),
+                    outgoing_count=len(outgoing.get(source['id'], [])))
         except ValueError as exc:
             raise ValueError(f'{context}（连接 {before["id"]}）上游声明不足：{exc}') from exc
         trace(before, stack | {state, input_state})

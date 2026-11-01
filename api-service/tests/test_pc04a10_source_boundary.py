@@ -120,6 +120,76 @@ def test_upstream_passive_pair_uses_only_its_saved_input_and_not_unrelated_ports
 
 
 @pytest.mark.parametrize('consumer', ['shared', 'execution'])
+@pytest.mark.parametrize('fault', ['direct_return', 'multi_hop_return'])
+def test_off_path_upstream_pair_chain_cannot_hide_ce_return(consumer, fault):
+    # 恢复仅按直接 to_port 筛选会漏掉 e→f→d，使两个真实消费方都误放行。
+    from app.schemas.topology_internal_paths import validate_internal_path_write
+    from app.schemas.topology_ports import validate_port_write
+
+    nodes, edges = boundary_graph(explicit=True)
+    pairs = [('c', 'd'), ('e', 'd')] if fault == 'direct_return' else [
+        ('c', 'd'), ('e', 'f'), ('f', 'd')]
+    nodes.append(node('up', 'combiner',
+        {'c': 'input', 'd': 'output', 'e': 'input', 'f': 'bidirectional'},
+        internal_paths=[dict(from_port=a, to_port=b) for a, b in pairs]))
+    next(e for e in edges if e['id'] == 'feed').update(source='up', source_pin='d')
+    edges += [edge('bse-up', 'bse', 'DL', 'up', 'c'),
+        edge('ce-return', 'ce', 'B1.1', 'up', 'e')]
+    validate_port_write(nodes, edges)
+    validate_internal_path_write(nodes, edges,
+        [dict(id='mimo_ota', active_connections=[e['id'] for e in edges])])
+    with pytest.raises(ValueError) as failure:
+        resolve(nodes, edges, consumer)
+    assert 'feed' in str(failure.value) and 'up.d' in str(failure.value)
+
+
+@pytest.mark.parametrize('consumer', ['shared', 'execution'])
+@pytest.mark.parametrize('case', ['unique_chain', 'shared_inputs', 'merged_dag',
+    'internal_cycle', 'unknown_parallel_chain', 'unrelated_unknown'])
+def test_off_path_upstream_complete_pair_relation(consumer, case):
+    # 只验一条直接/最短pair会漏相关环和unknown；全局visited又会误伤已完成的DAG汇合。
+    from app.schemas.topology_internal_paths import validate_internal_path_write
+    from app.schemas.topology_ports import validate_port_write
+
+    nodes, edges = boundary_graph(explicit=True)
+    directions = {'c': 'input', 'd': 'output', 'e': 'bidirectional',
+        'f': 'bidirectional', 'g': 'bidirectional'}
+    pairs = [('c', 'e'), ('e', 'f'), ('f', 'd')]
+    if case == 'merged_dag':
+        pairs = [('c', 'e'), ('c', 'f'), ('e', 'g'), ('f', 'g'), ('g', 'd')]
+    elif case == 'internal_cycle':
+        pairs = [('c', 'd'), ('c', 'e'), ('e', 'f'), ('f', 'e'), ('f', 'd')]
+    elif case == 'unknown_parallel_chain':
+        pairs = [('c', 'd'), *pairs]
+        directions['f'] = 'unknown'
+    elif case == 'unrelated_unknown':
+        pairs = [('c', 'd'), ('e', 'f')]
+        directions['f'] = 'unknown'
+        edges.append(edge('irrelevant', 'link', 'missing', 'up', 'e'))
+    nodes.append(node('up', 'combiner', directions,
+        internal_paths=[dict(from_port=a, to_port=b) for a, b in pairs]))
+    next(e for e in edges if e['id'] == 'feed').update(source='up', source_pin='d')
+    edges.append(edge('bse-up', 'bse', 'DL', 'up', 'c'))
+    if case == 'shared_inputs':
+        edges.append(edge('feed2', 'up', 'd', 'ce', 'input2'))
+    # 无关缺pin反例刻意不满足全图写契约；其余图（含unknown草稿）均实际核保存契约。
+    if case != 'unrelated_unknown':
+        validate_port_write(nodes, edges)
+        validate_internal_path_write(nodes, edges,
+            [dict(id='mimo_ota', active_connections=[e['id'] for e in edges])])
+    before = copy.deepcopy((nodes, edges))
+    if case in ('internal_cycle', 'unknown_parallel_chain'):
+        with pytest.raises(ValueError) as failure:
+            resolve(nodes, edges, consumer)
+        assert 'feed' in str(failure.value) and 'up.d' in str(failure.value)
+    else:
+        result = resolve(nodes, edges, consumer)
+        if consumer == 'shared':
+            assert [e['id'] for e in result[1]] == ['terminal']
+    assert (nodes, edges) == before
+
+
+@pytest.mark.parametrize('consumer', ['shared', 'execution'])
 @pytest.mark.parametrize('fault', [None, 'selected_port', 'reachable_selected_pair', 'missing_pair',
     'input_to_selected_output', 'selected_output_to_upstream_output',
     'multi_hop_input_to_selected_output', 'multi_hop_selected_to_upstream_output',
