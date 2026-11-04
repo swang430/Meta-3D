@@ -139,3 +139,22 @@ async def test_real_request_bound_to_mock_driver_is_marked_simulated(db,monkeypa
     row=await ChannelCalibrationService(db).run_temporal_calibration('UMa','LOS',3.5,use_mock=False)
     assert row.measured_pdp['provenance']['source']=='simulated'
     assert row.validation_pass is None
+
+
+@pytest.mark.parametrize('status,verdict,passed,failed', [
+    ('completed', None, 0, 0), ('completed', True, 1, 0),
+    ('completed', False, 0, 1), ('failed', None, 0, 1),
+])
+def test_workflow_http_counts_preserve_unknown_and_real_failures(client, monkeypatch, status, verdict, passed, failed):
+    from app.api import workflow as api
+    from app.services.workflow_engine import WorkflowDefinition, WorkflowStep, StepType, WorkflowExecution, StepResult, StepStatus
+    execution = WorkflowExecution(id='pc08-workflow', workflow=WorkflowDefinition(
+        name='diagnostic', version='1', steps=[WorkflowStep(id='temporal', type=StepType.CHANNEL_CALIBRATION)]))
+    execution.step_results['temporal'] = StepResult(step_id='temporal', status=StepStatus(status), validation_pass=verdict)
+    monkeypatch.setattr(api, '_executions', {execution.id: execution})
+    detail = client.get('/api/v1/workflows/executions/' + execution.id)
+    listing = client.get('/api/v1/workflows/executions')
+    assert detail.status_code == listing.status_code == 200
+    for data in [detail.json(), listing.json()['executions'][0]]:
+        assert data['passed_steps'] == passed
+        assert data['failed_steps'] == failed

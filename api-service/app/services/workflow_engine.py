@@ -194,7 +194,7 @@ class WorkflowExecution:
     def failed_steps(self) -> int:
         return sum(
             1 for r in self.step_results.values()
-            if r.status == StepStatus.FAILED or (r.status == StepStatus.COMPLETED and not r.validation_pass)
+            if r.status == StepStatus.FAILED or (r.status == StepStatus.COMPLETED and r.validation_pass is False)
         )
 
 

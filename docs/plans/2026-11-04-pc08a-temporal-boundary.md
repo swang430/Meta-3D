@@ -48,3 +48,11 @@ GUI、API/schema/YAML/生成TS同改，新诊断字段可查看，时域名称�
 - 拓扑整文件核对：api-service目录 `DATABASE_URL=sqlite:////tmp/pc08-topology-module.db USE_MOCK_INSTRUMENTS=true PYTHONPATH=. .venv/bin/python -m pytest tests/test_pc04a4c_internal_routes.py -q --color=no --log-cli-level=WARNING`，68 passed/643 warnings/62.42s，exit0；`/tmp/pc08-topology-module.log`。偶发根因未明，不放宽断言、不加重试。本片生产改动不涉及该作业路径。
 - 文档最终G8/G11定向复核：根目录 `DATABASE_URL=sqlite:////tmp/pc08-doc-gates.db USE_MOCK_INSTRUMENTS=true PYTHONPATH=api-service api-service/.venv/bin/python -m pytest api-service/tests/test_rule_gates.py -k 'g8_docs or g11_docs' -q --color=no`，2 failed/68 deselected/39 warnings/1.62s，exit1，仍为上述历史文档路由失败，`/tmp/pc08-doc-gates.log`。
 - 独立累计内审及三文件测试增量审查CLEAN。全量后输入差异仅三个旧测试文件；生产、契约、依赖未变化。以上组合证据为提交验证依据，不将六项基线或未复现偶发洗成通过。
+
+## R1 工作流统计漏项
+
+R1审查a9e990ea指出WorkflowExecution.failed_steps把COMPLETED/None计为失败，详情/列表和日志同源受影响。先真实HTTP红例1 failed/3 passed/12 deselected/75 warnings/4.06s（/tmp/pc08-r1-red.log），仅收窄为validation_pass is False，继续计入真正FAILED步骤。会话完成函数服务端重算，不采用传入统计；停止条件读取StepStatus，不读此计数。未改共享schema、冻结或正式来源，独立reviewer确认按局部影响面验证。
+
+根目录 `DATABASE_URL=sqlite:////tmp/pc08-r1-final.db USE_MOCK_INSTRUMENTS=true PYTHONPATH=api-service api-service/.venv/bin/python -m pytest api-service/tests/test_workflow_engine.py api-service/tests/test_e2e_calibration.py api-service/tests/test_pc08a_temporal_boundary.py api-service/tests/test_calibration_report.py -q --color=no --log-cli-level=WARNING`，88 passed/348 warnings/14.05s，exit0，/tmp/pc08-r1-final.log。逆变异恢复not判据，真实HTTP四态1 failed/3 passed/12 deselected/75 warnings/4.03s（/tmp/pc08-r1-mutation.log），finally双向assert恢复。GUI/契约未变化，不重复build。
+
+前述“全量后仅三个测试文件变化”限定R1前版本；R1后新增这一行生产统计修复和对应测试，完成上述局部验证，未重跑全量，不声称R2 HEAD全量绿。保留六项基线和一次拓扑未复现偶发。
