@@ -15,6 +15,7 @@
  *   is unavailable, while LabProfile/calibration remain live DB truth.
  * - Polls ~10s (readiness changes slowly).
  */
+import { useLayoutEffect, useRef } from 'react'
 import { useQuery } from '@tanstack/react-query'
 import { Card, Group, Stack, Text, Badge, SimpleGrid, Loader, Alert, Divider } from '@mantine/core'
 import {
@@ -317,12 +318,31 @@ export function ZoneReadiness() {
   // last successful data in cache. Publish only after the selected key is idle.
   const readiness =
     fetchStatus === 'idle' && !error && selectedLabProfileId ? data : undefined
+  // 只保留同一 Lab 的布局尺寸，不保留/发布刷新前的业务结论。
+  // 否则每次轮询撤下卡片时页面变短，浏览器会把主滚动条夹回顶部。
+  const cardRef = useRef<HTMLDivElement>(null)
+  const confirmedLayout = useRef<{ labId: string; height: number } | null>(null)
+  useLayoutEffect(() => {
+    const card = cardRef.current
+    if (!readiness || !selectedLabProfileId || !card) return
+    const measure = () => {
+      confirmedLayout.current = { labId: selectedLabProfileId, height: card.getBoundingClientRect().height }
+    }
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(card)
+    return () => observer.disconnect()
+  }, [readiness, selectedLabProfileId])
+  const reservedHeight = !readiness && confirmedLayout.current?.labId === selectedLabProfileId
+    ? confirmedLayout.current.height
+    : undefined
+
   const verdict = readiness
     ? projectReadinessVerdict(buildCells(readiness), readiness.available)
     : undefined
 
   return (
-    <Card withBorder radius="md" padding="lg">
+    <Card ref={cardRef} mih={reservedHeight} withBorder radius="md" padding="lg">
       <Stack gap="sm">
         <Group justify="space-between">
           <Group gap="xs">
