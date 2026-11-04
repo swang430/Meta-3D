@@ -21,7 +21,30 @@ import type {
   FixedRouteRecord,
   BatchPlanRequest, BatchPlan, BatchContinueRequest, BatchJobRecord,
   RouteSelection, RouteSelectionScope, RouteApplicationPreview, ConfirmRouteApplication, RouteApplicationRecord,
+  RouteCalibrationAvailability, RouteRevocationRecord, RevokeRouteCalibration,
 } from '../types/api'
+
+export async function fetchRouteCalibrationAvailability(labId:string,mode:string,frequency:number):Promise<RouteCalibrationAvailability> {
+  const value=(await apiClient.get<RouteCalibrationAvailability>(`/lab-profiles/${labId}/route-calibration-availability`,
+    {params:{operating_mode:mode,frequency_mhz:frequency}})).data
+  if(value.lab_profile_id!==labId || value.operating_mode!==mode || value.frequency_mhz!==frequency)
+    throw new Error('来源响应与当前实验室、模式或目标频率不一致')
+  return value
+}
+
+function checkedRevocation(labId:string,runId:string,value:RouteRevocationRecord):RouteRevocationRecord {
+  // 同次采集可有多个采用编号；独立撤销记录保留第一次撤销时的application_id。
+  if(value.lab_profile_id!==labId || value.acquisition_run_id!==runId) throw new Error('撤销响应与实验室或采集记录不一致')
+  return value
+}
+export async function fetchRouteRevocation(labId:string,applicationId:string,runId:string):Promise<RouteRevocationRecord|null> {
+  const value=(await apiClient.get<RouteRevocationRecord|null>(`/lab-profiles/${labId}/route-calibration-applications/${applicationId}/revocation`)).data
+  return value===null?null:checkedRevocation(labId,runId,value)
+}
+export async function revokeRouteApplication(labId:string,applicationId:string,runId:string,body:RevokeRouteCalibration):Promise<RouteRevocationRecord> {
+  return checkedRevocation(labId,runId,(await apiClient.post<RouteRevocationRecord>(
+    `/lab-profiles/${labId}/route-calibration-applications/${applicationId}/revocation`,body)).data)
+}
 
 function checkedBatch(labId:string,value:BatchJobRecord,jobId?:string):BatchJobRecord {
   if(value.lab_id!==labId || jobId && value.job_id!==jobId) throw new Error('批响应与当前实验室或作业不一致')
