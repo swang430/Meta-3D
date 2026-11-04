@@ -56,6 +56,8 @@ import {canRestore,ownsRevisionRequest,ownsLibraryInspection,ownsSavedInspection
 import type {RevisionContext,SavedInspectionContext} from './topologyRevisionState';
 import {validateDraftInternalPaths} from './internalPathHelpers';
 import {nominalFieldsForNode, edgeNominalFields, cableNominalFields, setNodeNominal, setEdgeNominal} from './nominalProperties';
+import { CalibrationInstruments } from './CalibrationInstruments';
+import { calibrationCanvasConnections, calibrationNodeVisible } from './calibrationChainView';
 import { RouteCalibrationPanel } from './RouteCalibrationPanel';
 import { routeCanvasConnections, probePathDeclaration } from './routeCalibrationState';
 import { routeGraphMatchesSaved } from './routeCalibrationState';
@@ -80,17 +82,19 @@ interface SwitchOption {
 
 interface TopologyEditorProps {
   switchCategoryId?: string;
+  onOpenResources?: () => void;
 }
 
 const nodeTypeOptions = [
   ['channel_emulator','信道仿真器'],['communication_tester','基站仿真器'],['emcenter','射频开关及功放'],
-  ['probe','测试探头'],['reference_antenna','校准参考天线'],['signal_analyzer','校准分析仪'],['vna','矢量网络分析仪'],
+  ['probe','测试探头'],['reference_antenna','校准参考天线'],['signal_analyzer','校准分析仪'],['vna','矢量网络分析仪'],['signal_generator','独立信号源（接线声明）'],
   ['pad','衰减器'],['amplifier','功放'],['combiner','合路器'],['cable','线缆'],['receive_cable','校准接收线缆'],['air_path','校准空气传播段'],['termination','负载'],
 ].map(([value,label])=>({value,label}));
 
 // ── Inner: ReactFlow canvas with editing ────────────────────────
 
 interface TopologyFlowProps {
+  onOpenResources?: () => void;
   focused:boolean;
   onFocusChange:(value:boolean)=>void;
   topology: SwitchTopology;
@@ -105,7 +109,7 @@ interface TopologyFlowProps {
   onWriteStart: ()=>void;
 }
 
-const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversionEpoch, libraryBusy, isLibraryBusy, onTopologyUpdated, onDirtyChange, onBusyChange, onWriteStart }: TopologyFlowProps) => {
+const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfileId, conversionEpoch, libraryBusy, isLibraryBusy, onTopologyUpdated, onDirtyChange, onBusyChange, onWriteStart }: TopologyFlowProps) => {
   const { screenToFlowPosition, setCenter,fitView,getNodes } = useReactFlow();
   const [auxiliary,setAuxiliary]=useState(true);
   const [calibrationExpanded,setCalibrationExpanded]=useState(false);
@@ -210,7 +214,7 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
   useEffect(() => () => onDirtyChange(false), [onDirtyChange]);
 
   const initialNodes: Node[] = React.useMemo(() => {
-    const activeConnectionIds = new Set(routeCanvasConnections(draft,activeMode,highlightedRoute));
+    const activeConnectionIds = new Set(calibrationCanvasConnections(draft,routeCanvasConnections(draft,activeMode,highlightedRoute),auxiliary||calibrationExpanded));
 
     // Collect node IDs that have at least one active connection
     const activeNodeIds = new Set<string>();
@@ -225,6 +229,7 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
 
     return draft.nodes
       .filter((n) => {
+        if(calibrationNodeVisible(n,auxiliary||calibrationExpanded)||(auxiliary||calibrationExpanded)&&activeNodeIds.has(n.id))return true;
         if(located&&(n.id===located.source||n.id===located.target))return true;
         if(highlightedRoute?.calibration_node_ids.includes(n.id)&&activeNodeIds.has(n.id))return true;
         // If node has visible_modes restriction, check if current mode is in the list
@@ -243,10 +248,10 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
         style:highlightedRoute?.node_ids.includes(n.id)?{outline:'3px solid var(--mantine-color-blue-5)',outlineOffset:3}:
           highlightedRoute?.calibration_node_ids.includes(n.id)?{outline:'3px solid var(--mantine-color-orange-5)',outlineOffset:3}:undefined,
       }));
-  }, [draft, activeMode, highlightedRoute, selectedConnectionId]);
+  }, [draft, activeMode, highlightedRoute, selectedConnectionId, auxiliary, calibrationExpanded]);
 
   const initialEdges: Edge[] = React.useMemo(() => {
-    const activeConnectionIds = new Set(routeCanvasConnections(draft,activeMode,highlightedRoute));
+    const activeConnectionIds = new Set(calibrationCanvasConnections(draft,routeCanvasConnections(draft,activeMode,highlightedRoute),auxiliary||calibrationExpanded));
 
     return draft.connections
       .filter((c) => activeConnectionIds.has(c.id)||c.id===selectedConnectionId)
@@ -279,7 +284,7 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
         markerStart:portView.arrowStart?marker:undefined,
       };
     });
-  }, [draft, activeMode, highlightedRoute, selectedConnectionId]);
+  }, [draft, activeMode, highlightedRoute, selectedConnectionId, auxiliary, calibrationExpanded]);
 
   const [nodes, setNodes, onNodesChange] = useNodesState(initialNodes);
   const [edges, setEdges, onEdgesChange] = useEdgesState(initialEdges);
@@ -534,7 +539,7 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
   const activeModeObj = draft.operating_modes.find(m => m.id === activeMode);
   const addNode = () => {
     if (isWriteBlocked()) return;
-    const calibrationOnly = ['reference_antenna','signal_analyzer','air_path','receive_cable'].includes(newNodeType);
+    const calibrationOnly = ['reference_antenna','signal_analyzer','vna','signal_generator','air_path','receive_cable'].includes(newNodeType);
     const mode = calibrationOnly ? CALIBRATION_MODE : activeMode || 'mimo_ota';
     let current = draft;
     if (!current.operating_modes.some(m=>m.id===mode)) current = {...current,operating_modes:[...current.operating_modes,{id:mode,name:mode===CALIBRATION_MODE?'校准接线':'MIMO OTA 测试',active_connections:[]}]};
@@ -627,9 +632,9 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
             }}>转换旧配置</Button>
             <Select aria-label="器件列表" placeholder="搜索全部器件（含隐藏）" searchable value={null} w={260}
               data={draft.nodes.map(node=>{
-                const activeConnections=new Set(routeCanvasConnections(draft,activeMode,highlightedRoute));
+                const activeConnections=new Set(calibrationCanvasConnections(draft,routeCanvasConnections(draft,activeMode,highlightedRoute),auxiliary||calibrationExpanded));
                 const connected=draft.connections.some(c=>activeConnections.has(c.id)&&(c.source===node.id||c.target===node.id));
-                const visible=highlightedRoute?.calibration_node_ids.includes(node.id)&&connected ||
+                const visible=calibrationNodeVisible(node,auxiliary||calibrationExpanded)||(auxiliary||calibrationExpanded)&&connected || highlightedRoute?.calibration_node_ids.includes(node.id)&&connected ||
                   (Array.isArray(node.params.visible_modes)?node.params.visible_modes.includes(activeMode):connected);
                 return {value:node.id,label:`${node.label} · ${node.id} · ${visible?'当前模式可见':'当前模式隐藏'}`};
               })}
@@ -702,7 +707,8 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
           <Text fw={600}>校准面板专注编辑</Text>
           <Button variant="default" onClick={()=>setCalibrationExpanded(false)}>返回拓扑与校准</Button>
         </Group>}
-        <div style={{flex:1,minHeight:0}}>
+        <div style={{flex:1,minHeight:0,overflowY:'auto'}}>
+        <CalibrationInstruments graph={draft} labId={labProfileId} onOpenResources={onOpenResources}/>
         {topology.id?<RouteCalibrationPanel key={`${labProfileId}:${topology.id}`} labId={labProfileId} topologyId={topology.id}
           mode={activeMode} dirty={dirty} saving={saving||libraryBusy||unknownWrite} revision={JSON.stringify([topology.nodes,topology.connections,topology.operating_modes])}
           graph={topology}
@@ -751,7 +757,7 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
             (draft.operating_modes.some(mode=>mode.id===CALIBRATION_MODE)?
               <Button variant="light" disabled={editingBlocked} onClick={()=>setSelectedNode({...selectedNode,params:{...selectedNode.params,visible_modes:[CALIBRATION_MODE]}})}>恢复到校准接线模式</Button>:
               <Alert color="yellow">请先关闭抽屉，点击“校准接线”创建模式，再从器件列表重新打开；不会自动加入正常模式。</Alert>)}
-          {['channel_emulator','communication_tester','emcenter','signal_analyzer','vna','ce_port','bse_port','switch_slot'].includes(selectedNode.type) && <Select label="仪器目录关联" description="仅引用已有目录；不修改地址或驱动，也不代表已经绑定或连接。" data={catalog} value={selectedNode.params.instrument_category_id || null} disabled={editingBlocked} clearable onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,instrument_category_id:value}})} />}
+          {['channel_emulator','communication_tester','emcenter','signal_analyzer','vna','signal_generator','ce_port','bse_port','switch_slot'].includes(selectedNode.type) && <Select label="仪器目录关联" description="仅引用已有目录；不修改地址或驱动，也不代表已经绑定或连接。" data={catalog} value={selectedNode.params.instrument_category_id || null} disabled={editingBlocked} clearable onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,instrument_category_id:value}})} />}
           {selectedNode.type==='switch_slot'&&<Text size="xs">须关联本图开关类别{draft.switch_category_id}。物理port_maps在原仪器管理→射频开关→端口映射配置中保存；每映射须明确switch_id、relay_type、input_port、output_port及topology_input_pin/output_pin，不能按显示名称猜端口。</Text>}
           {selectedNode.type==='probe'&&<Stack gap="xs">
             <NumberInput label="探头编号（从0开始）" min={0} allowDecimal={false} value={selectedNode.params.probe_id??''} disabled={editingBlocked} onChange={value=>setSelectedNode({...selectedNode,params:{...selectedNode.params,probe_id:value}})}/>
@@ -926,7 +932,7 @@ const TopologyFlow = ({ focused,onFocusChange,topology, labProfileId, conversion
 
 // ── Outer: self-contained page component ────────────────────────
 
-export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorProps) => {
+export const TopologyEditor = ({ switchCategoryId: initialId, onOpenResources }: TopologyEditorProps) => {
   const [focused,setFocused]=useState(false);
   const canvasFrame=useRef<HTMLDivElement>(null);
   const configurationCard=useRef<HTMLDivElement>(null);
@@ -1229,7 +1235,7 @@ export const TopologyEditor = ({ switchCategoryId: initialId }: TopologyEditorPr
         :topoLoading||loadedScope!==scope&&!topoError?<Center h="100%"><Loader/></Center>
         :topoError?<Center h="100%"><Alert color="red" title="拓扑加载失败">{topoError}</Alert></Center>
         :currentTopology?<ReactFlowProvider key={`${labProfileId}/${selectedSwitchId}/${currentTopology.id}`}>
-          <TopologyFlow focused={focused} onFocusChange={setFocused} topology={currentTopology} labProfileId={labProfileId} conversionEpoch={conversionEpoch}
+          <TopologyFlow onOpenResources={blocked?undefined:onOpenResources} focused={focused} onFocusChange={setFocused} topology={currentTopology} labProfileId={labProfileId} conversionEpoch={conversionEpoch}
             libraryBusy={libraryBusy||libraryUnknown} isLibraryBusy={isLibraryBusy}
             onDirtyChange={dirtyCallback} onBusyChange={busyCallback} onWriteStart={invalidateLibraryInspection}
             onTopologyUpdated={updated=>{if(liveFlow.current===flowIdentity&&updated.id===currentId.current){setTopology(updated);setLibrary(items=>items.map(item=>item.id===updated.id?updated:item))}}}/>
