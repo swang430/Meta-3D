@@ -9,8 +9,39 @@ from app.schemas.route_calibration import RouteSelection, RouteApplicationPrevie
 from app.services.calibration.route_calibration import (list_route_selections,list_individual_route_selections, RouteScopeConflict,
     evaluate_route_application,confirm_route_application,list_route_applications,RouteApplicationConflict)
 from app.services.calibration.configuration_scope import build_calibration_scope,build_selected_route_calibration_scope
+from app.schemas.route_calibration import RevokeRouteCalibration, RouteRevocationRecord
+from app.services.calibration.route_revocation import read_route_revocation, revoke_route_calibration
 
 router = APIRouter(prefix='/lab-profiles', tags=['拓扑校准路径'])
+
+
+@router.get('/{lab_profile_id}/route-calibration-applications/{application_id}/revocation',
+            response_model=RouteRevocationRecord | None,
+            responses={404: {'description': '本实验室中没有这条采用记录'}})
+def revocation_status(lab_profile_id: UUID, application_id: UUID, db: Session = Depends(get_db)):
+    """读取独立撤销状态；null仅表示没有撤销记录，不授予校准资格。"""
+    try:
+        return read_route_revocation(db, lab_profile_id, application_id)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
+@router.post('/{lab_profile_id}/route-calibration-applications/{application_id}/revocation',
+             response_model=RouteRevocationRecord, status_code=201,
+             responses={200: {'model': RouteRevocationRecord, 'description': '同理由重试，返回原撤销记录'},
+                        404: {'description': '本实验室中没有这条采用记录'},
+                        409: {'description': '该次采集已按另一理由撤销'}})
+def revoke_application(lab_profile_id: UUID, application_id: UUID, body: RevokeRouteCalibration,
+                       response: Response, db: Session = Depends(get_db)):
+    """停止同次采集的后续选用，不修改原始采用及历史执行。"""
+    try:
+        record, created = revoke_route_calibration(db, lab_profile_id, application_id, body)
+        response.status_code = 201 if created else 200
+        return record
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    except RouteApplicationConflict as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 @router.get('/{lab_profile_id}/route-calibration-paths', response_model=list[RouteSelection])

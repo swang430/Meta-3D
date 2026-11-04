@@ -33,6 +33,23 @@ class RouteCalibrationSelection(Base):
     version=Column(Integer,nullable=False)
 
 
+class RouteCalibrationRevocation(Base):
+    """一次采集的不可变撤销；不修改原始采用或采集快照。"""
+    __tablename__ = 'route_calibration_revocations'
+    __table_args__ = (UniqueConstraint('lab_profile_id', 'acquisition_run_id', name='uq_route_revoked_run'),)
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    lab_profile_id = Column(UUID(as_uuid=True), ForeignKey('lab_profiles.id'), nullable=False)
+    acquisition_run_id = Column(UUID(as_uuid=True), ForeignKey('diagnostic_runs.id'), nullable=False)
+    application_id = Column(UUID(as_uuid=True), ForeignKey('route_calibration_applications.id'), nullable=False)
+    record = Column(JSON, nullable=False)
+
+
+@event.listens_for(RouteCalibrationRevocation, 'before_update')
+@event.listens_for(RouteCalibrationRevocation, 'before_delete')
+def _immutable_revocation(mapper, connection, target):
+    raise ValueError('撤销记录不可修改或删除；请保留审计原文')
+
+
 @event.listens_for(RouteCalibrationApplication,'before_update')
 @event.listens_for(RouteCalibrationApplication,'before_delete')
 def _immutable_application(mapper,connection,target):

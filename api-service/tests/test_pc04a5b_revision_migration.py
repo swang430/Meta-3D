@@ -52,6 +52,7 @@ def test_fresh_alembic_head(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     engine = create_engine(env['DATABASE_URL'])
     with engine.connect() as conn:
-        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == 'f28a91c7d6b3'
+        assert conn.exec_driver_sql('SELECT version_num FROM alembic_version').scalar() == 'c4d6e8f01234'
         assert conn.exec_driver_sql('SELECT count(*) FROM switch_topology_revisions').scalar() == 0
+        assert conn.exec_driver_sql('SELECT count(*) FROM route_calibration_revocations').scalar() == 0
     engine.dispose()

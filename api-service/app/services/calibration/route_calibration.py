@@ -229,6 +229,8 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
     blockers=[]
     provenance='unknown'
     measured_value=None
+    from app.services.calibration.route_revocation import revoked_run_ids
+    revoked = revoked_run_ids(db, lab_id)
     if result is None:
         blockers.append('incomplete_capture_record')
     else:
@@ -249,6 +251,9 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
                     warnings.append('保存图的显示或其他声明有变化，请复核；未据此要求重新校准')
             except (LookupError,ValueError):
                 blockers.append('route_unavailable')
+    if run_id in revoked:
+        blockers.append('acquisition_revoked')
+        measured_value = None
     eligibility=RouteEligibility(eligible_for_adoption=not blockers,blockers=blockers,warnings=warnings,
         acquisition_run_id=run_id,route_digest=selection.route_digest if selection else None,
         method=result.method if result else None,frequency_mhz=result.request.frequency_mhz if result else None,
@@ -261,7 +266,7 @@ def evaluate_route_application(db, lab_id: UUID, run_id: UUID) -> RouteApplicati
         if pointer is not None:
             current=pointer.application_id
             saved=db.get(RouteCalibrationApplication,current)
-            if saved is not None:
+            if saved is not None and saved.acquisition_run_id not in revoked:
                 previous=RouteApplicationRecord.model_validate(saved.record)
                 if datetime.fromisoformat(previous.coverage_snapshot['adoption_valid_until'].replace('Z','+00:00'))>datetime.now(timezone.utc):
                     old_value=previous.net_loss_db
@@ -319,6 +324,8 @@ def confirm_route_application(db,lab_id: UUID,request: ConfirmRouteApplication,a
             target_name=jobs.TARGET,kind='scpi_sequence').with_for_update().one_or_none()
         if row is None:
             raise LookupError('本实验室中没有这条采集记录')
+        from app.services.calibration.route_revocation import lock_acquisition_runs
+        lock_acquisition_runs(db, [row.id])
         candidate=evaluate_route_application(db,lab_id,request.acquisition_run_id)
         now=datetime.now(timezone.utc)
         if request.adoption_valid_until<=now:
