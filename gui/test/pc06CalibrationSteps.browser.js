@@ -81,10 +81,21 @@ async page => {
   await fixed.waitFor();if(await list.isVisible())throw Error('切固定接线仍显示清单表单');
   await fixed.getByLabel('完整校准通路',{exact:true}).click();await page.getByRole('option').filter({hasText:'edge0'}).click();
   await fixed.getByRole('button',{name:'开始自动采集',exact:true}).waitFor();
+  await panel.getByTestId('acquisition-history').locator('summary').click();
   await panel.getByRole('button',{name:'查看记录',exact:true}).click();
   await panel.getByLabel('选用截止时间（本地时间，明确填写）',{exact:true}).fill('2099-01-01T12:00');
   await panel.getByRole('button',{name:'确认采用此实测记录',exact:true}).click();
   await phase('1 准备');await panel.getByText(/确认请求未获成功回执/).waitFor();
   if(!await panel.getByRole('button',{name:'重新读取采用预览与历史',exact:true}).isVisible())throw Error('采用未知回执核对入口被步骤隐藏');
-  return {passed:['三步骤保持表单状态','1×1清单沿原预览启动','所有步骤保留人工与取消','取消后审阅原记录','固定接线证据入口保留','采用未知回执跨步骤可见']};
+  const summary=panel.getByTestId('calibration-result-summary');
+  await summary.getByText('0.100 dB',{exact:true}).waitFor();
+  if(await panel.locator('details').filter({has:page.locator('summary',{hasText:'本次冻结配置、原始回复与读数'})}).getAttribute('open')!==null)throw Error('原始JSON默认展开');
+  record.status='simulated';record.result.status='simulated';record.result.sample_std_db=99;record.result.net_loss_db=99;record.result.request.mock_input={samples:[],expected_loss_db:null};
+  await page.reload();await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
+  await panel.getByTestId('acquisition-history').locator('summary').click();await panel.getByRole('button',{name:'查看记录',exact:true}).click();
+  await panel.getByTestId('calibration-result-summary').waitFor();
+  if(await panel.getByTestId('calibration-result-summary').getByText(/99/).count())throw Error('模拟数值进入正式摘要');
+  if(!await panel.getByRole('button',{name:'确认采用此实测记录',exact:true}).isDisabled())throw Error('模拟记录可采用');
+  if(await panel.getByTestId('mock-calibration-result').locator('details').getAttribute('open')!==null)throw Error('模拟原始明细默认展开');
+  return {passed:['三步骤保持表单状态','1×1清单沿原预览启动','所有步骤保留人工与取消','取消后审阅原记录','固定接线证据入口保留','采用未知回执跨步骤可见','重复性摘要和原始证据分层','模拟数值不进入正式摘要且不可采用']};
 }

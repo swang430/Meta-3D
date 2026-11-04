@@ -36,6 +36,7 @@ export function fixedRouteDisplay(record: FixedRouteRecord) {
     source: reading(last?.source_after_dbm), received: reading(last?.received_dbm),
     cleanup: simulated ? '模拟模式，未操作真实仪器' : result?.cleanup_confirmed === true
       ? '已确认停止本次单音' : '尚未确认；请结合现场状态处理',
+    repeatability: measured && finite(result?.sample_std_db) !== null ? `${result!.sample_std_db!.toFixed(3)} dB` : '未知',
     loss: typeof loss === 'number' && Number.isFinite(loss) ? `${loss.toFixed(2)} dB（${loss < 0 ? '增益' : '损耗'}）` : '未计算',
   }
 }

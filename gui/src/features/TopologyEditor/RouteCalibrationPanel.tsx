@@ -1,6 +1,7 @@
+import { adoptionHistoryLabel } from './calibrationResultView'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Badge, Button, Card, Checkbox, Code, Group, SegmentedControl, Select, Stack, Text, TextInput, Title } from '@mantine/core'
+import { Alert, Badge, Button, Card, Checkbox, Code, Group, SegmentedControl, Select, Stack, Table, Text, TextInput, Title } from '@mantine/core'
 import { useOperationalLab } from '../OperationalLab'
 import { FixedRouteAcquisitionFields } from '../LabWorkspace/FixedRouteAcquisitionCard'
 import { fixedRouteDisplay, fixedRouteStillActive } from '../LabWorkspace/fixedRouteDisplay'
@@ -184,7 +185,15 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
     {shown&&result&&<Alert color={result.status==='simulated'?'yellow':result.status==='completed'?'blue':'red'} data-testid="route-acquisition-result">
       <Text fw={600}>{shown.label}</Text><Text size="sm">记录：{result.run_id}</Text>
       <Text size="sm">记录模式：{frozen?.operating_mode??result.result?.request.operating_mode??'历史未知'}；路径：{frozen?.node_ids.join(' → ')??'历史无完整路径快照'}</Text>
-      {!shown.mock&&<><Text>F64实测：{shown.source}；接收实测：{shown.received}</Text><Text>整条净损耗：{shown.loss}</Text></>}<Text>停发：{shown.cleanup}</Text>
+      <Table withTableBorder data-testid="calibration-result-summary"><Table.Tbody>
+        {[
+          ['路径／频点',`${frozen?.chain_id??result.result?.request.chain_id??'未知'} / ${result.result?.request.frequency_mhz??'未知'} MHz`],
+          ['源端／接收读数',`${shown.source} / ${shown.received}`],
+          ['整条净损耗',shown.loss],['重复性（样本标准差）',shown.repeatability],['本次单音清理',shown.cleanup],
+          ['采用记录',adoptionHistoryLabel(result,!adoptedHistory.isError&&!adoptedHistory.isPaused&&!adoptedHistory.isFetching?adoptedHistory.data:undefined)],
+        ].map(([label,value])=><Table.Tr key={label}><Table.Th>{label}</Table.Th><Table.Td>{value}</Table.Td></Table.Tr>)}
+      </Table.Tbody></Table>
+      <Text size="xs">样本标准差不是完整测量不确定度；采集完成或已有采用记录均不代表认证通过。</Text>
       {Boolean(result.batch_context||result.result?.states?.batch_job_id)&&<Text size="sm" c={!batchChildReady(result)?'yellow':undefined}>
         所属批：{result.batch_context?.job_id??String(result.result?.states?.batch_job_id??'未知')}；本项tone：{result.status==='simulated'?'模拟，未确认真实停发':result.result?.cleanup_confirmed===true?'清理已确认':'清理未知'}；
         {batchChildReady(result)?'服务器已确认父批终止、真实lease释放与父子最终提交；仍以原采用资格为准':'父批活动／最终化或外层释放未确认，不可采用'}。
@@ -193,7 +202,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
       {result.result?.missing_items?.map((text,index)=><Text size="sm" key={index}>{text}</Text>)}
       <details><summary>本次冻结配置、原始回复与读数</summary><Code block style={{maxHeight:300,overflow:'auto',whiteSpace:'pre-wrap'}}>{JSON.stringify(result,null,2)}</Code></details>
     </Alert>}
-    {result&&<MockCalibrationResult key={`${labId}:${result.run_id}`} records={[result]}/>}
+    {result&&shown?.mock&&<MockCalibrationResult key={`${labId}:${result.run_id}`} records={[result]}/>}
     {preview.isError&&<Alert color="red">采用资格读取失败：{failure(preview.error)}</Alert>}
     {phase==='review'&&display&&preview.data&&batchChildReady(result)&&<Card withBorder><Stack gap="xs">
       <Text fw={600}>服务器采用预览（认证资格未知）</Text>
@@ -216,16 +225,18 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
       {adopt.isError&&<Alert color="red">确认请求未获成功回执：{failure(adopt.error)}。原结果保留，未据此标为已采用；请重新读取预览及采用历史核对服务器是否保存。</Alert>}
       {adopt.data&&<Alert color="blue">已保存操作员确认采用记录：{adopt.data.id}。后续选源以服务器当前适用性及撤销状态为准；不是认证通过，也不改变旧执行。</Alert>}
     <Text size="xs">执行支持：MIMO-First ASC以waveform方式只补一次；native GCM、外部ASC、B2没有整条参考面消费者，显示不支持／未应用，严格模式在硬件前拒绝。</Text>
-    <Title order={5}>采集历史</Title>
     {history.isError&&<Alert color="red">历史读取失败：{failure(history.error)}</Alert>}
+    <details data-testid="acquisition-history"><summary>采集历史（只读查看）</summary>
     {history.data?.map(row=><Group key={row.run_id} justify="space-between" wrap="nowrap"><Text size="xs">{new Date(row.run_at).toLocaleString()} · {row.result?.request.operating_mode??'历史未知'} · {fixedRouteDisplay(row).label}
       {row.batch_context&&` · 所属批${row.batch_context.job_id??'未知'} · ${row.status==='simulated'?'模拟tone':row.result?.cleanup_confirmed===true?'本项tone已清理':'本项tone未知'} · ${batchChildReady(row)?'父批最终化已确认':'外层释放未确认，不可采用'}`}</Text>
       <Button size="xs" variant="subtle" disabled={Boolean(activeRunId)} onClick={()=>{setPhase('review');setRunId(row.run_id);const frozen=runningRouteIdentity(row);if(frozen)setChainId(frozen.chain_id);adopt.reset();setInputError('')}}>查看记录</Button></Group>)}
     {!history.data?.length&&!history.isError&&<Text size="sm">暂无采集记录。</Text>}
+    </details>
     <Title order={5}>所选通路采用历史</Title>
     {adoptedHistory.isError&&<Alert color="red">采用历史读取失败：{failure(adoptedHistory.error)}</Alert>}
     {!adoptedHistory.isError&&!adoptedHistory.isPaused&&adoptedHistory.data?.map(row=><Card withBorder key={`${labId}:${row.id}`}>
-      <Text size="xs" style={{overflowWrap:'anywhere'}}>{new Date(row.confirmed_at).toLocaleString()} · {row.selection_snapshot.operating_mode} / {row.frequency_mhz} MHz · {row.net_loss_db.toFixed(2)} dB · 认证资格未知 · 截止{String(row.coverage_snapshot.adoption_valid_until??'未知')} · 采集{row.acquisition_run_id} · 采用{row.id}</Text>
+      <Text size="sm">{new Date(row.confirmed_at).toLocaleString()} · {row.frequency_mhz} MHz · {row.net_loss_db.toFixed(2)} dB · 认证资格未知</Text>
+      <details><summary>采用记录详情</summary><Text size="xs" style={{overflowWrap:'anywhere'}}>模式{row.selection_snapshot.operating_mode} · 截止{String(row.coverage_snapshot.adoption_valid_until??'未知')} · 采集{row.acquisition_run_id} · 采用{row.id}</Text></details>
       <RouteRevocationControl labId={labId} record={row} blocked={busy}/>
     </Card>)}
     {!adoptedHistory.data?.length&&<Text size="sm">当前通路暂无确认采用记录。</Text>}

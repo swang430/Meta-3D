@@ -12,6 +12,7 @@ export function MockCalibrationResult({records}:{records:FixedRouteRecord[]}) {
  const db=(n:number|null|undefined)=>n==null?'未计算':`${n.toFixed(4)} dB`
  return <Card withBorder data-testid="mock-calibration-result"><Stack gap="xs">
   <Text fw={600}>模拟演练（非实测）· 不可正式采用／不是正式报告</Text>
+  <details><summary>模拟样本、计算详情与导出（非实测）</summary>
   {rows.map(r=>{const result=r.result!,mock=fixedRouteDisplay(r).mock!;return <Stack gap={2} key={`${r.lab_profile_id}:${r.run_id}`}>
    <Text size="xs">run：{r.run_id} · Lab：{r.lab_profile_id} · {result.request.chain_id} · {result.request.frequency_mhz} MHz</Text>
    <Text>服务器净损耗：{db(mock.netLoss)}；样本标准差：{db(mock.std)}</Text>
@@ -25,6 +26,7 @@ export function MockCalibrationResult({records}:{records:FixedRouteRecord[]}) {
    const link=document.createElement('a');link.href=url;link.download=`mock-calibration-${String(rows[0].result?.states?.batch_job_id??rows[0].run_id)}.csv`
    document.body.appendChild(link);link.click();link.remove();setTimeout(()=>URL.revokeObjectURL(url),1000);setError('')
   }catch(e){setError(e instanceof Error?e.message:'导出失败')}}}>下载模拟演练 CSV（非正式报告）</Button>
+  </details>
   {error&&<Alert color="red">{error}</Alert>}
  </Stack></Card>
 }
