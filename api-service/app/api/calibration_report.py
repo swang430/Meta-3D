@@ -93,6 +93,7 @@ def _has_provenance_aware_calibration_manifest(report_path: str) -> bool:
         and manifest.get("path_loss_provenance_disclosed") is True
         and manifest.get("quiet_zone_provenance_sanitized") is True
         and manifest.get("temporal_method_sanitized") is True
+        and manifest.get("channel_diagnostics_sanitized") is True
     )
 
 

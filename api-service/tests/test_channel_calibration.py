@@ -385,7 +385,7 @@ class TestChannelCalibrationService:
         assert calibration.velocity_kmh == 120
         assert calibration.expected_doppler_hz > 0
         assert calibration.spectral_correlation is not None
-        assert calibration.validation_pass is not None
+        assert calibration.validation_pass is None
 
     @pytest.mark.asyncio
     async def test_run_spatial_correlation_calibration(self, db_session):
@@ -404,7 +404,7 @@ class TestChannelCalibrationService:
         assert calibration.antenna_spacing_wavelengths == 0.5
         assert calibration.measured_correlation_magnitude is not None
         assert calibration.reference_correlation_magnitude is not None
-        assert calibration.validation_pass is not None
+        assert calibration.validation_pass is None
 
     @pytest.mark.asyncio
     async def test_list_calibrations(self, db_session):
@@ -442,8 +442,8 @@ class TestChannelCalibrationService:
         assert calibration.fitted_rms_angular_spread_deg is not None
         assert calibration.fitted_rms_angular_spread_deg > 0
         assert calibration.reference_rms_angular_spread_deg is not None
-        assert calibration.validation_pass is not None
-        assert calibration.status == ChannelCalibrationStatus.VALID.value
+        assert calibration.validation_pass is None
+        assert calibration.status == "unknown"
 
     def test_run_quiet_zone_calibration_sphere(self, db_session):
         """缺真实多点扫描平台时球形静区校准不得生成随机 PASS。"""
@@ -492,8 +492,8 @@ class TestChannelCalibrationService:
         assert validation.peak_eis_dbm is not None
         assert validation.median_eis_dbm is not None
         assert validation.eis_spread_db is not None
-        assert validation.validation_pass is not None
-        assert validation.status == ChannelCalibrationStatus.VALID.value
+        assert validation.validation_pass is None
+        assert validation.status == "unknown"
 
     def test_list_calibrations_with_new_types(self, db_session):
         """测试列出包含新类型的校准记录"""

@@ -981,8 +981,8 @@ class CalibrationOrchestrator:
                         'success': True,
                         'message': (
                             f"CDL model validation: PDP=UNKNOWN (diagnostic only), "
-                            f"Doppler={'PASS' if dop_cal.validation_pass else 'FAIL'}, "
-                            f"Spatial={'PASS' if sp_cal.validation_pass else 'FAIL'}"
+                            "Doppler=UNKNOWN（诊断）, "
+                            "Spatial=UNKNOWN（诊断）"
                         ),
                         'data': {
                             'pdp_calibration_id': str(pdp_cal.id),

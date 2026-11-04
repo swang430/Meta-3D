@@ -253,6 +253,7 @@ class StartDopplerCalibrationRequest(BaseModel):
 
 class DopplerCalibrationResponse(BaseModel):
     """多普勒校准响应"""
+    diagnostic_data: Dict[str, Any] = Field(default_factory=dict, description="非正式诊断材料，不进入正式KPI")
     id: UUID
     session_id: Optional[UUID] = None
     velocity_kmh: float
@@ -311,6 +312,7 @@ class MeasuredCorrelation(BaseModel):
 
 class SpatialCorrelationCalibrationResponse(BaseModel):
     """空间相关性校准响应"""
+    diagnostic_data: Dict[str, Any] = Field(default_factory=dict, description="非正式诊断材料，不进入正式KPI")
     id: UUID
     session_id: Optional[UUID] = None
     # 场景
@@ -371,6 +373,7 @@ class FittedParams(BaseModel):
 
 class AngularSpreadCalibrationResponse(BaseModel):
     """角度扩展校准响应"""
+    diagnostic_data: Dict[str, Any] = Field(default_factory=dict, description="非正式诊断材料，不进入正式KPI")
     id: UUID
     session_id: Optional[UUID] = None
     # 场景
@@ -518,6 +521,7 @@ class EISResults(BaseModel):
 
 class EISValidationResponse(BaseModel):
     """EIS验证响应"""
+    diagnostic_data: Dict[str, Any] = Field(default_factory=dict, description="非正式诊断材料，不进入正式KPI")
     id: UUID
     session_id: Optional[UUID] = None
     # 测试配置

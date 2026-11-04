@@ -202,16 +202,10 @@ class TemporalChannelCalibration(Base):
 # ============================================================================
 
 class DopplerCalibration(Base):
-    """
-    多普勒频谱校准记录
-
-    验证信道仿真器能否正确生成多普勒频谱（经典多普勒谱）。
-    测量方法：发射CW信号，FFT分析接收信号，提取多普勒频谱。
-
-    有效期：1个月
-    合格标准：频谱相关性 > 0.9
-    """
+    """信道工程诊断记录；来源未获独立方法资格，不作正式测量判定。"""
     __tablename__ = "doppler_calibrations"
+
+    diagnostic_provenance = Column(JSON, nullable=True, comment="本次诊断来源；旧记录为空，不回填")
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), index=True, comment="关联的校准会话ID")
@@ -260,16 +254,10 @@ class DopplerCalibration(Base):
 # ============================================================================
 
 class SpatialCorrelationCalibration(Base):
-    """
-    空间相关性校准记录
-
-    验证MPAC系统能否正确重现MIMO天线间的空间相关性。
-    测量方法：使用双天线DUT，测量两天线信道系数的相关性。
-
-    有效期：3个月
-    合格标准：相关系数幅度误差 < 0.1
-    """
+    """信道工程诊断记录；来源未获独立方法资格，不作正式测量判定。"""
     __tablename__ = "spatial_correlation_calibrations"
+
+    diagnostic_provenance = Column(JSON, nullable=True, comment="本次诊断来源；旧记录为空，不回填")
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), index=True, comment="关联的校准会话ID")
@@ -330,16 +318,10 @@ class SpatialCorrelationCalibration(Base):
 # ============================================================================
 
 class AngularSpreadCalibration(Base):
-    """
-    角度扩展校准记录
-
-    验证MPAC系统的角度功率谱(APS)与3GPP模型一致。
-    测量方法：旋转DUT，扫描方位角，测量接收功率，拟合角度分布。
-
-    有效期：3个月
-    合格标准：RMS角度扩展误差 < 5°
-    """
+    """信道工程诊断记录；来源未获独立方法资格，不作正式测量判定。"""
     __tablename__ = "angular_spread_calibrations"
+
+    diagnostic_provenance = Column(JSON, nullable=True, comment="本次诊断来源；旧记录为空，不回填")
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), index=True, comment="关联的校准会话ID")
@@ -482,15 +464,10 @@ class ChannelQuietZoneCalibration(Base):
 # ============================================================================
 
 class EISValidation(Base):
-    """
-    EIS(等效全向灵敏度)验证记录
-
-    端到端性能验证，确保系统能正确测量DUT的EIS。
-    测量方法：使用参考DUT，在3D空间扫描测量灵敏度。
-
-    有效期：系统重大变更后需重新验证
-    """
+    """信道工程诊断记录；来源未获独立方法资格，不作正式测量判定。"""
     __tablename__ = "eis_validations"
+
+    diagnostic_provenance = Column(JSON, nullable=True, comment="本次诊断来源；旧记录为空，不回填")
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     session_id = Column(UUID(as_uuid=True), index=True, comment="关联的校准会话ID")

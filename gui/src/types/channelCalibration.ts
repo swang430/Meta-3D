@@ -123,33 +123,7 @@ export interface StartDopplerCalibrationRequest {
   calibrated_by?: string
 }
 
-export interface DopplerCalibrationResponse {
-  id: string
-  session_id?: string
-  velocity_kmh: number
-  fc_ghz: number
-  expected_doppler_hz: number
-  // Spectrum data
-  measured_spectrum?: {
-    frequency_bins_hz: number[]
-    power_db: number[]
-  }
-  reference_spectrum?: {
-    frequency_bins_hz: number[]
-    power_db: number[]
-  }
-  // Results
-  spectral_correlation: number
-  spectral_correlation_threshold: number
-  // Validation
-  validation_pass: boolean
-  // Metadata
-  channel_emulator?: string
-  calibrated_at: string
-  calibrated_by?: string
-  valid_until: string
-  status: string
-}
+export type DopplerCalibrationResponse = import('./api.generated').components['schemas']['DopplerCalibrationResponse']
 
 // ==================== Spatial Correlation Calibration ====================
 
@@ -166,34 +140,7 @@ export interface StartSpatialCorrelationCalibrationRequest {
   calibrated_by?: string
 }
 
-export interface SpatialCorrelationCalibrationResponse {
-  id: string
-  session_id?: string
-  scenario_type: string
-  scenario_condition: string
-  fc_ghz: number
-  // DUT config
-  antenna_spacing_wavelengths: number
-  antenna_spacing_m?: number
-  antenna_type?: string
-  // Results
-  measured_correlation_magnitude: number
-  measured_correlation_phase_deg: number
-  reference_correlation_magnitude: number
-  reference_correlation_phase_deg: number
-  // Errors
-  magnitude_error: number
-  phase_error_deg: number
-  // Validation
-  magnitude_threshold: number
-  phase_threshold_deg: number
-  validation_pass: boolean
-  // Metadata
-  calibrated_at: string
-  calibrated_by?: string
-  valid_until: string
-  status: string
-}
+export type SpatialCorrelationCalibrationResponse = import('./api.generated').components['schemas']['SpatialCorrelationCalibrationResponse']
 
 // ==================== Angular Spread Calibration ====================
 
@@ -205,36 +152,7 @@ export interface StartAngularSpreadCalibrationRequest {
   calibrated_by?: string
 }
 
-export interface AngularSpreadCalibrationResponse {
-  id: string
-  session_id?: string
-  scenario_type: string
-  scenario_condition: string
-  fc_ghz: number
-  // APS data
-  measured_aps?: {
-    azimuth_deg: number[]
-    power_db: number[]
-  }
-  // Fitted results
-  fitted_mean_azimuth_deg: number
-  fitted_rms_angular_spread_deg: number
-  fitted_distribution_type: string
-  fitted_r_squared: number
-  // Reference
-  reference_rms_angular_spread_deg: number
-  reference_rms_angular_spread_range_deg: number[]
-  // Validation
-  rms_error_deg: number
-  threshold_deg: number
-  validation_pass: boolean
-  // Metadata
-  positioner?: string
-  calibrated_at: string
-  calibrated_by?: string
-  valid_until: string
-  status: string
-}
+export type AngularSpreadCalibrationResponse = import('./api.generated').components['schemas']['AngularSpreadCalibrationResponse']
 
 // ==================== Quiet Zone Calibration ====================
 
@@ -322,39 +240,7 @@ export interface StartEISValidationRequest {
   measured_by?: string
 }
 
-export interface EISValidationResponse {
-  id: string
-  session_id?: string
-  scenario?: string
-  fc_ghz: number
-  bandwidth_mhz?: number
-  modulation?: string
-  target_throughput_percent: number
-  // DUT
-  dut_type: string
-  dut_model: string
-  num_rx_antennas?: number
-  // EIS data
-  eis_map?: {
-    azimuth_deg: number[]
-    elevation_deg: number[]
-    eis_dbm: number[][]
-  }
-  // Results
-  peak_eis_dbm: number
-  peak_azimuth_deg: number
-  peak_elevation_deg: number
-  median_eis_dbm: number
-  eis_spread_db: number
-  // Validation
-  min_eis_dbm: number
-  validation_pass: boolean | null
-  // Metadata
-  measured_at: string
-  measured_by?: string
-  valid_until: string
-  status: string
-}
+export type EISValidationResponse = import('./api.generated').components['schemas']['EISValidationResponse']
 
 // ==================== History & Validity ====================
 

@@ -1930,11 +1930,11 @@ class PDFGenerator:
         # Calibration type breakdown
         cal_types = [
             ('temporal', '时域诊断（非标准 PDP）', '代理或未验证方法，不提供正式判词'),
-            ('doppler', 'Doppler Calibration', 'Jakes 多普勒频谱验证'),
-            ('spatial_correlation', 'Spatial Correlation Calibration', 'MIMO 空间相关性验证'),
-            ('angular_spread', 'Angular Spread Calibration', '角度扩展验证'),
+            ('doppler', '多普勒诊断', '未验证方法，仅供诊断，不提供正式判词'),
+            ('spatial_correlation', '空间相关性诊断', '模拟工程统计，不提供正式判词'),
+            ('angular_spread', '角度扩展诊断', '模拟工程统计，不提供正式判词'),
             ('quiet_zone', 'Quiet Zone Calibration', '静区场均匀性验证'),
-            ('eis', 'EIS Validation', '等效全向灵敏度验证'),
+            ('eis', 'EIS诊断', '模拟工程统计，不提供正式判词'),
         ]
 
         for cal_type, title, description in cal_types:
@@ -1959,44 +1959,13 @@ class PDFGenerator:
                             f"{error:.1f}%" if error else '-',
                             Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
                         ])
-                elif cal_type == 'doppler':
-                    headers = ['Velocity (km/h)', 'Freq (GHz)', 'Doppler (Hz)', 'Target (Hz)', 'Status']
-                    rows = [headers]
+                elif cal_type in ('doppler', 'spatial_correlation', 'angular_spread', 'eis'):
+                    rows = [['Record', 'Freq (GHz)', 'Status']]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
                         rows.append([
-                            str(cal.get('velocity_kmh', '-')),
+                            str(cal.get('id', '-')),
                             str(cal.get('fc_ghz', '-')),
-                            f"{cal.get('max_doppler_measured_hz', 0):.1f}",
-                            f"{cal.get('max_doppler_target_hz', 0):.1f}",
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
-                        ])
-                elif cal_type == 'spatial_correlation':
-                    headers = ['Scenario', 'Condition', 'Spacing (λ)', 'Correlation', 'Status']
-                    rows = [headers]
-                    for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
-                        rows.append([
-                            cal.get('scenario_type', '-'),
-                            cal.get('scenario_condition', '-'),
-                            str(cal.get('antenna_spacing_wavelengths', '-')),
-                            f"{cal.get('measured_correlation', 0):.3f}",
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
-                        ])
-                elif cal_type == 'angular_spread':
-                    headers = ['Scenario', 'Condition', 'Measured (°)', 'Target (°)', 'Status']
-                    rows = [headers]
-                    for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
-                        rows.append([
-                            cal.get('scenario_type', '-'),
-                            cal.get('scenario_condition', '-'),
-                            f"{cal.get('azimuth_spread_measured_deg', 0):.1f}",
-                            f"{cal.get('azimuth_spread_target_deg', 0):.1f}",
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
+                            Paragraph('UNKNOWN / diagnostic only', self.styles['BodyText']),
                         ])
                 elif cal_type == 'quiet_zone':
                     headers = ['Shape', 'Diameter (m)', 'Amp Uniform (dB)', 'Phase Uniform (°)', 'Status']
@@ -2016,19 +1985,6 @@ class PDFGenerator:
                             str(cal.get('quiet_zone_diameter_m', '-')),
                             f"±{amplitude:.2f}" if amplitude is not None else 'N/A',
                             f"±{phase:.1f}" if phase is not None else 'N/A',
-                            Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
-                        ])
-                elif cal_type == 'eis':
-                    headers = ['DUT Model', 'Type', 'Measured (dBm)', 'Error (dB)', 'Status']
-                    rows = [headers]
-                    for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
-                        rows.append([
-                            cal.get('dut_model', '-')[:20],
-                            cal.get('dut_type', '-'),
-                            f"{cal.get('eis_measured_dbm', 0):.1f}",
-                            f"{cal.get('eis_error_db', 0):.2f}",
                             Paragraph(f'<font color="{status_color}">{status}</font>', self.styles['BodyText']),
                         ])
                 else:
