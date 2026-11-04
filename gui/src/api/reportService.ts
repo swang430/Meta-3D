@@ -61,3 +61,17 @@ export async function fetchReportByRoadTestExecution(executionId: string): Promi
 export async function deleteReport(reportId: string): Promise<void> {
   await client.delete(`${BASE_URL}/${reportId}`)
 }
+
+
+/** 独立审计资料，不是可正式交付的报告。 */
+export async function fetchCalibrationAudit(reportId: string): Promise<string> {
+  const response = await client.get<string>(`${BASE_URL}/${reportId}/calibration-audit`, {
+    responseType: 'text', transformResponse: [(raw: string) => raw],
+  })
+  const data: import('../types/api').ReportCalibrationAudit = JSON.parse(response.data)
+  if (data?.report_id !== reportId || data?.audit_kind !== 'calibration_audit' || data?.formal_eligible !== false) {
+    throw new Error('审计包身份或用途声明不一致，未下载')
+  }
+  // 只解析副本核对身份；下载保留原文，避免浮点文本改写使原始证据hash失配。
+  return response.data
+}

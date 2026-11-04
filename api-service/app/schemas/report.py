@@ -633,3 +633,32 @@ class KPIDifference(BaseModel):
     baseline_value: float
     differences: Dict[str, float]  # report_id -> difference from baseline
     percent_changes: Dict[str, float]  # report_id -> percent change
+
+
+class CalibrationAuditSource(BaseModel):
+    chain_id: Optional[str]
+    source_id: Optional[str]
+    source_kind: Optional[str]
+    application_state: str
+    availability: Literal['available', 'unavailable', 'unsupported']
+    reason: str
+    acquisition_run_id: Optional[UUID]
+    frozen_source_snapshot: Optional[Dict[str, Any]]
+    recorded_evidence: Optional[Dict[str, Any]]
+    retrieved_sha256: Optional[str]
+    checked_exchange_indices: List[int]
+
+
+class ReportCalibrationAudit(BaseModel):
+    schema_version: Literal[1] = 1
+    audit_kind: Literal['calibration_audit'] = 'calibration_audit'
+    formal_eligible: Literal[False] = False
+    report_id: UUID
+    execution_id: UUID
+    exported_at: UTCDateTime
+    original_report_content: Dict[str, Any]
+    traceability: Dict[str, Any]
+    sources: List[CalibrationAuditSource]
+    current_revocation: ReportCalibrationRevocationImpact
+    uncertainty_budget_status: Literal['unknown'] = 'unknown'
+    limitations: List[str]

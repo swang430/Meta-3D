@@ -1,5 +1,5 @@
 """Report API endpoints"""
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from fastapi import APIRouter, Depends, HTTPException, status, Query, Response
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from uuid import UUID
@@ -11,6 +11,7 @@ from app.schemas.report import (
     ReportCreate,
     ReportUpdate,
     ReportResponse,
+    ReportCalibrationAudit,
     ReportSummary,
     ReportListResponse,
     # Template
@@ -983,6 +984,22 @@ def get_report(
     _reject_untrusted_mimo_report(db, report)
     _reject_untrusted_vrt_report(report)
     return _report_with_current_execution_outcome(db, report)
+
+
+@router.get("/{report_id}/calibration-audit", response_model=ReportCalibrationAudit)
+def export_calibration_audit(report_id: UUID, response: Response, db: Session = Depends(get_db)):
+    """导出独立非正式校准审计包；原报告读取门仍生效。"""
+    report=report_service.get_report(db,report_id)
+    if report is None:raise HTTPException(404,'报告不存在')
+    _reject_untrusted_mimo_report(db,report)
+    _reject_untrusted_vrt_report(report)
+    from app.services.calibration.report_audit import build_report_calibration_audit
+    try:
+        audit=build_report_calibration_audit(db,report)
+    except ValueError as exc:
+        raise HTTPException(400,str(exc)) from exc
+    response.headers['Content-Disposition']=f'attachment; filename="calibration-audit-{report_id}.json"'
+    return audit
 
 
 @router.get("/{report_id}/download")
