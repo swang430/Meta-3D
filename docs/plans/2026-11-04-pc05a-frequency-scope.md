@@ -65,3 +65,20 @@ memory 已查询；NotebookLM 不适用：零 SCPI/仪器语义变更，范围�
 2026-11-04本机运行库只读盘点：`probe_path_loss_calibrations`、`rf_chain_calibrations`、`route_calibration_applications`均0行。此事实只适用于本机；不替代其他实验室存量盘点。未修改数据库、历史冻结或原始记录。
 
 独立内审已检查生产查询入口，未发现功能缺陷；两处旧“最接近”接口说明已修正。新增预检/历史fixture和文档增量独立复核CLEAN；最终验证记录另交审查者核验。
+
+
+## R1 功能缺口与修复
+
+GitHub R1（review 5764583210，inline 4464693210，审查be47454a）指出：近邻增益被拒绝后，`get_compensation_factors`仍以0代替缺失UL/DL证据，补偿消费者仅检查路损，导致TRP/TIS仍返回有效数值。主代理和首轮内审都漏查了这个None消费结果。
+
+修法为去掉零兜底并收窄有效条件：已配置LNA/PA而没有适用增益时保留None；未配置对应硬件保持无需增益补偿的0；真实精确频点0 dB不被当作缺失。总量、getter、apply接口、批量TRP/积分、summary同源传播不可用，不改公式。修改文件为`calibration_orchestrator.py`、`measurement_compensation.py`及`test_path_loss_calibration.py`。
+
+16个真实DB/HTTP场景覆盖missing/nearby/mock/unknown/expired/zero/exact/not_required×UL/DL。RED：10 failed / 6 passed / 37 deselected / 205 warnings / 1.21s，exit1；修后连同单频选择两模块66 passed / 566 warnings / 3.95s，exit0。命令为根目录`DATABASE_URL=sqlite:////tmp/pc05-gain.db USE_MOCK_INSTRUMENTS=true PYTHONPATH=api-service api-service/.venv/bin/python -m pytest api-service/tests/test_path_loss_calibration.py api-service/tests/test_path_loss_mode_filter.py -q --color=no --log-cli-level=WARNING`；RED仅选第一个文件加`-k required_gain_evidence`。
+
+上文完整后端统计是R1前输入，不能替代此次共享补偿变化后的验证。修后独立内审已追踪getter→apply→JSON/null、bulk→积分拒绝和summary，CLEAN。
+
+新版全量在api-service执行`DATABASE_URL=sqlite:////tmp/pc05-r1-final.db USE_MOCK_INSTRUMENTS=true PYTHONPATH=. .venv/bin/python -m pytest tests -q --color=no --log-cli-level=WARNING --log-level=WARNING`：8554 collected，**7 failed / 8530 passed / 17 skipped / 10692 warnings / 1143.21s**，exit1，仍非全绿。1419项非docs tracked输入前后无变，清单SHA `eb85375cdb5b045a7f46f62a7b8589e2961f5a14dcfa92f5318f7dfd83a3ecc0`。日志`/tmp/pc05-r1-full.log` SHA `4ca1a1f0aa69e53d4400836efc87265e3576c203f9c3234a1d792c7721327ae3`。
+
+六项契约/历史门失败与上文相同，两项环境入口失败已不再出现。新增单次失败为`test_pc04a2_route_eligibility.py::test_real_capture_may_be_adopted_without_claiming_certification[-20--10--12.0]`：采集前resolve_configuration报“实验室配置不存在或已停用”，无仪器交换。新版独立运行该参数组2 passed/6 deselected/59 warnings/5.51s；未改main同负增益nodeid连续5次均1 passed/49 warnings（2.92、2.77、2.77、2.75、2.77s）。独立命令均显式Mock、/tmp SQLite与`python -m pytest <nodeid或文件-k real_capture_may_be_adopted> -q --color=no`。
+
+该采集路径未调用此次修改的编排器/补偿消费者。fixture多Session共享SQLite StaticPool单连接是待核线索，**根因未证实，不能称环境故障已解决或新版全量通过**。保留原失败，不以重复至绿覆盖原统计，也不为未复现测试现象扩改采集机制。
