@@ -4,7 +4,7 @@
  * Main page for channel calibration management
  */
 import { useState } from 'react'
-import { Container, Tabs, Title, Stack, Modal, Text, Group, Button } from '@mantine/core'
+import { Container, Tabs, Title, Stack, Modal, Text, Group, Button, Alert, Code } from '@mantine/core'
 import { notifications } from '@mantine/notifications'
 import {
   IconWaveSine,
@@ -22,6 +22,7 @@ import {
   startAngularSpreadCalibration,
   startEISValidation,
   getCalibrationTypeName,
+  getTemporalCalibration,
 } from '../../api/channelCalibrationService'
 
 export function ChannelCalibrationPage() {
@@ -29,6 +30,7 @@ export function ChannelCalibrationPage() {
   const [startModalOpen, setStartModalOpen] = useState(false)
   const [selectedType, setSelectedType] = useState<ChannelCalibrationType | null>(null)
   const [isStarting, setIsStarting] = useState(false)
+  const [diagnostic, setDiagnostic] = useState<string | null>(null)
 
   const handleStartCalibration = (type: ChannelCalibrationType) => {
     setSelectedType(type)
@@ -85,9 +87,9 @@ export function ChannelCalibrationPage() {
       }
 
       notifications.show({
-        title: 'Calibration Started',
-        message: `${getCalibrationTypeName(selectedType)} calibration completed successfully`,
-        color: 'green',
+        title: selectedType === 'temporal' ? '时域诊断已完成' : 'Calibration Started',
+        message: selectedType === 'temporal' ? '仅生成诊断材料，标准 PDP 资格未判定。' : `${getCalibrationTypeName(selectedType)} calibration completed successfully`,
+        color: selectedType === 'temporal' ? 'yellow' : 'green',
         icon: <IconCircleCheck size={16} />,
       })
 
@@ -104,13 +106,22 @@ export function ChannelCalibrationPage() {
     }
   }
 
-  const handleViewDetails = (type: ChannelCalibrationType, calibrationId: string) => {
-    // TODO: Navigate to detail view
-    console.log('View details:', type, calibrationId)
+  const handleViewDetails = async (type: ChannelCalibrationType, calibrationId: string) => {
+    if (type !== 'temporal') return
+    try {
+      const result = await getTemporalCalibration(calibrationId)
+      setDiagnostic(JSON.stringify(result.diagnostic_data, null, 2))
+    } catch (error) {
+      notifications.show({ title: '诊断材料读取失败', message: (error as Error).message, color: 'red' })
+    }
   }
 
   return (
     <Container size="xl" py="md">
+      <Modal opened={diagnostic !== null} onClose={() => setDiagnostic(null)} title="时域原始诊断材料" size="lg">
+        <Alert color="yellow">非标准 PDP，不提供正式判词；以下保留当时记录，旧判词不代表当前正式资格。</Alert>
+        <Code block>{diagnostic}</Code>
+      </Modal>
       <Stack gap="md">
         <Title order={2}>Channel Calibration</Title>
 

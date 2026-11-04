@@ -4,6 +4,46 @@
  */
 
 export interface paths {
+    "/api/v1/calibration/channel/temporal/{calibration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Temporal Calibration
+         * @description 获取时域校准详情
+         */
+        get: operations["get_temporal_calibration_api_v1_calibration_channel_temporal__calibration_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/temporal/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Latest Temporal Calibration
+         * @description 获取最新的时域校准记录
+         */
+        get: operations["get_latest_temporal_calibration_api_v1_calibration_channel_temporal_latest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/reports/{report_id}/calibration-audit": {
         parameters: {
             query?: never;
@@ -3358,6 +3398,75 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * TemporalCalibrationResponse
+         * @description 时域校准响应
+         */
+        TemporalCalibrationResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Scenario Type */
+            scenario_type: string;
+            /** Scenario Condition */
+            scenario_condition: string;
+            /** Fc Ghz */
+            fc_ghz: number;
+            /** Distance 2D M */
+            distance_2d_m?: number | null;
+            /** Measured Pdp */
+            measured_pdp: {
+                [key: string]: number[];
+            };
+            /**
+             * Diagnostic Data
+             * @description 非正式原始诊断材料，不进入标准PDP判定
+             */
+            diagnostic_data?: {
+                [key: string]: unknown;
+            };
+            /** Measured Rms Delay Spread Ns */
+            measured_rms_delay_spread_ns?: number | null;
+            /** Measured Max Delay Ns */
+            measured_max_delay_ns?: number | null;
+            /** Measured Num Clusters */
+            measured_num_clusters?: number | null;
+            /** Measured Cluster Delays Ns */
+            measured_cluster_delays_ns?: number[] | null;
+            /** Measured Cluster Powers Db */
+            measured_cluster_powers_db?: number[] | null;
+            /** Reference Rms Delay Spread Ns */
+            reference_rms_delay_spread_ns?: number | null;
+            /** Reference Rms Delay Spread Range Ns */
+            reference_rms_delay_spread_range_ns?: number[] | null;
+            /** Reference Num Clusters */
+            reference_num_clusters?: number | null;
+            /** Rms Error Percent */
+            rms_error_percent?: number | null;
+            /** Cluster Count Match */
+            cluster_count_match?: boolean | null;
+            /** Validation Pass */
+            validation_pass?: boolean | null;
+            /**
+             * Threshold Percent
+             * @default 10
+             */
+            threshold_percent: number;
+            /** Channel Emulator */
+            channel_emulator?: string | null;
+            /** Calibrated At */
+            calibrated_at: string;
+            /** Calibrated By */
+            calibrated_by?: string | null;
+            /** Valid Until */
+            valid_until?: string | null;
+            /** Status */
+            status: string;
+        };
         /** CalibrationAuditSource */
         CalibrationAuditSource: {
             /** Chain Id */
@@ -7066,6 +7175,71 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    get_temporal_calibration_api_v1_calibration_channel_temporal__calibration_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                calibration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemporalCalibrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_latest_temporal_calibration_api_v1_calibration_channel_temporal_latest_get: {
+        parameters: {
+            query?: {
+                /** @description 场景类型: UMa, UMi, RMa, InH */
+                scenario_type?: string | null;
+                /** @description 信道条件: LOS, NLOS */
+                scenario_condition?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TemporalCalibrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     export_calibration_audit_api_v1_reports__report_id__calibration_audit_get: {
         parameters: {
             query?: never;

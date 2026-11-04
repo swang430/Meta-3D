@@ -135,7 +135,8 @@ class TestE2ECalibrationWorkflow:
         assert temporal.scenario_type == "UMa"
         assert temporal.scenario_condition == "LOS"
         assert temporal.fc_ghz == 3.5
-        assert temporal.validation_pass is not None
+        assert temporal.validation_pass is None
+        assert session.overall_pass is None
 
         doppler = doppler_cals[0]
         assert doppler.velocity_kmh == 120
@@ -456,10 +457,13 @@ steps:
         ).first()
 
         assert updated_session.status == "completed"
-        assert updated_session.total_calibrations == 3
-        assert updated_session.passed_calibrations == 2
-        assert updated_session.failed_calibrations == 1
-        assert updated_session.overall_pass is False
+        assert temporal.validation_pass is None
+        assert updated_session.total_calibrations == 2
+        verdicts = [doppler.validation_pass, spatial.validation_pass]
+        assert all(value is True or value is False for value in verdicts)
+        assert updated_session.passed_calibrations == verdicts.count(True)
+        assert updated_session.failed_calibrations == verdicts.count(False)
+        assert updated_session.overall_pass is None
 
     def test_e2e_list_calibrations(self, db_session):
         """

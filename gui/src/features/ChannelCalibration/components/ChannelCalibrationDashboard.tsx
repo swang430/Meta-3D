@@ -18,7 +18,6 @@ import {
   Alert,
   ActionIcon,
   Tooltip,
-  Progress,
   SimpleGrid,
 } from '@mantine/core'
 import {
@@ -65,10 +64,10 @@ const CALIBRATION_TYPES: {
 }[] = [
   {
     type: 'temporal',
-    label: 'Temporal (PDP)',
+    label: '时域诊断（非标准 PDP）',
     icon: IconClock,
-    validity: '30 days',
-    description: 'RMS delay spread validation',
+    validity: '无正式有效期',
+    description: '代理或模拟材料不提供标准 PDP 判词',
   },
   {
     type: 'doppler',
@@ -454,32 +453,8 @@ export function ChannelCalibrationDashboard({
           </Paper>
         </Grid.Col>
 
-        {/* 3GPP Scenario Coverage */}
-        <Grid.Col span={{ base: 12, md: 6 }}>
-          <Paper p="md" withBorder>
-            <Text size="sm" fw={600} mb="md">
-              3GPP Scenario Coverage
-            </Text>
-            <Stack gap="xs">
-              {['UMa', 'UMi', 'RMa', 'InH'].map((scenario) => (
-                <Group key={scenario} justify="space-between">
-                  <Text size="sm">{scenario}</Text>
-                  <Group gap="xs">
-                    <Badge size="xs" variant="outline">
-                      LOS
-                    </Badge>
-                    <Badge size="xs" variant="outline">
-                      NLOS
-                    </Badge>
-                    <Progress value={50} size="sm" w={60} />
-                  </Group>
-                </Group>
-              ))}
-            </Stack>
-            <Text size="xs" c="dimmed" mt="md" ta="center">
-              Run temporal calibration for each scenario to complete coverage
-            </Text>
-          </Paper>
+        <Grid.Col span={12}>
+          <Alert color="yellow">标准 PDP 覆盖未判定：时域诊断没有独立参考验证，不能计入标准信道覆盖率。</Alert>
         </Grid.Col>
       </Grid>
     </Stack>

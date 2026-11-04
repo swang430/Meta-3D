@@ -492,7 +492,7 @@ steps:
         result = execution.step_results["temporal1"]
         assert result.status == StepStatus.COMPLETED
         assert result.calibration_id is not None
-        assert result.validation_pass is not None
+        assert result.validation_pass is None
 
     def test_session_tolerates_null_workflow_parameters(self, db_session):
         """Gemini #375 R1 medium + 内审 F1：YAML 显式 `parameters: null`。

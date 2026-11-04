@@ -202,6 +202,7 @@ class TemporalCalibrationResponse(BaseModel):
     distance_2d_m: Optional[float] = None
     # 测量PDP
     measured_pdp: Dict[str, List[float]]
+    diagnostic_data: Dict[str, Any] = Field(default_factory=dict, description="非正式原始诊断材料，不进入标准PDP判定")
     # 测量参数
     measured_rms_delay_spread_ns: Optional[float] = None
     measured_max_delay_ns: Optional[float] = None

@@ -63,6 +63,7 @@ from app.schemas.channel_calibration import (
 )
 from app.services.channel_calibration_service import ChannelCalibrationService
 from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_detail
+from app.services.temporal_calibration_truth import temporal_detail, temporal_session_view
 
 router = APIRouter(prefix="/calibration/channel", tags=["Channel Calibration"])
 
@@ -88,7 +89,7 @@ async def create_calibration_session(
         configuration=request.configuration,
         created_by=request.created_by
     )
-    return session
+    return temporal_session_view(db, session)
 
 
 @router.get("/sessions/{session_id}", response_model=CalibrationSessionResponse)
@@ -101,7 +102,7 @@ async def get_calibration_session(
     session = service.get_session(session_id)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    return temporal_session_view(db, session)
 
 
 @router.patch("/sessions/{session_id}/progress", response_model=CalibrationSessionResponse)
@@ -120,7 +121,7 @@ async def update_session_progress(
     )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    return temporal_session_view(db, session)
 
 
 @router.post("/sessions/{session_id}/complete", response_model=CalibrationSessionResponse)
@@ -140,7 +141,7 @@ async def complete_calibration_session(
     )
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
-    return session
+    return temporal_session_view(db, session)
 
 
 # ==================== Temporal Channel Calibration ====================
@@ -150,25 +151,7 @@ async def start_temporal_calibration(
     request: StartTemporalCalibrationRequest,
     db: Session = Depends(get_db)
 ):
-    """
-    启动时域信道校准
-
-    时域校准验证信道仿真器能否正确生成 3GPP 定义的功率时延谱 (PDP)。
-
-    **校准内容**:
-    - 功率时延谱 (PDP) 测量
-    - RMS 时延扩展计算
-    - 簇检测和参数提取
-    - 与 3GPP TR 38.901 参考值对比
-
-    **验收标准**: RMS 时延扩展误差 < 10%
-
-    **支持场景**:
-    - UMa (Urban Macro): LOS/NLOS
-    - UMi (Urban Micro): LOS/NLOS
-    - RMa (Rural Macro): LOS/NLOS
-    - InH (Indoor Hotspot): LOS/NLOS
-    """
+    """采集时域诊断材料；当前代理/模拟不提供标准PDP判词或正式有效期。"""
     service = ChannelCalibrationService(db)
 
     # 执行校准
@@ -189,7 +172,7 @@ async def start_temporal_calibration(
         calibration_job_id=calibration.id,
         status=ChannelCalibrationJobStatus.COMPLETED,
         estimated_duration_minutes=5.0,
-        message=f"Temporal calibration completed for {request.scenario.type.value} {request.scenario.condition.value}"
+        message=f"时域诊断完成（非标准PDP，未判定）：{request.scenario.type.value} {request.scenario.condition.value}"
     )
 
 
@@ -207,7 +190,7 @@ async def get_latest_temporal_calibration(
     )
     if not calibration:
         raise HTTPException(status_code=404, detail="No temporal calibration found")
-    return calibration
+    return temporal_detail(calibration)
 
 
 @router.get("/temporal/{calibration_id}", response_model=TemporalCalibrationResponse)
@@ -220,7 +203,7 @@ async def get_temporal_calibration(
     calibration = service.get_temporal_calibration(calibration_id)
     if not calibration:
         raise HTTPException(status_code=404, detail="Calibration not found")
-    return calibration
+    return temporal_detail(calibration)
 
 
 # ==================== Doppler Calibration ====================
@@ -587,32 +570,7 @@ async def get_channel_calibration_status(
     # 获取各类校准的最新记录
     temporal = service.get_latest_temporal_calibration()
 
-    # 构建状态摘要
-    def get_status_info(calibration, validity_days):
-        if not calibration:
-            return {
-                "status": "unknown",
-                "last_calibrated": None,
-                "next_due": None
-            }
-
-        valid_until = calibration.valid_until or calibration.calibrated_at
-        now = datetime.utcnow()
-
-        if now > valid_until:
-            status = "expired"
-        elif (valid_until - now).days <= 7:
-            status = "expiring_soon"
-        else:
-            status = "valid"
-
-        return {
-            "status": status,
-            "last_calibrated": calibration.calibrated_at,
-            "next_due": valid_until
-        }
-
-    temporal_info = get_status_info(temporal, 30)
+    temporal_info = {"status": "unknown", "last_calibrated": temporal.calibrated_at if temporal else None, "next_due": None}
 
     # TODO: 获取其他类型的校准状态
     default_info = {

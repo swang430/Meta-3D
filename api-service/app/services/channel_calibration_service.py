@@ -4,7 +4,7 @@ Channel Calibration Services
 信道校准业务逻辑实现。
 
 包含以下校准算法:
-1. 时域校准: PDP分析、RMS时延扩展计算、簇检测、3GPP对比
+1. 时域诊断: 工程数组与统计保留，不提供标准PDP比较或正式判词
 2. 多普勒校准: 频谱分析、相关性计算
 3. 空间相关性校准: 相关系数计算、Laplacian拟合
 4. 角度扩展校准: APS拟合
@@ -35,6 +35,7 @@ from app.models.channel_calibration import (
     ChannelCalibrationStatus,
 )
 from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_history
+from app.services.temporal_calibration_truth import temporal_history
 
 logger = logging.getLogger("app.calibration.channel")
 
@@ -192,7 +193,7 @@ def detect_clusters(
     peaks, properties = signal.find_peaks(
         power_db,
         height=threshold,
-        distance=int(min_cluster_separation_ns / (delay_bins_ns[1] - delay_bins_ns[0]))
+        distance=max(1, int(min_cluster_separation_ns / (delay_bins_ns[1] - delay_bins_ns[0])))
         if len(delay_bins_ns) > 1 else 1
     )
 
@@ -738,6 +739,7 @@ class ChannelCalibrationService:
         if not session:
             return None
 
+        has_unverified_temporal = False
         formal_verdicts: List[bool] = []
         formally_observed_types = set()
         for calibration_type, model in (
@@ -748,6 +750,9 @@ class ChannelCalibrationService:
             ("eis", EISValidation),
         ):
             rows = self.db.query(model).filter(model.session_id == session_id).all()
+            if calibration_type == "temporal":
+                has_unverified_temporal = bool(rows)
+                continue
             verdicts = [
                 row.validation_pass
                 for row in rows
@@ -791,6 +796,7 @@ class ChannelCalibrationService:
             None
             if (
                 has_unverified_quiet_zone
+                or has_unverified_temporal
                 or has_unverified_requested_type
                 or formal_total == 0
             )
@@ -823,12 +829,15 @@ class ChannelCalibrationService:
         1. 生成/获取 PDP 数据 (mock 用 generate_mock_pdp, real 用 SA.measure_pdp)
         2. 计算 RMS 时延扩展
         3. 检测簇
-        4. 与 3GPP 参考对比
-        5. 保存结果
+        4. 保存诊断材料，正式比较/判词保持未知
+        5. 不提供标准PDP资格
 
         use_mock=False 时, HAL 必须绑 signalAnalyzer driver 且实现 measure_pdp;
         前置 CE 已加载目标 CDL 模型(由 caller 编排, 不在本方法范围).
         """
+        if session_id is not None:
+            self.register_requested_calibration_type(session_id, "temporal")
+        provenance = {"source": "simulated" if use_mock else "unverified", "method": "simulated_pdp" if use_mock else "unverified_measure_pdp", "formal_eligible": False}
         if use_mock:
             delay_bins, power_db = generate_mock_pdp(
                 scenario_type, scenario_condition, fc_ghz
@@ -843,6 +852,9 @@ class ChannelCalibrationService:
                     "signalAnalyzer driver bound on the active LabProfile, "
                     "implementing measure_pdp()."
                 )
+            from app.services.instrument_hal_service import is_mock_driver
+            if is_mock_driver(sa):
+                provenance = {"source": "simulated", "method": "simulated_pdp", "formal_eligible": False}
             center_hz = fc_ghz * 1e9
             # P1-70 内审 F4：10 ns 分辨率 → 请求 100 MHz 采样率，超出手册
             # 基础采样率范围 100 Hz–45 MHz（1176.7510.02─13，无 B40/B70/B160
@@ -863,13 +875,7 @@ class ChannelCalibrationService:
         # 检测簇
         cluster_delays, cluster_powers = detect_clusters(delay_bins, power_db)
 
-        # 与 3GPP 对比
-        comparison = compare_with_3gpp_reference(
-            scenario_type,
-            scenario_condition,
-            rms_delay_ns,
-            len(cluster_delays)
-        )
+        # 工程代理或模拟不是独立信道测量，不计算正式对标误差。
 
         # 创建校准记录
         calibration = TemporalChannelCalibration(
@@ -881,7 +887,7 @@ class ChannelCalibrationService:
             # PDP 数据
             measured_pdp={
                 "delay_bins_ns": delay_bins.tolist(),
-                "power_db": power_db.tolist()
+                "power_db": power_db.tolist(), "provenance": provenance
             },
             # 测量参数
             measured_rms_delay_spread_ns=rms_delay_ns,
@@ -890,20 +896,20 @@ class ChannelCalibrationService:
             measured_cluster_delays_ns=cluster_delays,
             measured_cluster_powers_db=cluster_powers,
             # 参考参数
-            reference_rms_delay_spread_ns=comparison["reference_rms_delay_spread_ns"],
-            reference_rms_delay_spread_range_ns=comparison["reference_rms_delay_spread_range_ns"],
-            reference_num_clusters=comparison["reference_num_clusters"],
+            reference_rms_delay_spread_ns=None,
+            reference_rms_delay_spread_range_ns=None,
+            reference_num_clusters=None,
             # 验证结果
-            rms_error_percent=comparison["rms_error_percent"],
-            cluster_count_match=comparison["cluster_count_match"],
-            validation_pass=comparison["validation_pass"],
+            rms_error_percent=None,
+            cluster_count_match=None,
+            validation_pass=None,
             threshold_percent=10.0,
             # 元数据
             channel_emulator=channel_emulator,
             calibrated_at=datetime.utcnow(),
             calibrated_by=calibrated_by,
-            valid_until=datetime.utcnow() + timedelta(days=TEMPORAL_VALIDITY_DAYS),
-            status=ChannelCalibrationStatus.VALID.value,
+            valid_until=None,
+            status="unknown",
         )
 
         self.db.add(calibration)
@@ -1493,24 +1499,11 @@ class ChannelCalibrationService:
         """列出校准记录"""
         results = []
 
-        # 时域校准
-        if calibration_type in (None, "temporal"):
+        # 无正式时域判词，布尔筛选不包含诊断/旧未知记录。
+        if calibration_type in (None, "temporal") and validation_pass is None:
             query = self.db.query(TemporalChannelCalibration)
-            if validation_pass is not None:
-                query = query.filter(TemporalChannelCalibration.validation_pass == validation_pass)
             for cal in query.order_by(desc(TemporalChannelCalibration.calibrated_at)).limit(limit).offset(offset):
-                results.append({
-                    "calibration_id": cal.id,
-                    "calibration_type": "temporal",
-                    "calibrated_at": cal.calibrated_at,
-                    "calibrated_by": cal.calibrated_by,
-                    "status": cal.status,
-                    "validation_pass": cal.validation_pass,
-                    "summary": {
-                        "scenario": f"{cal.scenario_type} {cal.scenario_condition}",
-                        "rms_error_percent": cal.rms_error_percent,
-                    }
-                })
+                results.append(temporal_history(cal))
 
         # 多普勒校准
         if calibration_type in (None, "doppler"):

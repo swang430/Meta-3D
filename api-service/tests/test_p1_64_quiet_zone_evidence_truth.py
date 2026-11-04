@@ -512,7 +512,7 @@ async def test_channel_status_cannot_be_valid_while_quiet_zone_is_unknown(monkey
 
     result = await api.get_channel_calibration_status(db=SimpleNamespace())
 
-    assert result.temporal_status == "valid"
+    assert result.temporal_status == "unknown"
     assert result.quiet_zone_status == "unknown"
     assert result.overall_status == "unknown"
 
@@ -553,7 +553,7 @@ def test_requested_quiet_zone_without_a_trusted_row_keeps_session_undetermined()
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
     from app.db.database import Base
-    from app.models.channel_calibration import TemporalChannelCalibration
+    from app.models.channel_calibration import DopplerCalibration
     from app.services.channel_calibration_service import ChannelCalibrationService
 
     engine = create_engine(
@@ -568,15 +568,16 @@ def test_requested_quiet_zone_without_a_trusted_row_keeps_session_undetermined()
         name="workflow requests quiet zone",
         workflow_id="workflow-1",
         configuration={
-            "requested_calibration_types": ["temporal", "quiet_zone"],
+            "requested_calibration_types": ["doppler", "quiet_zone"],
         },
     )
-    db.add(TemporalChannelCalibration(
+    db.add(DopplerCalibration(
         session_id=session.id,
-        scenario_type="UMa",
-        scenario_condition="LOS",
+        velocity_kmh=30.0,
+        expected_doppler_hz=100.0,
         fc_ghz=3.5,
-        measured_pdp={},
+        measured_spectrum={},
+        reference_spectrum={},
         validation_pass=True,
     ))
     db.commit()
@@ -603,7 +604,7 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
     from sqlalchemy.pool import StaticPool
     from app.api.channel_calibration import start_quiet_zone_calibration
     from app.db.database import Base
-    from app.models.channel_calibration import TemporalChannelCalibration
+    from app.models.channel_calibration import DopplerCalibration
     from app.schemas.channel_calibration import StartQuietZoneCalibrationRequest
     from app.services.channel_calibration_service import ChannelCalibrationService
 
@@ -616,12 +617,13 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
     db = sessionmaker(bind=engine)()
     service = ChannelCalibrationService(db)
     session = service.create_session(name="direct api session")
-    db.add(TemporalChannelCalibration(
+    db.add(DopplerCalibration(
         session_id=session.id,
-        scenario_type="UMa",
-        scenario_condition="LOS",
+        velocity_kmh=30.0,
+        expected_doppler_hz=100.0,
         fc_ghz=3.5,
-        measured_pdp={},
+        measured_spectrum={},
+        reference_spectrum={},
         validation_pass=True,
     ))
     db.commit()
@@ -669,18 +671,18 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
         "phase_uniformity_deg": None,
     }]
 
-    temporal_only = generator._collect_channel_data(
+    doppler_only = generator._collect_channel_data(
         session_id=session.id,
-        calibration_type="temporal",
+        calibration_type="doppler",
     )
-    assert temporal_only["execution_summary"] == {
+    assert doppler_only["execution_summary"] == {
         "total_executions": 1,
         "passed": 1,
         "failed": 0,
         "pending": 0,
         "pass_rate": 100.0,
     }
-    assert "quiet_zone" not in temporal_only["channel_calibration"]
+    assert "quiet_zone" not in doppler_only["channel_calibration"]
 
     comprehensive = generator._collect_report_data(
         session_id=session.id,
