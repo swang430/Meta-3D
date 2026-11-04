@@ -6,6 +6,35 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator, f
 from app.schemas._datetime import UTCDateTime
 
 
+class RouteAvailabilityRow(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    chain_id: str
+    ce_port: str
+    probe_id: int
+    polarization: str
+    source_kind: Literal['confirmed_route', 'legacy_certificate', 'unavailable']
+    source_id: UUID | None
+    value_db: float | None = Field(allow_inf_nan=False)
+    measurement_provenance: Literal['real', 'unknown']
+    reason: str
+
+
+class RouteCalibrationAvailability(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    lab_profile_id: UUID
+    topology_id: UUID | None
+    operating_mode: str
+    frequency_mhz: float = Field(gt=0, allow_inf_nan=False)
+    checked_at: UTCDateTime
+    routes: list[RouteAvailabilityRow]
+    required_chain_count: int = Field(ge=0)
+    covered_chain_count: int = Field(ge=0)
+    all_chains_have_sources: bool
+    formal_scope_status: Literal['unknown'] = 'unknown'
+    warnings: list[str]
+    limitations: list[str]
+
+
 class RevokeRouteCalibration(BaseModel):
     model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
     confirmed: Literal[True]

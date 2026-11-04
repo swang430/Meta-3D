@@ -3314,10 +3314,91 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-availability": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Calibration Availability
+         * @description 只读预览精确目标频点的逐链选源；不是完整方法适用性、认证或硬件执行授权。
+         */
+        get: operations["calibration_availability_api_v1_lab_profiles__lab_profile_id__route_calibration_availability_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** RouteCalibrationAvailability */
+        RouteCalibrationAvailability: {
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /** Topology Id */
+            topology_id: string | null;
+            /** Operating Mode */
+            operating_mode: string;
+            /** Frequency Mhz */
+            frequency_mhz: number;
+            /** Checked At */
+            checked_at: string;
+            /** Routes */
+            routes: components["schemas"]["RouteAvailabilityRow"][];
+            /** Required Chain Count */
+            required_chain_count: number;
+            /** Covered Chain Count */
+            covered_chain_count: number;
+            /** All Chains Have Sources */
+            all_chains_have_sources: boolean;
+            /**
+             * Formal Scope Status
+             * @default unknown
+             * @constant
+             */
+            formal_scope_status: "unknown";
+            /** Warnings */
+            warnings: string[];
+            /** Limitations */
+            limitations: string[];
+        };
+        /** RouteAvailabilityRow */
+        RouteAvailabilityRow: {
+            /** Chain Id */
+            chain_id: string;
+            /** Ce Port */
+            ce_port: string;
+            /** Probe Id */
+            probe_id: number;
+            /** Polarization */
+            polarization: string;
+            /**
+             * Source Kind
+             * @enum {string}
+             */
+            source_kind: "confirmed_route" | "legacy_certificate" | "unavailable";
+            /** Source Id */
+            source_id: string | null;
+            /** Value Db */
+            value_db: number | null;
+            /**
+             * Measurement Provenance
+             * @enum {string}
+             */
+            measurement_provenance: "real" | "unknown";
+            /** Reason */
+            reason: string;
+        };
         /** RevokeRouteCalibration */
         RevokeRouteCalibration: {
             /**
@@ -8095,6 +8176,51 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    calibration_availability_api_v1_lab_profiles__lab_profile_id__route_calibration_availability_get: {
+        parameters: {
+            query: {
+                frequency_mhz: number;
+                operating_mode?: string;
+            };
+            header?: never;
+            path: {
+                lab_profile_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteCalibrationAvailability"];
+                };
+            };
+            /** @description 当前目标或配置无法解析 */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        detail: string;
+                    };
+                };
             };
             /** @description Validation Error */
             422: {
