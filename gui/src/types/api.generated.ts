@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/reports/{report_id}/calibration-audit": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Export Calibration Audit
+         * @description 导出独立非正式校准审计包；原报告读取门仍生效。
+         */
+        get: operations["export_calibration_audit_api_v1_reports__report_id__calibration_audit_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/switch-topologies/{topology_id}/revisions": {
         parameters: {
             query?: never;
@@ -3338,6 +3358,90 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** CalibrationAuditSource */
+        CalibrationAuditSource: {
+            /** Chain Id */
+            chain_id: string | null;
+            /** Source Id */
+            source_id: string | null;
+            /** Source Kind */
+            source_kind: string | null;
+            /** Application State */
+            application_state: string;
+            /**
+             * Availability
+             * @enum {string}
+             */
+            availability: "available" | "unavailable" | "unsupported";
+            /** Reason */
+            reason: string;
+            /** Acquisition Run Id */
+            acquisition_run_id: string | null;
+            /** Frozen Source Snapshot */
+            frozen_source_snapshot: {
+                [key: string]: unknown;
+            } | null;
+            /** Recorded Evidence */
+            recorded_evidence: {
+                [key: string]: unknown;
+            } | null;
+            /** Retrieved Sha256 */
+            retrieved_sha256: string | null;
+            /** Checked Exchange Indices */
+            checked_exchange_indices: number[];
+        };
+        /** ReportCalibrationAudit */
+        ReportCalibrationAudit: {
+            /**
+             * Schema Version
+             * @default 1
+             * @constant
+             */
+            schema_version: 1;
+            /**
+             * Audit Kind
+             * @default calibration_audit
+             * @constant
+             */
+            audit_kind: "calibration_audit";
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+            /**
+             * Report Id
+             * Format: uuid
+             */
+            report_id: string;
+            /**
+             * Execution Id
+             * Format: uuid
+             */
+            execution_id: string;
+            /** Exported At */
+            exported_at: string;
+            /** Original Report Content */
+            original_report_content: {
+                [key: string]: unknown;
+            };
+            /** Traceability */
+            traceability: {
+                [key: string]: unknown;
+            };
+            /** Sources */
+            sources: components["schemas"]["CalibrationAuditSource"][];
+            current_revocation: components["schemas"]["ReportCalibrationRevocationImpact"];
+            /**
+             * Uncertainty Budget Status
+             * @default unknown
+             * @constant
+             */
+            uncertainty_budget_status: "unknown";
+            /** Limitations */
+            limitations: string[];
+        };
         /** ReportCalibrationRevocationImpact */
         ReportCalibrationRevocationImpact: {
             /**
@@ -6962,6 +7066,37 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    export_calibration_audit_api_v1_reports__report_id__calibration_audit_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReportCalibrationAudit"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_topology_revisions_api_v1_switch_topologies__topology_id__revisions_get: {
         parameters: {
             query: {

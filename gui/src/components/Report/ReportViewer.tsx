@@ -47,6 +47,7 @@ import { fetchReport } from '../../api/reportService'
 import type { ExecutionEvidenceOutcome, ReportCalibrationRevocationImpact } from '../../types/api'
 import type { ReportContentData } from '../../types/report'
 import { ChartsTab } from './ChartsTab'
+import { CalibrationAuditExport } from './CalibrationAuditExport'
 import { TrajectoryMapTab } from './TrajectoryMapTab'
 
 interface Props {
@@ -127,12 +128,16 @@ export function ReportViewer({ reportId, contentData, title }: Props) {
     ? contentData.execution_evidence_outcome
     : report?.execution_evidence_outcome
   return (
+    <Stack>
+      {!contentData && report && !report.road_test_execution_id && report.test_execution_ids?.length === 1 &&
+        <CalibrationAuditExport key={report.id} reportId={report.id} />}
     <ReportContent
       content={content}
       outcome={outcome}
       revocationImpact={contentData?undefined:report?.calibration_revocation_impact}
       title={title || report?.title}
     />
+    </Stack>
   )
 }
 

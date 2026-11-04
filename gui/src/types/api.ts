@@ -1032,3 +1032,5 @@ export interface F64RuntimeSnapshot {
     session_id: string | null
   }>
 }
+
+export type ReportCalibrationAudit = import('./api.generated').components['schemas']['ReportCalibrationAudit']
