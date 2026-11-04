@@ -44,7 +44,7 @@ import {
   IconTerminal2,
 } from '@tabler/icons-react'
 import { fetchReport } from '../../api/reportService'
-import type { ExecutionEvidenceOutcome } from '../../types/api'
+import type { ExecutionEvidenceOutcome, ReportCalibrationRevocationImpact } from '../../types/api'
 import type { ReportContentData } from '../../types/report'
 import { ChartsTab } from './ChartsTab'
 import { TrajectoryMapTab } from './TrajectoryMapTab'
@@ -130,19 +130,23 @@ export function ReportViewer({ reportId, contentData, title }: Props) {
     <ReportContent
       content={content}
       outcome={outcome}
+      revocationImpact={contentData?undefined:report?.calibration_revocation_impact}
       title={title || report?.title}
     />
   )
 }
 
 interface ReportContentProps {
+  revocationImpact?: ReportCalibrationRevocationImpact | null
   content: ReportContentData
   outcome?: ExecutionEvidenceOutcome | null
   title?: string
 }
 
-function ReportContent({ content, outcome, title }: ReportContentProps) {
-  const resultConfig = outcome?.compatibility_classification === 'invalid'
+function ReportContent({ content, outcome, title, revocationImpact }: ReportContentProps) {
+  const resultConfig = revocationImpact?.status==='revoked'
+    ? {color:'red',label:'校准来源已撤销 · 仅审计',icon:IconAlertCircle}
+    : outcome?.compatibility_classification === 'invalid'
     ? { color: 'red', label: '证据无效 · 仅审计', icon: IconAlertCircle }
     : outcome?.completion_semantic === 'not_completed'
       ? { color: 'gray', label: '流程未完成 · 非正式', icon: IconClock }
@@ -156,6 +160,11 @@ function ReportContent({ content, outcome, title }: ReportContentProps) {
 
   return (
     <Stack gap="lg">
+      {revocationImpact?.status==='revoked'&&<Alert color="red" title="停止交付，保留历史证据">
+        <Text>原历史结论：{content.overall_result}。当前撤销影响独立核对，不改写原始数据；请由质量负责人核查。</Text>
+        {revocationImpact.items.map((item,index)=><Text size="sm" key={index}>执行{item.execution_id} · 链{item.chain_id} · 来源{item.source_id}：{item.revocation.reason}（{item.revocation.revoked_at}）</Text>)}
+        <Text size="xs">{revocationImpact.limitation} · 核对时间{revocationImpact.checked_at}</Text>
+      </Alert>}
       {/* Header with Result */}
       <Card withBorder p="md" bg={`${resultConfig.color}.0`}>
         <Group justify="space-between" align="center">
@@ -195,7 +204,7 @@ function ReportContent({ content, outcome, title }: ReportContentProps) {
                 <Text size="xl" fw={700} c={resultConfig.color}>
                   {content.pass_rate}%
                 </Text>
-                <Text size="xs" c="dimmed">通过率</Text>
+                <Text size="xs" c="dimmed">{revocationImpact?.status==='revoked'?'历史通过率（非当前有效结果）':'通过率'}</Text>
               </>
             )}
           </div>

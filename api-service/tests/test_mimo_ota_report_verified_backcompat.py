@@ -709,6 +709,7 @@ def test_report_list_regeneration_state_comes_from_mimo_trust_and_execution_trut
             if value != recoverable_execution_id:
                 return None
             return SimpleNamespace(
+                measurements=None,
                 config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
                 test_case_id=None,
                 status="completed",
@@ -830,15 +831,17 @@ def test_report_list_malformed_historical_json_does_not_poison_page(monkeypatch)
     class _DB:
         def get(self, model, value):
             if value == malformed_execution_id:
-                return SimpleNamespace(config=["legacy"], test_case_id=None)
+                return SimpleNamespace(config=["legacy"], test_case_id=None, measurements=None)
             if value == healthy_execution_id:
                 return SimpleNamespace(
+                    measurements=None,
                     config={"step_descriptors": [{"type": "MIMO_OTA_MEASURE"}]},
                     test_case_id=None,
                     status="completed",
                 )
             if value == malformed_descriptors_execution_id:
                 return SimpleNamespace(
+                    measurements=None,
                     config={"step_descriptors": 42},
                     test_case_id=None,
                 )
@@ -921,7 +924,7 @@ def test_report_list_recovery_rejects_non_pdf_wrong_shape_and_in_progress(
 
     class _DB:
         def get(self, model, value):
-            return object() if value == execution_id else None
+            return SimpleNamespace(measurements=None) if value == execution_id else None
 
     monkeypatch.setattr(report_api.report_service, "list_reports", lambda **kwargs: reports)
     monkeypatch.setattr(report_api.report_service, "count_reports", lambda **kwargs: len(reports))

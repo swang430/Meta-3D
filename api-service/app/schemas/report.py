@@ -1,11 +1,27 @@
 """Test Report Pydantic schemas"""
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Literal
 from datetime import datetime
 from uuid import UUID
 
 from ._datetime import UTCDateTime
 from app.services.execution_evidence_outcome import ExecutionEvidenceOutcome
+from .route_calibration import RouteRevocationRecord
+
+
+class ReportRevokedCalibrationSource(BaseModel):
+    execution_id: UUID
+    chain_id: str
+    source_id: UUID
+    revocation: RouteRevocationRecord
+
+
+class ReportCalibrationRevocationImpact(BaseModel):
+    status: Literal['revoked', 'not_detected', 'unknown']
+    checked_source_count: int = Field(ge=0)
+    checked_at: UTCDateTime
+    items: List[ReportRevokedCalibrationSource]
+    limitation: str
 
 
 # ==================== Report Schemas ====================
@@ -146,6 +162,7 @@ class ReportResponse(BaseModel):
     # Report content data
     content_data: Optional[Dict[str, Any]]
     execution_evidence_outcome: Optional[ExecutionEvidenceOutcome] = None
+    calibration_revocation_impact: Optional[ReportCalibrationRevocationImpact] = None
     road_test_execution_id: Optional[str]
 
     class Config:
@@ -169,6 +186,7 @@ class ReportSummary(BaseModel):
     road_test_execution_id: Optional[str] = None
     vrt_archive_trusted: bool = False
     execution_evidence_outcome: Optional[ExecutionEvidenceOutcome] = None
+    calibration_revocation_impact: Optional[ReportCalibrationRevocationImpact] = None
 
     # Historical MIMO provenance recovery (computed by the list endpoint).
     requires_regeneration: bool = False

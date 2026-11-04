@@ -27,6 +27,7 @@ export type RevokeRouteCalibration = import('./api.generated').components['schem
 export type RouteRevocationRecord = import('./api.generated').components['schemas']['RouteRevocationRecord']
 export type RouteAvailabilityRow = import('./api.generated').components['schemas']['RouteAvailabilityRow']
 export type RouteCalibrationAvailability = import('./api.generated').components['schemas']['RouteCalibrationAvailability']
+export type ReportCalibrationRevocationImpact = import('./api.generated').components['schemas']['ReportCalibrationRevocationImpact']
 
 import type { BaseStationAdapterManifest } from './baseStationManifest'
 export type { BaseStationAdapterManifest }
