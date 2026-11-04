@@ -1441,7 +1441,7 @@ class ProbePathLossCalibrationService:
         """选择最新证书，并保留没有选中的可审计原因。
 
         原因分类只读取同一暗室的数据库真值；数据库查询异常继续上抛，不能伪装成
-        ``missing``。匹配规则与历史 ``get_latest_calibration`` 完全相同。
+        ``missing``。指定频率时只匹配记录频点，不推断插值或宽带覆盖。
         """
         now = datetime.utcnow()
         query = self.db.query(ProbePathLossCalibration).filter(
@@ -1455,11 +1455,9 @@ class ProbePathLossCalibrationService:
             query = query.filter(ProbePathLossCalibration.use_mock.is_(False))
 
         if frequency_mhz is not None:
-            # 查找最接近的频率
+            # 单频记录没有已验证插值域，只覆盖记录频点（PC-05A）。
             query = query.filter(
-                ProbePathLossCalibration.frequency_mhz.between(
-                    frequency_mhz * 0.95, frequency_mhz * 1.05
-                )
+                ProbePathLossCalibration.frequency_mhz == frequency_mhz
             )
 
         selected = select_latest_path_loss_by_mode(query, operating_mode)
@@ -1486,7 +1484,7 @@ class ProbePathLossCalibrationService:
         def frequency_matches(candidate: ProbePathLossCalibration) -> bool:
             if frequency_mhz is None:
                 return True
-            return frequency_mhz * 0.95 <= candidate.frequency_mhz <= frequency_mhz * 1.05
+            return candidate.frequency_mhz == frequency_mhz
 
         def mode_matches(candidate: ProbePathLossCalibration) -> bool:
             if operating_mode is None:
@@ -1537,7 +1535,7 @@ class ProbePathLossCalibrationService:
             chamber_id: 暗室配置 ID
             probe_id: 探头 ID
             polarization: 极化类型 ("V" 或 "H")
-            frequency_mhz: 频率 (MHz)，用于查找最接近的校准
+            frequency_mhz: 频率 (MHz)，指定时仅匹配精确频点的校准
 
         Returns:
             路损值 (dB) 或 None
@@ -1965,11 +1963,9 @@ class RFChainCalibrationService:
                 RFChainCalibration.valid_until > datetime.utcnow(),
             )
 
-        if frequency_mhz:
+        if frequency_mhz is not None:
             query = query.filter(
-                RFChainCalibration.frequency_mhz.between(
-                    frequency_mhz * 0.95, frequency_mhz * 1.05
-                )
+                RFChainCalibration.frequency_mhz == frequency_mhz
             )
 
         return query.order_by(desc(RFChainCalibration.calibrated_at)).first()
@@ -1992,11 +1988,9 @@ class RFChainCalibrationService:
                 RFChainCalibration.valid_until > datetime.utcnow(),
             )
 
-        if frequency_mhz:
+        if frequency_mhz is not None:
             query = query.filter(
-                RFChainCalibration.frequency_mhz.between(
-                    frequency_mhz * 0.95, frequency_mhz * 1.05
-                )
+                RFChainCalibration.frequency_mhz == frequency_mhz
             )
 
         return query.order_by(desc(RFChainCalibration.calibrated_at)).first()

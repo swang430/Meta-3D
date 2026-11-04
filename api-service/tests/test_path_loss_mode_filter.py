@@ -112,3 +112,37 @@ class TestModeFilteredLookup:
         _seed(db, cid, mode="cal_power_sweep")
         cert = _svc(db).get_latest_calibration(cid, 3500.0, operating_mode=None)
         assert cert is not None and cert.operating_mode == "cal_power_sweep"
+
+
+@pytest.mark.parametrize('frequency', [3499.99, 3500.01, 3400.0, 3600.0])
+def test_single_point_certificate_does_not_cover_nearby_frequency(db, frequency):
+    cid = uuid4()
+    _seed(db, cid, mode='mimo_ota', freq_mhz=frequency)
+    result = _svc(db).resolve_latest_calibration(cid, 3500.0, operating_mode='mimo_ota')
+    assert result.certificate is None
+    assert result.reason == 'frequency_mismatch'
+
+
+def test_newer_nearby_certificate_does_not_mask_exact_point(db):
+    cid = uuid4()
+    _seed(db, cid, mode='mimo_ota', freq_mhz=3500.0, age_min=60)
+    _seed(db, cid, mode='mimo_ota', freq_mhz=3501.0, age_min=1)
+    result = _svc(db).resolve_latest_calibration(cid, 3500.0, operating_mode='mimo_ota')
+    assert result.certificate.frequency_mhz == 3500.0
+
+
+@pytest.mark.parametrize('direction', ['uplink', 'downlink'])
+def test_chain_gain_single_point_scope(db, direction):
+    from app.models.probe_calibration import RFChainCalibration
+    from app.services.path_loss_calibration_service import RFChainCalibrationService
+    cid = uuid4()
+    now = datetime.utcnow()
+    row = RFChainCalibration(chamber_id=cid, chain_type=direction,
+        frequency_mhz=3500.0, use_mock=False, status='valid',
+        calibrated_at=now, valid_until=now + timedelta(days=1), total_chain_gain_db=8.0)
+    db.add(row)
+    db.commit()
+    lookup = getattr(RFChainCalibrationService(db, use_mock=False), f'get_latest_{direction}_calibration')
+    assert lookup(cid, 3500.0).id == row.id
+    assert lookup(cid, 3500.01) is None
+    assert lookup(cid).id == row.id

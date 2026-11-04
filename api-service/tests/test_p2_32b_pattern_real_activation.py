@@ -1535,6 +1535,13 @@ def test_chain_correction_selects_matching_certificate_before_newer_other_route(
     )
 
     assert corrections == pytest.approx({(0, "V"): 1.25})
+    # 单频路损不能默认为附近频点提供方向图修正。
+    with pytest.raises(ValueError, match="valid real per-chain"):
+        PatternCalibrationService._resolve_pattern_chain_corrections(
+            db, chamber_id=chamber_id, lab_profile_id=lab_profile_id,
+            operating_mode="mimo_ota", frequency_mhz=3500.01,
+            topology_id=str(topology_id), route_by_pair={(0, "V"): chain},
+        )
     db.close()
 
 

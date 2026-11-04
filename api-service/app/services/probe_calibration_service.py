@@ -1551,9 +1551,7 @@ class PatternCalibrationService:
             ProbePathLossCalibration.status == CalibrationStatus.VALID.value,
             ProbePathLossCalibration.valid_until > now,
             ProbePathLossCalibration.use_mock.is_(False),
-            ProbePathLossCalibration.frequency_mhz.between(
-                frequency_mhz * 0.95, frequency_mhz * 1.05
-            ),
+            ProbePathLossCalibration.frequency_mhz == frequency_mhz,
         )
         certificate = select_latest_path_loss_by_mode(query, operating_mode)
         if certificate is None:
