@@ -111,37 +111,7 @@ export interface StartTemporalCalibrationRequest {
   calibrated_by?: string
 }
 
-export interface TemporalCalibrationResponse {
-  id: string
-  session_id?: string
-  scenario_type: string
-  scenario_condition: string
-  fc_ghz: number
-  // PDP data
-  measured_pdp?: {
-    delay_bins_ns: number[]
-    power_db: number[]
-  }
-  // Results
-  measured_rms_delay_spread_ns: number
-  reference_rms_delay_spread_ns: number
-  reference_rms_delay_spread_range_ns: number[]
-  rms_error_percent: number
-  // Clusters
-  detected_cluster_delays_ns?: number[]
-  detected_cluster_powers_db?: number[]
-  detected_num_clusters: number
-  reference_num_clusters: number
-  // Validation
-  validation_pass: boolean
-  threshold_percent: number
-  // Metadata
-  channel_emulator?: string
-  calibrated_at: string
-  calibrated_by?: string
-  valid_until: string
-  status: string
-}
+export type TemporalCalibrationResponse = import('./api.generated').components['schemas']['TemporalCalibrationResponse']
 
 // ==================== Doppler Calibration ====================
 

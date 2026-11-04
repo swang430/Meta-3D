@@ -37,6 +37,7 @@ from app.models.channel_calibration import (
 )
 from app.models.chamber import ChamberConfiguration
 from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_report
+from app.services.temporal_calibration_truth import temporal_session_view
 from app.services.probe_pattern.consumer import (
     evaluate_probe_pattern_formal_eligibility,
 )
@@ -66,6 +67,7 @@ def _write_report_provenance_manifest(
     )
     manifest = {
         "schema_version": 2,
+        "temporal_method_sanitized": True,
         "path_loss_section_included": bool(probe_rows),
         "path_loss_provenance_disclosed": path_loss_provenance_disclosed,
         "unverified_path_loss_records": sum(
@@ -529,6 +531,7 @@ class CalibrationReportGenerator:
                 ChannelCalibrationSession.id == session_id
             ).first()
             if session:
+                session = temporal_session_view(self.db, session)
                 data['session'] = {
                     'id': str(session.id),
                     'name': session.name,
@@ -937,30 +940,20 @@ class CalibrationReportGenerator:
                     value for value in configured_types if isinstance(value, str)
                 }
 
-        # Temporal calibrations
+        temporal_unknown = 0
         if not calibration_type or calibration_type == 'temporal':
             query = self.db.query(TemporalChannelCalibration)
             if session_id:
                 query = query.filter(TemporalChannelCalibration.session_id == session_id)
             calibrations = query.order_by(desc(TemporalChannelCalibration.calibrated_at)).limit(100).all()
-
-            temporal_data = []
-            for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
-                temporal_data.append({
-                    'id': str(cal.id),
-                    'scenario_type': cal.scenario_type,
-                    'scenario_condition': cal.scenario_condition,
-                    'fc_ghz': cal.fc_ghz,
-                    'validation_pass': cal.validation_pass,
-                    'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
-                    'rms_delay_spread_measured_ns': cal.measured_rms_delay_spread_ns,
-                    'rms_delay_spread_target_ns': cal.reference_rms_delay_spread_ns,
-                    'rms_delay_spread_error_percent': cal.rms_error_percent,
-                })
-            data['channel_calibration']['temporal'] = temporal_data
+            temporal_unknown = len(calibrations) or int('temporal' in requested_types)
+            data['channel_calibration']['temporal'] = [{
+                'id': str(cal.id), 'scenario_type': cal.scenario_type,
+                'scenario_condition': cal.scenario_condition, 'fc_ghz': cal.fc_ghz,
+                'validation_pass': None, 'formal_status': 'UNKNOWN',
+                'rms_delay_spread_measured_ns': None, 'rms_delay_spread_target_ns': None,
+                'rms_delay_spread_error_percent': None,
+            } for cal in calibrations]
 
         # Doppler calibrations
         if not calibration_type or calibration_type == 'doppler':
@@ -1091,18 +1084,18 @@ class CalibrationReportGenerator:
             else 0
         )
         summary = {
-            'total_executions': total + unverified_requested,
+            'total_executions': total + unverified_requested + temporal_unknown,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
             'pass_rate': (
                 None
-                if unverified_requested or total == 0
+                if unverified_requested or temporal_unknown or total == 0
                 else passed / total * 100
             ),
         }
-        if unverified_requested:
-            summary['undetermined'] = unverified_requested
+        if unverified_requested or temporal_unknown:
+            summary['undetermined'] = unverified_requested + temporal_unknown
         data['execution_summary'] = summary
 
         return data

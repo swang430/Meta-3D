@@ -127,14 +127,10 @@ class ChannelCalibrationSession(Base):
 # ============================================================================
 
 class TemporalChannelCalibration(Base):
-    """
-    时域信道校准记录
+    """时域诊断记录。现有代理/模拟没有标准PDP资格。
 
-    验证信道仿真器能否正确生成3GPP定义的功率时延谱(PDP)。
-    提取RMS时延扩展、最大时延、簇参数等，与3GPP理论值对比。
-
-    有效期：1个月
-    合格标准：RMS时延扩展误差 < 10%
+    原记录保留；正式消费者使用temporal_calibration_truth投影，
+    不将历史validation_pass、工程统计或有效期当独立验证结果。
     """
     __tablename__ = "temporal_channel_calibrations"
 

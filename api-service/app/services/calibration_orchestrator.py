@@ -976,15 +976,11 @@ class CalibrationOrchestrator:
                         calibrated_by=calibrated_by,
                         use_mock=self.use_mock,
                     )
-                    overall_pass = bool(
-                        pdp_cal.validation_pass
-                        and dop_cal.validation_pass
-                        and sp_cal.validation_pass
-                    )
+                    overall_pass = None  # 时域方法尚未独立验证，不能整体PASS。
                     result = type('Result', (), {
                         'success': True,
                         'message': (
-                            f"CDL model validation: PDP={'PASS' if pdp_cal.validation_pass else 'FAIL'}, "
+                            f"CDL model validation: PDP=UNKNOWN (diagnostic only), "
                             f"Doppler={'PASS' if dop_cal.validation_pass else 'FAIL'}, "
                             f"Spatial={'PASS' if sp_cal.validation_pass else 'FAIL'}"
                         ),

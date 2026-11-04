@@ -1929,7 +1929,7 @@ class PDFGenerator:
 
         # Calibration type breakdown
         cal_types = [
-            ('temporal', 'Temporal (PDP) Calibration', 'RMS 时延扩展验证'),
+            ('temporal', '时域诊断（非标准 PDP）', '代理或未验证方法，不提供正式判词'),
             ('doppler', 'Doppler Calibration', 'Jakes 多普勒频谱验证'),
             ('spatial_correlation', 'Spatial Correlation Calibration', 'MIMO 空间相关性验证'),
             ('angular_spread', 'Angular Spread Calibration', '角度扩展验证'),
@@ -1949,9 +1949,9 @@ class PDFGenerator:
                     headers = ['Scenario', 'Condition', 'Freq (GHz)', 'RMS Delay Error', 'Status']
                     rows = [headers]
                     for cal in cal_data[:15]:
-                        status = '✓ PASS' if cal.get('validation_pass') else '× FAIL'
-                        status_color = '#43a047' if cal.get('validation_pass') else '#e53935'
-                        error = cal.get('rms_delay_spread_error_percent', 0)
+                        status = 'UNKNOWN / diagnostic only'
+                        status_color = '#757575'
+                        error = None
                         rows.append([
                             cal.get('scenario_type', '-'),
                             cal.get('scenario_condition', '-'),

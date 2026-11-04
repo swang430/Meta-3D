@@ -366,8 +366,9 @@ class TestChannelCalibrationService:
         assert calibration.scenario_type == "UMa"
         assert calibration.scenario_condition == "LOS"
         assert calibration.measured_rms_delay_spread_ns is not None
-        assert calibration.validation_pass is not None
-        assert calibration.status == ChannelCalibrationStatus.VALID.value
+        assert calibration.validation_pass is None
+        assert calibration.status == "unknown"
+        assert calibration.valid_until is None
 
     @pytest.mark.asyncio
     async def test_run_doppler_calibration(self, db_session):
