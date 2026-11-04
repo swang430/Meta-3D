@@ -347,6 +347,6 @@ function withDeclaredPorts(Component: any) {
 }
 
 export const customNodeTypes = Object.fromEntries(Object.entries({
-  ...originalNodeTypes,amplifier:PassiveNode,combiner:PassiveNode,pad:PassiveNode,antenna:PassiveNode,
+  ...originalNodeTypes,signal_generator:PassiveNode,amplifier:PassiveNode,combiner:PassiveNode,pad:PassiveNode,antenna:PassiveNode,
   termination:PassiveNode,cable:PassiveNode,receive_cable:PassiveNode,air_path:PassiveNode,sa_port:PassiveNode,
 }).map(([type,Component])=>[type,withDeclaredPorts(Component)]));

@@ -946,7 +946,7 @@ function renderSection(section: SectionKey, payload: RenderPayload) {
       return <LabWorkspace view={section} onNavigate={payload.setActiveSection}>
         {section === 'equipment' ? <EquipmentManager />
           : section === 'probeManager' ? <ProbeManager onNavigate={payload.setActiveSection} />
-          : section === 'topologyEditor' ? <TopologyEditor /> : null}
+          : section === 'topologyEditor' ? <TopologyEditor onOpenResources={() => payload.setActiveSection('equipment')} /> : null}
       </LabWorkspace>
     case 'assetProfiles':
       return <AssetProfilesPanel />
