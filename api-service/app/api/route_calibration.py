@@ -1,7 +1,7 @@
 """保存路径的采集采用；未保存草稿不从客户端导入，不签认证资格。"""
 from uuid import UUID
 from typing import Literal
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response, Query
 from sqlalchemy.orm import Session
 
 from app.db.database import get_db
@@ -11,8 +11,37 @@ from app.services.calibration.route_calibration import (list_route_selections,li
 from app.services.calibration.configuration_scope import build_calibration_scope,build_selected_route_calibration_scope
 from app.schemas.route_calibration import RevokeRouteCalibration, RouteRevocationRecord
 from app.services.calibration.route_revocation import read_route_revocation, revoke_route_calibration
+from app.schemas.route_calibration import RouteCalibrationAvailability, RouteAvailabilityRow
+from app.services.calibration.route_calibration import resolve_effective_route_compensation
 
 router = APIRouter(prefix='/lab-profiles', tags=['拓扑校准路径'])
+
+
+@router.get('/{lab_profile_id}/route-calibration-availability', response_model=RouteCalibrationAvailability,
+            responses={400: {'description': '当前目标或配置无法解析', 'content': {'application/json': {
+                'schema': {'type': 'object', 'properties': {'detail': {'type': 'string'}}, 'required': ['detail']}}}}})
+def calibration_availability(lab_profile_id: UUID,
+        frequency_mhz: float = Query(..., gt=0, allow_inf_nan=False),
+        operating_mode: str = Query('mimo_ota', min_length=1), db: Session = Depends(get_db)):
+    """只读预览精确目标频点的逐链选源；不是完整方法适用性、认证或硬件执行授权。"""
+    try:
+        selection = resolve_effective_route_compensation(db, lab_profile_id, operating_mode,
+                                                        frequency_mhz, lock_sources=False)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    fields = RouteAvailabilityRow.model_fields
+    rows = [RouteAvailabilityRow.model_validate({key: row[key] for key in fields})
+            for row in selection['route_entries']]
+    covered = sum(row.source_kind != 'unavailable' and row.value_db is not None
+                  and row.measurement_provenance == 'real' for row in rows)
+    return RouteCalibrationAvailability(lab_profile_id=lab_profile_id,
+        topology_id=selection['topology_id'], operating_mode=operating_mode, frequency_mhz=frequency_mhz,
+        checked_at=selection['selected_at'], routes=rows, required_chain_count=len(rows),
+        covered_chain_count=covered, all_chains_have_sources=bool(rows) and covered == len(rows),
+        warnings=selection['warnings'], limitations=[
+            '只核对目标精确频点的逐链净损耗来源；不证明完整带宽、空间范围或不确定度覆盖。',
+            '来源齐全不代表计量认证或正式通过；执行仍须重新检查、冻结并通过既有资格门。',
+            '预览是当前读取时点，后续配置或撤销可能变化，不代替执行冻结。'])
 
 
 @router.get('/{lab_profile_id}/route-calibration-applications/{application_id}/revocation',

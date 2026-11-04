@@ -39,8 +39,11 @@ def _execution_route(route):
     return rf_execution_identity(route.nodes,route.connections,route.switch_execution_identity)
 
 
-def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
-    """新确认仅精确频点/完整路径适用；旧单频来源也只匹配精确频点，沿既有mode政策逐链核对。"""
+def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz,*,lock_sources=True):
+    """新旧来源均按精确频点与既有mode政策逐链核对。
+
+    lock_sources=False仅供只读预览；正式冻结显式True并保持锁到提交。
+    """
     lab=db.get(LabProfile,UUID(str(lab_id)))
     if lab is None or not lab.is_active:
         raise ValueError('执行路损冻结需要明确活动实验室')
@@ -86,12 +89,13 @@ def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
             snapshot={column.name:_plain(getattr(saved,column.name)) for column in saved.__table__.columns})
     route_entries=[]
     from app.services.calibration.route_revocation import lock_acquisition_runs, revoked_run_ids
-    # 先锁定本次选择可能读取的采集，再读撤销事实；三个执行创建入口均在外层commit。
+    # 正式冻结先锁采集再读撤销事实；只读预览不加锁，不能替代执行的重新核对。
     selected_pointers = db.query(RouteCalibrationSelection).filter_by(lab_profile_id=lab.id,
         operating_mode=mode, frequency_mhz=frequency_mhz).all()
-    selected_runs = db.query(RouteCalibrationApplication.acquisition_run_id).filter(
-        RouteCalibrationApplication.id.in_([pointer.application_id for pointer in selected_pointers])).all()
-    lock_acquisition_runs(db, [row[0] for row in selected_runs])
+    if lock_sources:
+        selected_runs = db.query(RouteCalibrationApplication.acquisition_run_id).filter(
+            RouteCalibrationApplication.id.in_([pointer.application_id for pointer in selected_pointers])).all()
+        lock_acquisition_runs(db, [row[0] for row in selected_runs])
     revoked = revoked_run_ids(db, lab.id)
     now=datetime.now(timezone.utc)
     # 完整路径的CE端点是身份权威；旧终端绑定可能把中间衰减器标签当端口，甚至丢链。
@@ -287,7 +291,7 @@ def freeze_execution_route_compensation(db,execution,test_case):
     from app.services.mimo_ota.executors._helpers import load_mimo_ota_config
     configuration=load_mimo_ota_config(execution)
     frozen=resolve_effective_route_compensation(db,test_case.lab_profile_id,configuration.switch_mode_id,
-        configuration.primary_carrier.frequency_hz/1e6)
+        configuration.primary_carrier.frequency_hz/1e6,lock_sources=True)
     frozen['execution_id']=str(execution.id)
     frozen['digest']=canonical_payload_digest(frozen)
     _validate(frozen,execution.id)
