@@ -605,7 +605,7 @@ class MultiFrequencyPathLoss(Base):
     """
     多频点路损校准数据
 
-    存储扫频校准的路损数据，支持频率插值。
+    存储扫频校准的路损数据；正式查询仅返回实测点，插值系数不证明适用范围。
     用于宽带测试场景。
 
     关联：ProbePathLossCalibration (单频点校准)

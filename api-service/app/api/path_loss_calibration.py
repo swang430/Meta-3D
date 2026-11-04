@@ -430,7 +430,7 @@ def get_path_loss_at_frequency(
     db: Session = Depends(get_db)
 ):
     """
-    获取指定频率的路损值 (支持插值)
+    获取指定实测频点的路损值；没有经验证插值域时不返回推算值。
     """
     # This endpoint returns a compensation value, not an audit row. Only
     # explicitly real, unexpired calibration may supply that value.
@@ -452,7 +452,7 @@ def get_path_loss_at_frequency(
         "polarization": polarization,
         "frequency_mhz": frequency_mhz,
         "path_loss_db": path_loss,
-        "interpolated": True
+        "interpolated": False
     }
 
 

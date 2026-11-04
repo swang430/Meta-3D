@@ -490,9 +490,11 @@ def test_multi_frequency_service_rejects_unsampled_stop_frequency():
         MultiFrequencyPathLossService._frequency_points(3400.0, 3550.0, 100.0)
 
 
-def test_formal_interpolation_requires_exact_current_frozen_route(monkeypatch):
+@pytest.mark.parametrize("frequency,expected", [(3400.0, 50.0), (3500.0, 51.0), (3600.0, 52.0), (3450.0, None), (3550.0, None)])
+def test_formal_sample_requires_exact_current_frozen_route(monkeypatch, frequency, expected):
     """拓扑换线后旧扫频行不得继续为新物理链路提供补偿。"""
-    engine = create_engine("sqlite:///:memory:")
+    from sqlalchemy.pool import StaticPool
+    engine = create_engine("sqlite:///:memory:", poolclass=StaticPool, connect_args={"check_same_thread": False})
     MultiFrequencyPathLoss.__table__.create(engine)
     chamber_id = uuid4()
     lab_profile_id = uuid4()
@@ -539,9 +541,57 @@ def test_formal_interpolation_requires_exact_current_frozen_route(monkeypatch):
             chamber_id,
             1,
             "V",
-            3500.0,
+            frequency,
             lab_profile_id=lab_profile_id,
-        ) == 51.0
+        ) == expected
+
+        from app.api.path_loss_calibration import get_path_loss_at_frequency
+        from fastapi import HTTPException
+        if expected is None:
+            with pytest.raises(HTTPException) as exc:
+                get_path_loss_at_frequency(chamber_id, 1, frequency, "V", lab_profile_id, "mimo_ota", db)
+            assert exc.value.status_code == 404
+        else:
+            response = get_path_loss_at_frequency(chamber_id, 1, frequency, "V", lab_profile_id, "mimo_ota", db)
+            assert response["path_loss_db"] == expected
+            assert response["interpolated"] is False
+
+        from fastapi import FastAPI
+        from fastapi.testclient import TestClient
+        from app.api.path_loss_calibration import router, get_db
+        app = FastAPI()
+        app.include_router(router)
+        app.dependency_overrides[get_db] = lambda: db
+        with TestClient(app) as client:
+            response = client.get(f"{router.prefix}/multi-frequency/{chamber_id}/1", params={
+                "frequency_mhz": frequency, "lab_profile_id": str(lab_profile_id),
+            })
+        assert response.status_code == (404 if expected is None else 200)
+        if expected is not None:
+            assert response.json()["path_loss_db"] == expected
+            assert response.json()["interpolated"] is False
+
+        # 新范围本身不遮住旧实测点；只有新的精确样本才优先。
+        if frequency == 3500.0:
+            original = db.query(MultiFrequencyPathLoss).one()
+            values = {column.name: getattr(original, column.name)
+                      for column in MultiFrequencyPathLoss.__table__.columns
+                      if column.name not in {"id", "created_at", "updated_at"}}
+            values.update(frequency_points_mhz=[3400.0, 3600.0], path_loss_db=[70.0, 72.0],
+                          calibrated_at=now + timedelta(seconds=1), num_points=2)
+            newer = MultiFrequencyPathLoss(**values)
+            db.add(newer)
+            db.commit()
+            assert service.get_path_loss_at_frequency(chamber_id, 1, "V", frequency, lab_profile_id=lab_profile_id) == expected
+            newer.frequency_points_mhz = [3400.0, 3500.0, 3600.0]
+            newer.path_loss_db = [70.0, 71.0, 72.0]
+            db.commit()
+            assert service.get_path_loss_at_frequency(chamber_id, 1, "V", frequency, lab_profile_id=lab_profile_id) == 71.0
+            for frequencies, losses in [([3500.0], {"0": 71.0}), (3500.0, [71.0]), ([3500.0], 71.0)]:
+                newer.frequency_points_mhz = frequencies
+                newer.path_loss_db = losses
+                db.commit()
+                assert service.get_path_loss_at_frequency(chamber_id, 1, "V", frequency, lab_profile_id=lab_profile_id) == expected
 
         current.chains = [RFChainSpec("chain-2", "B2.1", 1, "V")]
         assert service.get_path_loss_at_frequency(
