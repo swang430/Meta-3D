@@ -4,6 +4,146 @@
  */
 
 export interface paths {
+    "/api/v1/calibration/channel/eis/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Eis Validation
+         * @description EIS工程诊断：当前生成模拟分布，不测量真实DUT灵敏度。用户阈值仅保留为请求参数，不提供正式判词。
+         */
+        post: operations["start_eis_validation_api_v1_calibration_channel_eis_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/angular-spread/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Angular Spread Calibration
+         * @description 角度扩展工程诊断：当前生成模拟APS，不旋转DUT、不测量真实接收功率，不提供正式判词。
+         */
+        post: operations["start_angular_spread_calibration_api_v1_calibration_channel_angular_spread_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/spatial-correlation/start": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Spatial Correlation Calibration
+         * @description 空间相关性工程诊断：当前入口生成模拟样本；不启动真实线性扫描，不提供正式判词。
+         */
+        post: operations["start_spatial_correlation_calibration_api_v1_calibration_channel_spatial_correlation_start_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/eis/{calibration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Eis Validation
+         * @description 获取 EIS 验证详情
+         */
+        get: operations["get_eis_validation_api_v1_calibration_channel_eis__calibration_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/angular-spread/{calibration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Angular Spread Calibration
+         * @description 获取角度扩展校准详情
+         */
+        get: operations["get_angular_spread_calibration_api_v1_calibration_channel_angular_spread__calibration_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/spatial-correlation/{calibration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Spatial Correlation Calibration
+         * @description 获取空间相关性校准详情
+         */
+        get: operations["get_spatial_correlation_calibration_api_v1_calibration_channel_spatial_correlation__calibration_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/channel/doppler/{calibration_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Doppler Calibration
+         * @description 获取多普勒校准详情
+         */
+        get: operations["get_doppler_calibration_api_v1_calibration_channel_doppler__calibration_id__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/calibration/channel/temporal/{calibration_id}": {
         parameters: {
             query?: never;
@@ -3238,31 +3378,11 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Start Doppler spectrum channel validation (P1-70 real reachable) */
-        post: {
-            parameters: {
-                query?: never;
-                header?: never;
-                path?: never;
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": components["schemas"]["StartDopplerCalibrationRequest"];
-                };
-            };
-            responses: {
-                /** @description Calibration job result */
-                202: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["ChannelCalibrationJobResponse"];
-                    };
-                };
-            };
-        };
+        /**
+         * Start Doppler Calibration
+         * @description 多普勒工程诊断：模拟生成或调用当前SA采集入口。非Mock不等于已验证方法；当前不提供正式判词或有效期。
+         */
+        post: operations["start_doppler_calibration_api_v1_calibration_channel_doppler_start_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -3398,6 +3518,438 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * DUTTypeEnum
+         * @description 被测设备类型
+         * @enum {string}
+         */
+        DUTTypeEnum: "smartphone" | "vehicle" | "module";
+        /**
+         * EISTestConfig
+         * @description EIS测试配置
+         */
+        EISTestConfig: {
+            /**
+             * Scenario
+             * @description 测试场景
+             */
+            scenario?: string | null;
+            /**
+             * Fc Ghz
+             * @description 载波频率 (GHz)
+             */
+            fc_ghz: number;
+            /**
+             * Bandwidth Mhz
+             * @description 信号带宽 (MHz)
+             */
+            bandwidth_mhz?: number | null;
+            /**
+             * Modulation
+             * @description 调制方式
+             */
+            modulation?: string | null;
+            /**
+             * Target Throughput Percent
+             * @description 目标吞吐量百分比
+             * @default 95
+             */
+            target_throughput_percent: number;
+        };
+        /**
+         * EISDUTConfig
+         * @description EIS DUT配置
+         */
+        EISDUTConfig: {
+            /** @description DUT类型 */
+            type: components["schemas"]["DUTTypeEnum"];
+            /**
+             * Model
+             * @description 型号
+             */
+            model: string;
+            /**
+             * Num Rx Antennas
+             * @description 接收天线数
+             */
+            num_rx_antennas?: number | null;
+        };
+        /**
+         * ChannelCalibrationJobStatus
+         * @description 校准任务状态
+         * @enum {string}
+         */
+        ChannelCalibrationJobStatus: "queued" | "running" | "completed" | "failed";
+        /**
+         * TestDUTConfig
+         * @description 测试DUT配置
+         */
+        TestDUTConfig: {
+            /**
+             * Antenna Spacing Wavelengths
+             * @description 天线间距 (波长)
+             */
+            antenna_spacing_wavelengths: number;
+            /**
+             * Antenna Spacing M
+             * @description 天线间距 (m)
+             */
+            antenna_spacing_m?: number | null;
+            /**
+             * Antenna Type
+             * @description 天线类型
+             * @default dipole
+             */
+            antenna_type: string;
+        };
+        /**
+         * StartSpatialCorrelationCalibrationRequest
+         * @description 启动空间相关性校准请求
+         */
+        StartSpatialCorrelationCalibrationRequest: {
+            /** @description 场景配置 */
+            scenario: components["schemas"]["ScenarioConfig"];
+            test_dut: components["schemas"]["TestDUTConfig"];
+            /**
+             * Session Id
+             * @description 关联的校准会话ID
+             */
+            session_id?: string | null;
+            /**
+             * Calibrated By
+             * @description 校准人员
+             */
+            calibrated_by: string;
+        };
+        /**
+         * StartEISValidationRequest
+         * @description 启动EIS验证请求
+         */
+        StartEISValidationRequest: {
+            /** @description 测试配置 */
+            test_config: components["schemas"]["EISTestConfig"];
+            /** @description DUT配置 */
+            dut: components["schemas"]["EISDUTConfig"];
+            /**
+             * Min Eis Dbm
+             * @description 最小EIS要求 (dBm)
+             */
+            min_eis_dbm?: number | null;
+            /**
+             * Session Id
+             * @description 关联的校准会话ID
+             */
+            session_id?: string | null;
+            /**
+             * Measured By
+             * @description 测量人员
+             */
+            measured_by: string;
+        };
+        /**
+         * CalibrationJobResponse
+         * @description 校准任务响应
+         */
+        app__schemas__channel_calibration__CalibrationJobResponse: {
+            /**
+             * Calibration Job Id
+             * Format: uuid
+             */
+            calibration_job_id: string;
+            status: components["schemas"]["ChannelCalibrationJobStatus"];
+            /** Estimated Duration Minutes */
+            estimated_duration_minutes?: number | null;
+            /** Message */
+            message?: string | null;
+        };
+        /**
+         * StartAngularSpreadCalibrationRequest
+         * @description 启动角度扩展校准请求
+         */
+        StartAngularSpreadCalibrationRequest: {
+            /** @description 场景配置 */
+            scenario: components["schemas"]["ScenarioConfig"];
+            /**
+             * Azimuth Step Deg
+             * @description 方位角步进 (度)
+             * @default 5
+             */
+            azimuth_step_deg: number;
+            /**
+             * Session Id
+             * @description 关联的校准会话ID
+             */
+            session_id?: string | null;
+            /**
+             * Positioner Id
+             * @description 转台设备ID
+             */
+            positioner_id?: string | null;
+            /**
+             * Calibrated By
+             * @description 校准人员
+             */
+            calibrated_by: string;
+        };
+        /**
+         * EISValidationResponse
+         * @description EIS验证响应
+         */
+        EISValidationResponse: {
+            /**
+             * Diagnostic Data
+             * @description 非正式诊断材料，不进入正式KPI
+             */
+            diagnostic_data?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Scenario */
+            scenario?: string | null;
+            /** Fc Ghz */
+            fc_ghz: number;
+            /** Bandwidth Mhz */
+            bandwidth_mhz?: number | null;
+            /** Modulation */
+            modulation?: string | null;
+            /**
+             * Target Throughput Percent
+             * @default 95
+             */
+            target_throughput_percent: number;
+            /** Dut Type */
+            dut_type?: string | null;
+            /** Dut Model */
+            dut_model: string;
+            /** Num Rx Antennas */
+            num_rx_antennas?: number | null;
+            /** Eis Map */
+            eis_map: {
+                [key: string]: unknown;
+            };
+            /** Peak Eis Dbm */
+            peak_eis_dbm?: number | null;
+            /** Peak Azimuth Deg */
+            peak_azimuth_deg?: number | null;
+            /** Peak Elevation Deg */
+            peak_elevation_deg?: number | null;
+            /** Median Eis Dbm */
+            median_eis_dbm?: number | null;
+            /** Eis Spread Db */
+            eis_spread_db?: number | null;
+            /** Min Eis Dbm */
+            min_eis_dbm?: number | null;
+            /** Validation Pass */
+            validation_pass?: boolean | null;
+            /** Measured At */
+            measured_at: string;
+            /** Measured By */
+            measured_by?: string | null;
+            /** Valid Until */
+            valid_until?: string | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * AngularSpreadCalibrationResponse
+         * @description 角度扩展校准响应
+         */
+        AngularSpreadCalibrationResponse: {
+            /**
+             * Diagnostic Data
+             * @description 非正式诊断材料，不进入正式KPI
+             */
+            diagnostic_data?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Scenario Type */
+            scenario_type: string;
+            /** Scenario Condition */
+            scenario_condition: string;
+            /** Fc Ghz */
+            fc_ghz: number;
+            /** Measured Aps */
+            measured_aps: {
+                [key: string]: number[];
+            };
+            /** Fitted Mean Azimuth Deg */
+            fitted_mean_azimuth_deg?: number | null;
+            /** Fitted Rms Angular Spread Deg */
+            fitted_rms_angular_spread_deg?: number | null;
+            /**
+             * Fitted Distribution Type
+             * @default Laplacian
+             */
+            fitted_distribution_type: string;
+            /** Fitted R Squared */
+            fitted_r_squared?: number | null;
+            /** Reference Rms Angular Spread Deg */
+            reference_rms_angular_spread_deg?: number | null;
+            /** Reference Rms Angular Spread Range Deg */
+            reference_rms_angular_spread_range_deg?: number[] | null;
+            /** Rms Error Deg */
+            rms_error_deg?: number | null;
+            /** Validation Pass */
+            validation_pass?: boolean | null;
+            /**
+             * Threshold Deg
+             * @default 5
+             */
+            threshold_deg: number;
+            /** Positioner */
+            positioner?: string | null;
+            /** Calibrated At */
+            calibrated_at: string;
+            /** Calibrated By */
+            calibrated_by?: string | null;
+            /** Valid Until */
+            valid_until?: string | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * SpatialCorrelationCalibrationResponse
+         * @description 空间相关性校准响应
+         */
+        SpatialCorrelationCalibrationResponse: {
+            /**
+             * Diagnostic Data
+             * @description 非正式诊断材料，不进入正式KPI
+             */
+            diagnostic_data?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Scenario Type */
+            scenario_type: string;
+            /** Scenario Condition */
+            scenario_condition: string;
+            /** Fc Ghz */
+            fc_ghz: number;
+            /** Angular Spread Deg */
+            angular_spread_deg?: number | null;
+            /** Antenna Spacing Wavelengths */
+            antenna_spacing_wavelengths: number;
+            /** Antenna Spacing M */
+            antenna_spacing_m?: number | null;
+            /** Antenna Type */
+            antenna_type?: string | null;
+            /** Measured Correlation Magnitude */
+            measured_correlation_magnitude?: number | null;
+            /** Measured Correlation Phase Deg */
+            measured_correlation_phase_deg?: number | null;
+            /** Samples */
+            samples?: number | null;
+            /** Confidence Interval */
+            confidence_interval?: number[] | null;
+            /** Reference Correlation Magnitude */
+            reference_correlation_magnitude?: number | null;
+            /** Reference Correlation Phase Deg */
+            reference_correlation_phase_deg?: number | null;
+            /**
+             * Calculation Method
+             * @default 3GPP_TR_38_901_Laplacian
+             */
+            calculation_method: string;
+            /** Magnitude Error */
+            magnitude_error?: number | null;
+            /** Phase Error Deg */
+            phase_error_deg?: number | null;
+            /** Validation Pass */
+            validation_pass?: boolean | null;
+            /**
+             * Threshold Magnitude
+             * @default 0.1
+             */
+            threshold_magnitude: number;
+            /**
+             * Threshold Phase Deg
+             * @default 10
+             */
+            threshold_phase_deg: number;
+            /** Calibrated At */
+            calibrated_at: string;
+            /** Calibrated By */
+            calibrated_by?: string | null;
+            /** Valid Until */
+            valid_until?: string | null;
+            /** Status */
+            status: string;
+        };
+        /**
+         * DopplerCalibrationResponse
+         * @description 多普勒校准响应
+         */
+        DopplerCalibrationResponse: {
+            /**
+             * Diagnostic Data
+             * @description 非正式诊断材料，不进入正式KPI
+             */
+            diagnostic_data?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Session Id */
+            session_id?: string | null;
+            /** Velocity Kmh */
+            velocity_kmh: number;
+            /** Fc Ghz */
+            fc_ghz: number;
+            /** Expected Doppler Hz */
+            expected_doppler_hz: number;
+            /** Measured Spectrum */
+            measured_spectrum: {
+                [key: string]: number[];
+            };
+            /** Reference Spectrum */
+            reference_spectrum: {
+                [key: string]: number[];
+            };
+            /** Spectral Correlation */
+            spectral_correlation?: number | null;
+            /** Doppler Spread Error Percent */
+            doppler_spread_error_percent?: number | null;
+            /** Validation Pass */
+            validation_pass?: boolean | null;
+            /**
+             * Threshold Correlation
+             * @default 0.9
+             */
+            threshold_correlation: number;
+            /** Channel Emulator */
+            channel_emulator?: string | null;
+            /** Calibrated At */
+            calibrated_at: string;
+            /** Calibrated By */
+            calibrated_by?: string | null;
+            /** Valid Until */
+            valid_until?: string | null;
+            /** Status */
+            status: string;
+        };
         /**
          * TemporalCalibrationResponse
          * @description 时域校准响应
@@ -7175,6 +7727,229 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    start_eis_validation_api_v1_calibration_channel_eis_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartEISValidationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__schemas__channel_calibration__CalibrationJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_angular_spread_calibration_api_v1_calibration_channel_angular_spread_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartAngularSpreadCalibrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__schemas__channel_calibration__CalibrationJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_spatial_correlation_calibration_api_v1_calibration_channel_spatial_correlation_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartSpatialCorrelationCalibrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__schemas__channel_calibration__CalibrationJobResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_eis_validation_api_v1_calibration_channel_eis__calibration_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                calibration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["EISValidationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_angular_spread_calibration_api_v1_calibration_channel_angular_spread__calibration_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                calibration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AngularSpreadCalibrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_spatial_correlation_calibration_api_v1_calibration_channel_spatial_correlation__calibration_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                calibration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SpatialCorrelationCalibrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_doppler_calibration_api_v1_calibration_channel_doppler__calibration_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                calibration_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DopplerCalibrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_temporal_calibration_api_v1_calibration_channel_temporal__calibration_id__get: {
         parameters: {
             query?: never;
@@ -8520,6 +9295,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["EmulationControlResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    start_doppler_calibration_api_v1_calibration_channel_doppler_start_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StartDopplerCalibrationRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["app__schemas__channel_calibration__CalibrationJobResponse"];
                 };
             };
             /** @description Validation Error */

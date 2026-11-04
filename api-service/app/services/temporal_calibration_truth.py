@@ -33,17 +33,8 @@ def temporal_history(row):
                              formal_status='UNKNOWN',diagnostic_data=diagnostic_data(row)))
 
 def temporal_session_view(db,session):
+    """会话读取与完成同源：现有信道写方均未建立正式方法资格。"""
     if session is None: return None
-    config=session.configuration if isinstance(session.configuration,dict) else {}
-    rows=db.query(TemporalChannelCalibration).filter(TemporalChannelCalibration.session_id==session.id).all()
-    requested = config.get('requested_calibration_types')
-    requested = [item for item in requested if isinstance(item, str)] if isinstance(requested, list) else []
-    if not rows and 'temporal' not in requested: return session
-    # 不能从旧计数相减推定其他方法资格；本片只取消整个含时域会话的汇总资格。
     result={c.name:getattr(session,c.name) for c in session.__table__.columns}
-    verdicts=[]
-    for model in (DopplerCalibration, SpatialCorrelationCalibration, AngularSpreadCalibration, EISValidation):
-        verdicts.extend(row.validation_pass for row in db.query(model).filter(model.session_id==session.id).all()
-                        if row.validation_pass is True or row.validation_pass is False)
-    result.update(overall_pass=None,total_calibrations=len(verdicts),passed_calibrations=verdicts.count(True),failed_calibrations=verdicts.count(False))
+    result.update(overall_pass=None,total_calibrations=0,passed_calibrations=0,failed_calibrations=0)
     return SimpleNamespace(**result)

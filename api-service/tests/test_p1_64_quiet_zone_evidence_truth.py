@@ -590,8 +590,8 @@ def test_requested_quiet_zone_without_a_trusted_row_keeps_session_undetermined()
         failed_calibrations=1,
     )
 
-    assert completed.total_calibrations == 1
-    assert completed.passed_calibrations == 1
+    assert completed.total_calibrations == 0
+    assert completed.passed_calibrations == 0
     assert completed.failed_calibrations == 0
     assert completed.overall_pass is None
 
@@ -655,10 +655,10 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
     channel_data = generator._collect_channel_data(session_id=session.id)
     assert channel_data["execution_summary"] == {
         "total_executions": 2,
-        "passed": 1,
+        "passed": 0,
         "failed": 0,
         "pending": 0,
-        "undetermined": 1,
+        "undetermined": 2,
         "pass_rate": None,
     }
     assert channel_data["channel_calibration"]["quiet_zone"] == [{
@@ -677,10 +677,11 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
     )
     assert doppler_only["execution_summary"] == {
         "total_executions": 1,
-        "passed": 1,
+        "passed": 0,
         "failed": 0,
         "pending": 0,
-        "pass_rate": 100.0,
+        "undetermined": 1,
+        "pass_rate": None,
     }
     assert "quiet_zone" not in doppler_only["channel_calibration"]
 
@@ -691,7 +692,7 @@ async def test_direct_quiet_zone_start_registers_requested_scope_before_503():
         include_channel=True,
     )
     assert comprehensive["execution_summary"]["pass_rate"] is None
-    assert comprehensive["execution_summary"]["undetermined"] == 1
+    assert comprehensive["execution_summary"]["undetermined"] == 2
 
 
 @pytest.mark.parametrize("malformed", ["null", "[]", '["schema_version", 2]', '"v2"', "3"])

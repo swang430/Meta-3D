@@ -71,24 +71,24 @@ const CALIBRATION_TYPES: {
   },
   {
     type: 'doppler',
-    label: 'Doppler',
+    label: '多普勒诊断',
     icon: IconRadar,
-    validity: '30 days',
-    description: 'Jakes spectrum validation',
+    validity: '无正式有效期',
+    description: '工程诊断材料，未获正式方法资格',
   },
   {
     type: 'spatial_correlation',
-    label: 'Spatial Correlation',
+    label: '空间相关性诊断',
     icon: IconBroadcast,
-    validity: '60 days',
-    description: 'MIMO correlation validation',
+    validity: '无正式有效期',
+    description: '工程诊断材料，未获正式方法资格',
   },
   {
     type: 'angular_spread',
-    label: 'Angular Spread',
+    label: '角度扩展诊断',
     icon: IconCircleDot,
-    validity: '60 days',
-    description: 'APS and RMS angular spread',
+    validity: '无正式有效期',
+    description: '工程诊断材料，未获正式方法资格',
   },
   {
     type: 'quiet_zone',
@@ -99,10 +99,10 @@ const CALIBRATION_TYPES: {
   },
   {
     type: 'eis',
-    label: 'EIS Validation',
+    label: 'EIS诊断',
     icon: IconDeviceMobile,
-    validity: '90 days',
-    description: '3D sensitivity measurement',
+    validity: '无正式有效期',
+    description: '工程诊断材料，未获正式方法资格',
   },
 ]
 

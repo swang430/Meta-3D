@@ -403,11 +403,11 @@ export function formatValidityStatus(status: ValidityStatus): {
 export function getCalibrationTypeName(type: ChannelCalibrationType): string {
   const names: Record<ChannelCalibrationType, string> = {
     temporal: '时域诊断（非标准 PDP）',
-    doppler: 'Doppler',
-    spatial_correlation: 'Spatial Correlation',
-    angular_spread: 'Angular Spread',
+    doppler: '多普勒诊断',
+    spatial_correlation: '空间相关性诊断',
+    angular_spread: '角度扩展诊断',
     quiet_zone: 'Quiet Zone',
-    eis: 'EIS Validation',
+    eis: 'EIS诊断',
   }
   return names[type] || type
 }

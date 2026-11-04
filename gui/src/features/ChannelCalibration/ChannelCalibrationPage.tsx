@@ -23,6 +23,10 @@ import {
   startEISValidation,
   getCalibrationTypeName,
   getTemporalCalibration,
+  getDopplerCalibration,
+  getSpatialCorrelationCalibration,
+  getAngularSpreadCalibration,
+  getEISValidation,
 } from '../../api/channelCalibrationService'
 
 export function ChannelCalibrationPage() {
@@ -80,16 +84,16 @@ export function ChannelCalibrationPage() {
         case 'eis':
           await startEISValidation({
             test_config: { fc_ghz: 3.5 },
-            dut: { model: 'Reference DUT' },
+            dut: { model: '模拟参考车辆', type: 'vehicle' },
             measured_by: 'system',
           })
           break
       }
 
       notifications.show({
-        title: selectedType === 'temporal' ? '时域诊断已完成' : 'Calibration Started',
-        message: selectedType === 'temporal' ? '仅生成诊断材料，标准 PDP 资格未判定。' : `${getCalibrationTypeName(selectedType)} calibration completed successfully`,
-        color: selectedType === 'temporal' ? 'yellow' : 'green',
+        title: `${getCalibrationTypeName(selectedType)}已完成`,
+        message: '仅生成诊断材料，未获得正式测量或标准方法资格。',
+        color: 'yellow',
         icon: <IconCircleCheck size={16} />,
       })
 
@@ -107,9 +111,12 @@ export function ChannelCalibrationPage() {
   }
 
   const handleViewDetails = async (type: ChannelCalibrationType, calibrationId: string) => {
-    if (type !== 'temporal') return
+    if (type === 'quiet_zone') return
+    const readers = { temporal: getTemporalCalibration, doppler: getDopplerCalibration,
+      spatial_correlation: getSpatialCorrelationCalibration, angular_spread: getAngularSpreadCalibration,
+      eis: getEISValidation }
     try {
-      const result = await getTemporalCalibration(calibrationId)
+      const result = await readers[type](calibrationId)
       setDiagnostic(JSON.stringify(result.diagnostic_data, null, 2))
     } catch (error) {
       notifications.show({ title: '诊断材料读取失败', message: (error as Error).message, color: 'red' })
@@ -118,8 +125,8 @@ export function ChannelCalibrationPage() {
 
   return (
     <Container size="xl" py="md">
-      <Modal opened={diagnostic !== null} onClose={() => setDiagnostic(null)} title="时域原始诊断材料" size="lg">
-        <Alert color="yellow">非标准 PDP，不提供正式判词；以下保留当时记录，旧判词不代表当前正式资格。</Alert>
+      <Modal opened={diagnostic !== null} onClose={() => setDiagnostic(null)} title="信道原始诊断材料" size="lg">
+        <Alert color="yellow">未获标准方法资格，不提供正式判词；以下保留当时记录，旧判词不代表当前正式资格。</Alert>
         <Code block>{diagnostic}</Code>
       </Modal>
       <Stack gap="md">
@@ -167,7 +174,7 @@ export function ChannelCalibrationPage() {
             with default parameters.
           </Text>
           <Text size="xs" c="dimmed">
-            For custom parameters, use the advanced calibration wizard.
+            此入口生成工程诊断材料，不授予正式测量资格。
           </Text>
           <Group justify="flex-end" mt="md">
             <Button variant="default" onClick={() => setStartModalOpen(false)}>

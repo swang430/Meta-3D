@@ -38,6 +38,7 @@ from app.models.channel_calibration import (
 from app.models.chamber import ChamberConfiguration
 from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_report
 from app.services.temporal_calibration_truth import temporal_session_view
+from app.services.channel_diagnostic_truth import METHODS
 from app.services.probe_pattern.consumer import (
     evaluate_probe_pattern_formal_eligibility,
 )
@@ -68,6 +69,7 @@ def _write_report_provenance_manifest(
     manifest = {
         "schema_version": 2,
         "temporal_method_sanitized": True,
+        "channel_diagnostics_sanitized": True,
         "path_loss_section_included": bool(probe_rows),
         "path_loss_provenance_disclosed": path_loss_provenance_disclosed,
         "unverified_path_loss_records": sum(
@@ -955,76 +957,23 @@ class CalibrationReportGenerator:
                 'rms_delay_spread_error_percent': None,
             } for cal in calibrations]
 
-        # Doppler calibrations
-        if not calibration_type or calibration_type == 'doppler':
-            query = self.db.query(DopplerCalibration)
+        diagnostic_unknown = 0
+        for kind, (model, _, _) in METHODS.items():
+            if calibration_type not in (None, kind):
+                continue
+            query = self.db.query(model)
             if session_id:
-                query = query.filter(DopplerCalibration.session_id == session_id)
-            calibrations = query.order_by(desc(DopplerCalibration.calibrated_at)).limit(100).all()
-
-            doppler_data = []
-            for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
-                doppler_data.append({
-                    'id': str(cal.id),
-                    'velocity_kmh': cal.velocity_kmh,
-                    'fc_ghz': cal.fc_ghz,
-                    'validation_pass': cal.validation_pass,
-                    'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
-                    'expected_doppler_hz': cal.expected_doppler_hz,
-                    'spectral_correlation': cal.spectral_correlation,
-                    'doppler_spread_error_percent': cal.doppler_spread_error_percent,
-                })
-            data['channel_calibration']['doppler'] = doppler_data
-
-        # Spatial correlation calibrations
-        if not calibration_type or calibration_type == 'spatial_correlation':
-            query = self.db.query(SpatialCorrelationCalibration)
-            if session_id:
-                query = query.filter(SpatialCorrelationCalibration.session_id == session_id)
-            calibrations = query.order_by(desc(SpatialCorrelationCalibration.calibrated_at)).limit(100).all()
-
-            spatial_data = []
-            for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
-                spatial_data.append({
-                    'id': str(cal.id),
-                    'scenario_type': cal.scenario_type,
-                    'scenario_condition': cal.scenario_condition,
-                    'antenna_spacing_wavelengths': cal.antenna_spacing_wavelengths,
-                    'validation_pass': cal.validation_pass,
-                    'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
-                    'measured_correlation': cal.measured_correlation,
-                    'target_correlation': cal.target_correlation,
-                })
-            data['channel_calibration']['spatial_correlation'] = spatial_data
-
-        # Angular spread calibrations
-        if not calibration_type or calibration_type == 'angular_spread':
-            query = self.db.query(AngularSpreadCalibration)
-            if session_id:
-                query = query.filter(AngularSpreadCalibration.session_id == session_id)
-            calibrations = query.order_by(desc(AngularSpreadCalibration.calibrated_at)).limit(100).all()
-
-            angular_data = []
-            for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
-                angular_data.append({
-                    'id': str(cal.id),
-                    'scenario_type': cal.scenario_type,
-                    'scenario_condition': cal.scenario_condition,
-                    'validation_pass': cal.validation_pass,
-                    'calibrated_at': str(cal.calibrated_at) if cal.calibrated_at else None,
-                    'azimuth_spread_measured_deg': cal.azimuth_spread_measured_deg,
-                    'azimuth_spread_target_deg': cal.azimuth_spread_target_deg,
-                })
-            data['channel_calibration']['angular_spread'] = angular_data
+                query = query.filter(model.session_id == session_id)
+            timestamp = model.measured_at if kind == 'eis' else model.calibrated_at
+            rows = query.order_by(desc(timestamp)).limit(100).all()
+            diagnostic_unknown += len(rows) or int(kind in requested_types)
+            # 正式报告只列身份与未知状态，不借字段别名或默认0冒充实测值。
+            data['channel_calibration'][kind] = [{
+                'id': str(row.id), 'fc_ghz': row.fc_ghz,
+                'scenario_type': getattr(row, 'scenario_type', None),
+                'dut_model': getattr(row, 'dut_model', None),
+                'validation_pass': None, 'formal_status': 'UNKNOWN',
+            } for row in rows]
 
         # Quiet zone calibrations
         if not calibration_type or calibration_type == 'quiet_zone':
@@ -1051,31 +1000,6 @@ class CalibrationReportGenerator:
                 })
             data['channel_calibration']['quiet_zone'] = qz_data
 
-        # EIS validations
-        if not calibration_type or calibration_type == 'eis':
-            query = self.db.query(EISValidation)
-            if session_id:
-                query = query.filter(EISValidation.session_id == session_id)
-            calibrations = query.order_by(desc(EISValidation.measured_at)).limit(100).all()
-
-            eis_data = []
-            for cal in calibrations:
-                total += 1
-                if cal.validation_pass:
-                    passed += 1
-                eis_data.append({
-                    'id': str(cal.id),
-                    'dut_model': cal.dut_model,
-                    'dut_type': cal.dut_type,
-                    'fc_ghz': cal.fc_ghz,
-                    'validation_pass': cal.validation_pass,
-                    'measured_at': str(cal.measured_at) if cal.measured_at else None,
-                    'eis_measured_dbm': cal.eis_measured_dbm,
-                    'eis_reference_dbm': cal.eis_reference_dbm,
-                    'eis_error_db': cal.eis_error_db,
-                })
-            data['channel_calibration']['eis'] = eis_data
-
         # Summary
         unverified_requested = (
             1
@@ -1084,18 +1008,18 @@ class CalibrationReportGenerator:
             else 0
         )
         summary = {
-            'total_executions': total + unverified_requested + temporal_unknown,
+            'total_executions': total + unverified_requested + temporal_unknown + diagnostic_unknown,
             'passed': passed,
             'failed': total - passed,
             'pending': 0,
             'pass_rate': (
                 None
-                if unverified_requested or temporal_unknown or total == 0
+                if unverified_requested or temporal_unknown or diagnostic_unknown or total == 0
                 else passed / total * 100
             ),
         }
-        if unverified_requested or temporal_unknown:
-            summary['undetermined'] = unverified_requested + temporal_unknown
+        if unverified_requested or temporal_unknown or diagnostic_unknown:
+            summary['undetermined'] = unverified_requested + temporal_unknown + diagnostic_unknown
         data['execution_summary'] = summary
 
         return data

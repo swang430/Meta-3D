@@ -36,6 +36,7 @@ from app.models.channel_calibration import (
 )
 from app.services.quiet_zone_calibration_truth import sanitize_channel_qz_history
 from app.services.temporal_calibration_truth import temporal_history
+from app.services.channel_diagnostic_truth import METHODS, channel_diagnostic_history
 
 logger = logging.getLogger("app.calibration.channel")
 
@@ -739,52 +740,8 @@ class ChannelCalibrationService:
         if not session:
             return None
 
-        has_unverified_temporal = False
-        formal_verdicts: List[bool] = []
-        formally_observed_types = set()
-        for calibration_type, model in (
-            ("temporal", TemporalChannelCalibration),
-            ("doppler", DopplerCalibration),
-            ("spatial_correlation", SpatialCorrelationCalibration),
-            ("angular_spread", AngularSpreadCalibration),
-            ("eis", EISValidation),
-        ):
-            rows = self.db.query(model).filter(model.session_id == session_id).all()
-            if calibration_type == "temporal":
-                has_unverified_temporal = bool(rows)
-                continue
-            verdicts = [
-                row.validation_pass
-                for row in rows
-                if row.validation_pass is True or row.validation_pass is False
-            ]
-            if verdicts:
-                formally_observed_types.add(calibration_type)
-                formal_verdicts.extend(verdicts)
-
-        configuration = session.configuration if isinstance(session.configuration, dict) else {}
-        configured_types = configuration.get("requested_calibration_types")
-        requested_types = {
-            value
-            for value in configured_types
-            if isinstance(value, str)
-        } if isinstance(configured_types, list) else set()
-        has_unverified_requested_type = bool(
-            requested_types - formally_observed_types
-        )
-
-        # Existing quiet-zone rows have no auditable explicit-real provenance.
-        # Their presence makes the session verdict undetermined; client-supplied
-        # counters/verdicts cannot promote them to PASS.
-        has_unverified_quiet_zone = (
-            self.db.query(ChannelQuietZoneCalibration)
-            .filter(ChannelQuietZoneCalibration.session_id == session_id)
-            .first()
-            is not None
-        )
-        formal_total = len(formal_verdicts)
-        formal_passed = sum(verdict is True for verdict in formal_verdicts)
-        formal_failed = sum(verdict is False for verdict in formal_verdicts)
+        # 当前信道方法只提供诊断材料；历史布尔值及客户端计数不能升级资格。
+        formal_total = formal_passed = formal_failed = 0
 
         session.status = "completed"
         session.progress_percent = 100
@@ -792,16 +749,7 @@ class ChannelCalibrationService:
         session.duration_minutes = (
             (session.completed_at - session.started_at).total_seconds() / 60
         )
-        session.overall_pass = (
-            None
-            if (
-                has_unverified_quiet_zone
-                or has_unverified_temporal
-                or has_unverified_requested_type
-                or formal_total == 0
-            )
-            else formal_failed == 0
-        )
+        session.overall_pass = None
         session.total_calibrations = formal_total
         session.passed_calibrations = formal_passed
         session.failed_calibrations = formal_failed
@@ -930,7 +878,7 @@ class ChannelCalibrationService:
         use_mock: bool = True,
     ) -> DopplerCalibration:
         """
-        执行多普勒校准
+        执行多普勒校准（工程诊断，未获正式方法资格）
 
         1. 计算预期多普勒频移
         2. 生成参考频谱 (Jakes / classical)
@@ -938,6 +886,10 @@ class ChannelCalibrationService:
         4. 计算频谱相关性 (Pearson 相关 vs 参考)
         5. 保存结果
         """
+        if session_id is not None:
+            self.register_requested_calibration_type(session_id, "doppler")
+        provenance = {"source": "simulated", "method": "doppler_generator", "formal_eligible": False}
+
         # 计算预期多普勒频移
         expected_doppler = calculate_doppler_shift(velocity_kmh, fc_ghz)
 
@@ -958,6 +910,10 @@ class ChannelCalibrationService:
                     "signalAnalyzer driver bound on the active LabProfile, "
                     "implementing measure_doppler_spectrum()."
                 )
+            from app.services.instrument_hal_service import is_mock_driver
+            provenance = {"source": "simulated" if is_mock_driver(sa) else "unverified",
+                          "method": "measure_doppler_spectrum", "formal_eligible": False,
+                          "driver_class": type(sa).__module__ + "." + type(sa).__name__}
             center_hz = fc_ghz * 1e9
             # P1-70 内审 F1：测量轴必须与参考网格**完全同一** —— 参考 =
             # linspace(-1.1fd, +1.1fd, 512)（generate_classical_doppler_spectrum），
@@ -981,7 +937,6 @@ class ChannelCalibrationService:
 
         # 验证
         threshold_correlation = 0.9
-        validation_pass = correlation >= threshold_correlation
 
         # 创建校准记录
         calibration = DopplerCalibration(
@@ -1001,13 +956,14 @@ class ChannelCalibrationService:
             },
             spectral_correlation=correlation,
             doppler_spread_error_percent=doppler_spread_error,
-            validation_pass=validation_pass,
+            validation_pass=None,
+            diagnostic_provenance=provenance,
             threshold_correlation=threshold_correlation,
             channel_emulator=channel_emulator,
             calibrated_at=datetime.utcnow(),
             calibrated_by=calibrated_by,
-            valid_until=datetime.utcnow() + timedelta(days=DOPPLER_VALIDITY_DAYS),
-            status=ChannelCalibrationStatus.VALID.value,
+            valid_until=None,
+            status="unknown",
         )
 
         self.db.add(calibration)
@@ -1032,7 +988,7 @@ class ChannelCalibrationService:
         num_iq_samples: int = 10000,
     ) -> SpatialCorrelationCalibration:
         """
-        执行空间相关性校准
+        执行空间相关性校准（工程诊断，未获正式方法资格）
 
         use_mock=True (默认): 用 theoretical_correlation 合成 h1/h2 复数样本.
         use_mock=False: 当前 fail-closed；现有 positioner 是旋转 degree 轴，
@@ -1043,6 +999,10 @@ class ChannelCalibrationService:
         当前 PositionerDriver 只接受 degree 角度，real 路径会在任何
         转台 I/O 前 fail-closed，不会把该值伪装成角度下发。
         """
+        if session_id is not None:
+            self.register_requested_calibration_type(session_id, "spatial_correlation")
+        provenance = {"source": "simulated", "method": "spatial_correlation_generator", "formal_eligible": False}
+
         # 获取参考角度扩展
         key = (scenario_type, scenario_condition)
         ref_angular = ANGULAR_SPREAD_REFERENCE.get(key, (15, 8, 25))
@@ -1080,7 +1040,6 @@ class ChannelCalibrationService:
 
         threshold_magnitude = 0.1
         threshold_phase = 10.0
-        validation_pass = magnitude_error < threshold_magnitude and phase_error < threshold_phase
 
         # 创建校准记录
         calibration = SpatialCorrelationCalibration(
@@ -1101,13 +1060,14 @@ class ChannelCalibrationService:
             calculation_method="3GPP_TR_38_901_Laplacian",
             magnitude_error=magnitude_error,
             phase_error_deg=phase_error,
-            validation_pass=validation_pass,
+            validation_pass=None,
+            diagnostic_provenance=provenance,
             threshold_magnitude=threshold_magnitude,
             threshold_phase_deg=threshold_phase,
             calibrated_at=datetime.utcnow(),
             calibrated_by=calibrated_by,
-            valid_until=datetime.utcnow() + timedelta(days=SPATIAL_CORRELATION_VALIDITY_DAYS),
-            status=ChannelCalibrationStatus.VALID.value,
+            valid_until=None,
+            status="unknown",
         )
 
         self.db.add(calibration)
@@ -1129,7 +1089,7 @@ class ChannelCalibrationService:
         calibrated_by: Optional[str] = None
     ) -> AngularSpreadCalibration:
         """
-        执行角度扩展校准
+        执行角度扩展校准（工程诊断，未获正式方法资格）
 
         1. 生成/获取角度功率谱 (APS)
         2. 拟合 Laplacian 分布
@@ -1137,6 +1097,10 @@ class ChannelCalibrationService:
         4. 与 3GPP 参考对比
         5. 保存结果
         """
+        if session_id is not None:
+            self.register_requested_calibration_type(session_id, "angular_spread")
+        provenance = {"source": "simulated", "method": "angular_spread_generator", "formal_eligible": False}
+
         # 获取参考值
         key = (scenario_type, scenario_condition)
         ref_angular = ANGULAR_SPREAD_REFERENCE.get(key, (15, 8, 25))
@@ -1160,7 +1124,6 @@ class ChannelCalibrationService:
         # 计算误差
         rms_error_deg = abs(rms_deg - ref_rms)
         threshold_deg = 5.0
-        validation_pass = rms_error_deg < threshold_deg
 
         # 创建校准记录
         calibration = AngularSpreadCalibration(
@@ -1179,13 +1142,14 @@ class ChannelCalibrationService:
             reference_rms_angular_spread_deg=ref_rms,
             reference_rms_angular_spread_range_deg=ref_range,
             rms_error_deg=rms_error_deg,
-            validation_pass=validation_pass,
+            validation_pass=None,
+            diagnostic_provenance=provenance,
             threshold_deg=threshold_deg,
             positioner=positioner,
             calibrated_at=datetime.utcnow(),
             calibrated_by=calibrated_by,
-            valid_until=datetime.utcnow() + timedelta(days=ANGULAR_SPREAD_VALIDITY_DAYS),
-            status=ChannelCalibrationStatus.VALID.value,
+            valid_until=None,
+            status="unknown",
         )
 
         self.db.add(calibration)
@@ -1342,7 +1306,7 @@ class ChannelCalibrationService:
         measured_by: Optional[str] = None
     ) -> EISValidation:
         """
-        执行 EIS 验证
+        执行 EIS 验证（工程诊断，未获正式方法资格）
 
         1. 配置 3D 扫描网格
         2. 获取/模拟 EIS 测量数据
@@ -1350,6 +1314,10 @@ class ChannelCalibrationService:
         4. 验证是否满足要求
         5. 保存结果
         """
+        if session_id is not None:
+            self.register_requested_calibration_type(session_id, "eis")
+        provenance = {"source": "simulated", "method": "eis_generator", "formal_eligible": False}
+
         # 生成 3D 扫描网格
         azimuth_deg = np.arange(0, 360, 15).tolist()
         elevation_deg = np.arange(-90, 91, 15).tolist()
@@ -1381,9 +1349,6 @@ class ChannelCalibrationService:
         eis_spread = peak_eis - percentile_5
 
         # 验证
-        if min_eis_dbm is None:
-            min_eis_dbm = -96.0  # FR1 默认要求
-        validation_pass = peak_eis >= min_eis_dbm
 
         # 创建验证记录
         validation = EISValidation(
@@ -1407,11 +1372,12 @@ class ChannelCalibrationService:
             median_eis_dbm=median_eis,
             eis_spread_db=eis_spread,
             min_eis_dbm=min_eis_dbm,
-            validation_pass=validation_pass,
+            validation_pass=None,
+            diagnostic_provenance=provenance,
             measured_at=datetime.utcnow(),
             measured_by=measured_by,
-            valid_until=datetime.utcnow() + timedelta(days=EIS_VALIDITY_DAYS),
-            status=ChannelCalibrationStatus.VALID.value,
+            valid_until=None,
+            status="unknown",
         )
 
         self.db.add(validation)
@@ -1505,62 +1471,11 @@ class ChannelCalibrationService:
             for cal in query.order_by(desc(TemporalChannelCalibration.calibrated_at)).limit(limit).offset(offset):
                 results.append(temporal_history(cal))
 
-        # 多普勒校准
-        if calibration_type in (None, "doppler"):
-            query = self.db.query(DopplerCalibration)
-            if validation_pass is not None:
-                query = query.filter(DopplerCalibration.validation_pass == validation_pass)
-            for cal in query.order_by(desc(DopplerCalibration.calibrated_at)).limit(limit).offset(offset):
-                results.append({
-                    "calibration_id": cal.id,
-                    "calibration_type": "doppler",
-                    "calibrated_at": cal.calibrated_at,
-                    "calibrated_by": cal.calibrated_by,
-                    "status": cal.status,
-                    "validation_pass": cal.validation_pass,
-                    "summary": {
-                        "velocity_kmh": cal.velocity_kmh,
-                        "spectral_correlation": cal.spectral_correlation,
-                    }
-                })
-
-        # 空间相关性校准
-        if calibration_type in (None, "spatial_correlation"):
-            query = self.db.query(SpatialCorrelationCalibration)
-            if validation_pass is not None:
-                query = query.filter(SpatialCorrelationCalibration.validation_pass == validation_pass)
-            for cal in query.order_by(desc(SpatialCorrelationCalibration.calibrated_at)).limit(limit).offset(offset):
-                results.append({
-                    "calibration_id": cal.id,
-                    "calibration_type": "spatial_correlation",
-                    "calibrated_at": cal.calibrated_at,
-                    "calibrated_by": cal.calibrated_by,
-                    "status": cal.status,
-                    "validation_pass": cal.validation_pass,
-                    "summary": {
-                        "scenario": f"{cal.scenario_type} {cal.scenario_condition}",
-                        "magnitude_error": cal.magnitude_error,
-                    }
-                })
-
-        # 角度扩展校准
-        if calibration_type in (None, "angular_spread"):
-            query = self.db.query(AngularSpreadCalibration)
-            if validation_pass is not None:
-                query = query.filter(AngularSpreadCalibration.validation_pass == validation_pass)
-            for cal in query.order_by(desc(AngularSpreadCalibration.calibrated_at)).limit(limit).offset(offset):
-                results.append({
-                    "calibration_id": cal.id,
-                    "calibration_type": "angular_spread",
-                    "calibrated_at": cal.calibrated_at,
-                    "calibrated_by": cal.calibrated_by,
-                    "status": cal.status,
-                    "validation_pass": cal.validation_pass,
-                    "summary": {
-                        "scenario": f"{cal.scenario_type} {cal.scenario_condition}",
-                        "rms_angular_spread_deg": cal.fitted_rms_angular_spread_deg,
-                    }
-                })
+        for kind, (model, _, _) in METHODS.items():
+            if calibration_type in (None, kind) and validation_pass is None:
+                timestamp = model.measured_at if kind == 'eis' else model.calibrated_at
+                rows = self.db.query(model).order_by(desc(timestamp)).limit(limit).offset(offset)
+                results.extend(channel_diagnostic_history(row, kind) for row in rows)
 
         # 静区校准
         if calibration_type in (None, "quiet_zone"):
@@ -1571,25 +1486,6 @@ class ChannelCalibrationService:
             if validation_pass is None:
                 for cal in query.order_by(desc(ChannelQuietZoneCalibration.calibrated_at)).limit(limit).offset(offset):
                     results.append(sanitize_channel_qz_history(cal))
-
-        # EIS 验证
-        if calibration_type in (None, "eis"):
-            query = self.db.query(EISValidation)
-            if validation_pass is not None:
-                query = query.filter(EISValidation.validation_pass == validation_pass)
-            for cal in query.order_by(desc(EISValidation.measured_at)).limit(limit).offset(offset):
-                results.append({
-                    "calibration_id": cal.id,
-                    "calibration_type": "eis",
-                    "calibrated_at": cal.measured_at,
-                    "calibrated_by": cal.measured_by,
-                    "status": cal.status,
-                    "validation_pass": cal.validation_pass,
-                    "summary": {
-                        "dut_model": cal.dut_model,
-                        "peak_eis_dbm": cal.peak_eis_dbm,
-                    }
-                })
 
         # 按时间排序
         results.sort(key=lambda x: x["calibrated_at"], reverse=True)

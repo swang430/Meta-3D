@@ -15,6 +15,7 @@ Channel Calibration API Endpoints
 
 参考: docs/features/calibration/channel-calibration.md
 """
+from app.services.channel_diagnostic_truth import channel_diagnostic_detail
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from typing import List, Optional
@@ -213,25 +214,7 @@ async def start_doppler_calibration(
     request: StartDopplerCalibrationRequest,
     db: Session = Depends(get_db)
 ):
-    """
-    启动多普勒校准
-
-    多普勒校准验证信道仿真器能否正确生成多普勒频谱。
-
-    **校准内容**:
-    - 发射 CW 信号
-    - FFT 分析接收信号
-    - 提取多普勒频谱
-    - 与经典 Jakes 频谱对比
-
-    **验收标准**: 频谱相关性 > 0.9
-
-    **典型速度配置**:
-    - 3 km/h (步行)
-    - 30 km/h (城市)
-    - 120 km/h (高速)
-    - 350 km/h (高铁)
-    """
+    """多普勒工程诊断：模拟生成或调用当前SA采集入口。非Mock不等于已验证方法；当前不提供正式判词或有效期。"""
     service = ChannelCalibrationService(db)
 
     calibration = await service.run_doppler_calibration(
@@ -249,7 +232,7 @@ async def start_doppler_calibration(
         calibration_job_id=calibration.id,
         status=ChannelCalibrationJobStatus.COMPLETED,
         estimated_duration_minutes=3.0,
-        message=f"Doppler calibration completed for {request.velocity_kmh} km/h"
+        message=f"多普勒诊断完成，正式资格未判定： {request.velocity_kmh} km/h"
     )
 
 
@@ -263,7 +246,7 @@ async def get_doppler_calibration(
     calibration = service.get_doppler_calibration(calibration_id)
     if not calibration:
         raise HTTPException(status_code=404, detail="Calibration not found")
-    return calibration
+    return channel_diagnostic_detail(calibration, "doppler")
 
 
 # ==================== Spatial Correlation Calibration ====================
@@ -273,25 +256,7 @@ async def start_spatial_correlation_calibration(
     request: StartSpatialCorrelationCalibrationRequest,
     db: Session = Depends(get_db)
 ):
-    """
-    启动空间相关性校准
-
-    空间相关性校准验证 MPAC 系统能否正确重现 MIMO 天线间的空间相关性。
-
-    **校准内容**:
-    - 使用双天线 DUT
-    - 测量两天线信道系数的相关性
-    - 与 3GPP Laplacian 模型理论值对比
-
-    **验收标准**:
-    - 相关系数幅度误差 < 0.1
-    - 相关系数相位误差 < 10°
-
-    **典型天线间距配置**:
-    - 0.5λ (强相关)
-    - 1λ (中等相关)
-    - 2λ (弱相关)
-    """
+    """空间相关性工程诊断：当前入口生成模拟样本；不启动真实线性扫描，不提供正式判词。"""
     service = ChannelCalibrationService(db)
 
     calibration = await service.run_spatial_correlation_calibration(
@@ -309,7 +274,7 @@ async def start_spatial_correlation_calibration(
         calibration_job_id=calibration.id,
         status=ChannelCalibrationJobStatus.COMPLETED,
         estimated_duration_minutes=10.0,
-        message=f"Spatial correlation calibration completed for {request.test_dut.antenna_spacing_wavelengths}λ spacing"
+        message=f"空间相关性诊断完成，正式资格未判定： {request.test_dut.antenna_spacing_wavelengths}λ spacing"
     )
 
 
@@ -323,7 +288,7 @@ async def get_spatial_correlation_calibration(
     calibration = service.get_spatial_correlation_calibration(calibration_id)
     if not calibration:
         raise HTTPException(status_code=404, detail="Calibration not found")
-    return calibration
+    return channel_diagnostic_detail(calibration, "spatial_correlation")
 
 
 # ==================== Angular Spread Calibration ====================
@@ -333,19 +298,7 @@ async def start_angular_spread_calibration(
     request: StartAngularSpreadCalibrationRequest,
     db: Session = Depends(get_db)
 ):
-    """
-    启动角度扩展校准
-
-    角度扩展校准验证 MPAC 系统的角度功率谱 (APS) 与 3GPP 模型一致。
-
-    **校准内容**:
-    - 旋转 DUT，扫描方位角 (0°-360°)
-    - 测量每个角度的接收功率
-    - 拟合 Laplacian/Gaussian 分布
-    - 提取 RMS 角度扩展
-
-    **验收标准**: RMS 角度扩展误差 < 5°
-    """
+    """角度扩展工程诊断：当前生成模拟APS，不旋转DUT、不测量真实接收功率，不提供正式判词。"""
     service = ChannelCalibrationService(db)
 
     calibration = service.run_angular_spread_calibration(
@@ -354,7 +307,7 @@ async def start_angular_spread_calibration(
         fc_ghz=request.scenario.fc_ghz,
         azimuth_step_deg=request.azimuth_step_deg or 5.0,
         session_id=request.session_id,
-        positioner=request.positioner,
+        positioner=request.positioner_id,
         calibrated_by=request.calibrated_by
     )
 
@@ -362,7 +315,7 @@ async def start_angular_spread_calibration(
         calibration_job_id=calibration.id,
         status=ChannelCalibrationJobStatus.COMPLETED,
         estimated_duration_minutes=30.0,
-        message=f"Angular spread calibration completed for {request.scenario.type.value} {request.scenario.condition.value}"
+        message=f"角度扩展诊断完成，正式资格未判定： {request.scenario.type.value} {request.scenario.condition.value}"
     )
 
 
@@ -376,7 +329,7 @@ async def get_angular_spread_calibration(
     calibration = service.get_angular_spread_calibration(calibration_id)
     if not calibration:
         raise HTTPException(status_code=404, detail="Calibration not found")
-    return calibration
+    return channel_diagnostic_detail(calibration, "angular_spread")
 
 
 # ==================== Quiet Zone Calibration ====================
@@ -462,20 +415,7 @@ async def start_eis_validation(
     request: StartEISValidationRequest,
     db: Session = Depends(get_db)
 ):
-    """
-    启动 EIS 验证
-
-    EIS (等效全向灵敏度) 验证是端到端性能验证，
-    确保系统能正确测量 DUT 的 EIS。
-
-    **验证内容**:
-    - 使用参考 DUT
-    - 3D 空间扫描 (θ, φ)
-    - 测量灵敏度分布
-    - 与已知参考值对比
-
-    **验收标准**: EIS 测量误差 < ±1 dB
-    """
+    """EIS工程诊断：当前生成模拟分布，不测量真实DUT灵敏度。用户阈值仅保留为请求参数，不提供正式判词。"""
     service = ChannelCalibrationService(db)
 
     calibration = service.run_eis_validation(
@@ -487,7 +427,7 @@ async def start_eis_validation(
         modulation=request.test_config.modulation,
         target_throughput_percent=request.test_config.target_throughput_percent or 95.0,
         num_rx_antennas=request.dut.num_rx_antennas,
-        min_eis_dbm=request.test_config.min_eis_dbm,
+        min_eis_dbm=request.min_eis_dbm,
         session_id=request.session_id,
         measured_by=request.measured_by
     )
@@ -496,7 +436,7 @@ async def start_eis_validation(
         calibration_job_id=calibration.id,
         status=ChannelCalibrationJobStatus.COMPLETED,
         estimated_duration_minutes=120.0,
-        message=f"EIS validation completed for {request.dut.model}"
+        message=f"EIS诊断完成，正式资格未判定： {request.dut.model}"
     )
 
 
@@ -510,7 +450,7 @@ async def get_eis_validation(
     calibration = service.get_eis_validation(calibration_id)
     if not calibration:
         raise HTTPException(status_code=404, detail="Validation not found")
-    return calibration
+    return channel_diagnostic_detail(calibration, "eis")
 
 
 # ==================== History & Validity ====================

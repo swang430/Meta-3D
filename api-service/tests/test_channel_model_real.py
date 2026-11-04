@@ -221,7 +221,8 @@ class TestSpatialCorrelationMock:
         assert cal.id is not None
         assert cal.antenna_spacing_wavelengths == 0.5
         assert cal.measured_correlation_magnitude is not None
-        assert cal.validation_pass is not None
+        assert cal.validation_pass is None
+        assert cal.diagnostic_provenance["source"] == "simulated"
 
 
 class TestSpatialCorrelationReal:
