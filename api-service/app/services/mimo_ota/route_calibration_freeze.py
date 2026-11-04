@@ -85,6 +85,14 @@ def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
         source_records[('legacy_certificate',str(saved.id))]=dict(source_kind='legacy_certificate',source_id=str(saved.id),
             snapshot={column.name:_plain(getattr(saved,column.name)) for column in saved.__table__.columns})
     route_entries=[]
+    from app.services.calibration.route_revocation import lock_acquisition_runs, revoked_run_ids
+    # 先锁定本次选择可能读取的采集，再读撤销事实；三个执行创建入口均在外层commit。
+    selected_pointers = db.query(RouteCalibrationSelection).filter_by(lab_profile_id=lab.id,
+        operating_mode=mode, frequency_mhz=frequency_mhz).all()
+    selected_runs = db.query(RouteCalibrationApplication.acquisition_run_id).filter(
+        RouteCalibrationApplication.id.in_([pointer.application_id for pointer in selected_pointers])).all()
+    lock_acquisition_runs(db, [row[0] for row in selected_runs])
+    revoked = revoked_run_ids(db, lab.id)
     now=datetime.now(timezone.utc)
     # 完整路径的CE端点是身份权威；旧终端绑定可能把中间衰减器标签当端口，甚至丢链。
     chains={chain.chain_id:chain for chain in resolution.chains}
@@ -103,12 +111,15 @@ def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
             value_db=None,measurement_provenance='unknown',certification_status='unknown',reason='missing_coverage')
         candidates=[]
         if route is not None:
-            pointers=db.query(RouteCalibrationSelection).filter_by(lab_profile_id=lab.id,
-                topology_id=route.topology_id,operating_mode=mode,chain_id=chain.chain_id,
-                frequency_mhz=frequency_mhz).all()
+            # 使用锁前读取的同一批指针，不在锁后追逐并发更新到另一次采集的指针。
+            pointers = [pointer for pointer in selected_pointers
+                        if pointer.topology_id == route.topology_id and pointer.chain_id == chain.chain_id]
             for pointer in pointers:
                 saved=db.get(RouteCalibrationApplication,pointer.application_id)
                 if saved is None or saved.lab_profile_id!=lab.id:
+                    continue
+                if saved.acquisition_run_id in revoked:
+                    entry['reason'] = 'acquisition_revoked'
                     continue
                 record=RouteApplicationRecord.model_validate(saved.record)
                 coverage=record.coverage_snapshot

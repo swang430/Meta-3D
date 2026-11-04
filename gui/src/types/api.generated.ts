@@ -3290,10 +3290,73 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/lab-profiles/{lab_profile_id}/route-calibration-applications/{application_id}/revocation": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Revocation Status
+         * @description 读取独立撤销状态；null仅表示没有撤销记录，不授予校准资格。
+         */
+        get: operations["revocation_status_api_v1_lab_profiles__lab_profile_id__route_calibration_applications__application_id__revocation_get"];
+        put?: never;
+        /**
+         * Revoke Application
+         * @description 停止同次采集的后续选用，不修改原始采用及历史执行。
+         */
+        post: operations["revoke_application_api_v1_lab_profiles__lab_profile_id__route_calibration_applications__application_id__revocation_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** RevokeRouteCalibration */
+        RevokeRouteCalibration: {
+            /**
+             * Confirmed
+             * @constant
+             */
+            confirmed: true;
+            /** Reason */
+            reason: string;
+        };
+        /** RouteRevocationRecord */
+        RouteRevocationRecord: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /**
+             * Application Id
+             * Format: uuid
+             */
+            application_id: string;
+            /**
+             * Acquisition Run Id
+             * Format: uuid
+             */
+            acquisition_run_id: string;
+            /** Reason */
+            reason: string;
+            /** Revoked At */
+            revoked_at: string;
+            /** Revoked By */
+            revoked_by: string | null;
+        };
         /** TopologyRestoreRequest */
         TopologyRestoreRequest: {
             /** Revision */
@@ -7934,6 +7997,104 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["EmulationControlResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revocation_status_api_v1_lab_profiles__lab_profile_id__route_calibration_applications__application_id__revocation_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteRevocationRecord"] | null;
+                };
+            };
+            /** @description 本实验室中没有这条采用记录 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    revoke_application_api_v1_lab_profiles__lab_profile_id__route_calibration_applications__application_id__revocation_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                lab_profile_id: string;
+                application_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RevokeRouteCalibration"];
+            };
+        };
+        responses: {
+            /** @description 同理由重试，返回原撤销记录 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteRevocationRecord"];
+                };
+            };
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteRevocationRecord"];
+                };
+            };
+            /** @description 本实验室中没有这条采用记录 */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description 该次采集已按另一理由撤销 */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {

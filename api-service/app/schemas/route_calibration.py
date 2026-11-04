@@ -6,6 +6,30 @@ from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator, f
 from app.schemas._datetime import UTCDateTime
 
 
+class RevokeRouteCalibration(BaseModel):
+    model_config = ConfigDict(extra='forbid', str_strip_whitespace=True)
+    confirmed: Literal[True]
+    reason: str = Field(min_length=1, max_length=2000)
+
+    @field_validator('confirmed', mode='before')
+    @classmethod
+    def explicit_confirmation(cls, value):
+        if value is not True:
+            raise ValueError('必须明确确认撤销该次测量的后续选用')
+        return value
+
+
+class RouteRevocationRecord(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    id: UUID
+    lab_profile_id: UUID
+    application_id: UUID
+    acquisition_run_id: UUID
+    reason: str
+    revoked_at: UTCDateTime
+    revoked_by: str | None
+
+
 class RoutePort(BaseModel):
     model_config = ConfigDict(extra='forbid')
     connection_id: str
