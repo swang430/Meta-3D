@@ -547,12 +547,19 @@ def claim_report_generation(
     report_id: UUID,
     *,
     expected_content_data: Any = _UNCONDITIONAL_REPORT_SNAPSHOT,
+    require_unarchived: bool = False,
 ) -> None:
     """Atomically acquire the single writer slot for a report artifact."""
     claim_query = db.query(TestReport).filter(
         TestReport.id == report_id,
         TestReport.status != ReportStatus.GENERATING.value,
     )
+    if require_unarchived:
+        # 同一原子claim核对归档状态，拒绝入口读取之后才完成归档的迟到请求。
+        claim_query = claim_query.filter(
+            TestReport.status != ReportStatus.COMPLETED.value,
+            (TestReport.file_path.is_(None) | (TestReport.file_path == '')),
+        )
     if expected_content_data is not _UNCONDITIONAL_REPORT_SNAPSHOT:
         # A historical VRT rebuild must claim the exact untrusted snapshot it
         # inspected. A late request cannot re-claim a row after another writer
@@ -739,6 +746,15 @@ class ReportService:
         if not report:
             return None
 
+        from app.services.calibration.report_revocation_impact import report_calibration_revocation_impact
+        calibration_impact = report_calibration_revocation_impact(db, report)
+        if calibration_impact.status == 'revoked':
+            raise ReportGenerationConflict('报告实际应用的校准来源已撤销，停止生成或重建；原始文件保留，请核查影响。')
+        if calibration_impact.checked_source_count and (report.status == 'completed' or report.file_path):
+            # 去掉原地覆盖：撤销可能在耗时生成期间提交，入口检查不构成原档保护。
+            # 使用既有create入口另建报告，不增加跨文件I/O的长事务锁。
+            raise ReportGenerationConflict('已归档报告保留原始证据，不能原地重建；请为同一执行创建新报告。')
+
         execution_ids, execution_ids_well_formed = _parse_report_execution_ids(
             report
         )
@@ -822,6 +838,7 @@ class ReportService:
             db,
             report_id,
             expected_content_data=expected_content_data,
+            require_unarchived=bool(calibration_impact.checked_source_count),
         )
         db.refresh(report)
 

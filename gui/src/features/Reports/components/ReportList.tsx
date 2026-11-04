@@ -159,6 +159,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
   })
 
   const getStatusBadge = (report: ReportSummary) => {
+    if(report.calibration_revocation_impact?.status==='revoked')return <Badge color="red">校准来源已撤销 · 仅审计</Badge>
     const outcome = report.execution_evidence_outcome
     if (report.status === 'completed' && outcome) {
       if (outcome.compatibility_classification === 'invalid') {
@@ -358,6 +359,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                       )}
 
                       {!report.requires_regeneration &&
+                        report.calibration_revocation_impact?.status!=='revoked' &&
                         !isUntrustedVrtReport(report) &&
                         (report.status === 'pending' || report.status === 'failed') && (
                         <Tooltip label={report.status === 'failed' ? '重新生成' : '生成报告'}>
@@ -372,7 +374,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                         </Tooltip>
                       )}
 
-                      {report.requires_regeneration && report.regeneration_available && (
+                      {report.requires_regeneration && report.regeneration_available && report.calibration_revocation_impact?.status!=='revoked' && (
                         <Tooltip label={report.regeneration_reason || '重生成安全报告'}>
                           <ActionIcon
                             variant="light"
@@ -400,6 +402,7 @@ export function ReportList({ onView, onDownload, onDelete }: ReportListProps) {
                       )}
 
                       {report.status === 'completed' &&
+                        report.calibration_revocation_impact?.status!=='revoked' &&
                         !report.requires_regeneration &&
                         !isUntrustedVrtReport(report) && (
                         <Tooltip label="下载报告">

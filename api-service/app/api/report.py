@@ -500,6 +500,7 @@ def _reject_untrusted_vrt_report(report) -> None:
 
 def _report_summary(db: Session, report) -> ReportSummary:
     """Build list metadata from the same MIMO trust truth as detail/download."""
+    from app.services.calibration.report_revocation_impact import report_calibration_revocation_impact
     evidence_outcome, _ = _report_execution_outcome_state(db, report)
     summary = ReportSummary.model_validate({
         "id": report.id,
@@ -518,9 +519,18 @@ def _report_summary(db: Session, report) -> ReportSummary:
             or report_has_vrt_archive_trust(report.content_data)
         ),
         "execution_evidence_outcome": evidence_outcome,
+        "calibration_revocation_impact": report_calibration_revocation_impact(db, report),
     })
-    if _mimo_report_is_provenance_sanitized(db, report):
+    sanitized = _mimo_report_is_provenance_sanitized(db, report)
+    protected_archive = bool(summary.calibration_revocation_impact.checked_source_count) and (report.status == 'completed' or bool(report.file_path))
+    if sanitized and not (protected_archive and report.status != 'completed'):
         return summary
+
+    if protected_archive:
+        return summary.model_copy(update={
+            'requires_regeneration': True, 'regeneration_available': False,
+            'regeneration_reason': '保留原始归档，不原地重建；请为同一执行创建新报告。',
+        })
 
     regeneration_error = legacy_mimo_regeneration_error(db, report)
     if regeneration_error:
@@ -546,6 +556,8 @@ def _report_with_current_execution_outcome(db: Session, report):
     # SQLAlchemy model instances accept non-mapped response-only attributes;
     # they are never persisted and Pydantic reads them via from_attributes.
     setattr(report, "execution_evidence_outcome", outcome)
+    from app.services.calibration.report_revocation_impact import report_calibration_revocation_impact
+    setattr(report, "calibration_revocation_impact", report_calibration_revocation_impact(db, report))
     return report
 
 
@@ -994,6 +1006,10 @@ def download_report(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Report is not ready for download. Status: {report.status}"
         )
+
+    from app.services.calibration.report_revocation_impact import report_calibration_revocation_impact
+    if report_calibration_revocation_impact(db, report).status == 'revoked':
+        raise HTTPException(409, '报告实际应用的校准来源已撤销，停止下载交付；原文件保留，请核查影响。')
 
     _reject_untrusted_mimo_report(db, report)
     _reject_untrusted_vrt_report(report)

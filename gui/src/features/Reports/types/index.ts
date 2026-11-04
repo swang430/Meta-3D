@@ -7,7 +7,7 @@
  * @date 2025-11-26
  */
 
-import type { ExecutionEvidenceOutcome } from '../../../types/api'
+import type { ExecutionEvidenceOutcome, ReportCalibrationRevocationImpact } from '../../../types/api'
 
 // ==================== Report Types ====================
 
@@ -21,6 +21,7 @@ export type ReportType =
   | 'regulatory'
 
 export interface TestReport {
+  calibration_revocation_impact?: ReportCalibrationRevocationImpact | null
   id: string
   title: string
   description?: string
@@ -70,6 +71,7 @@ export interface TestReport {
 }
 
 export interface ReportSummary {
+  calibration_revocation_impact?: ReportCalibrationRevocationImpact | null
   id: string
   title: string
   report_type: ReportType

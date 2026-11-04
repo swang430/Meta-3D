@@ -292,7 +292,13 @@ def test_task4_existing_diagnostic_report_read_download_unchanged_by_conversion(
     p=preview(world,url,scope,{'connections':[{'connection_id':'b','loss_owner_connection_id':'a',
         'same_physical_cable_confirmed':True}]})
     assert commit(world,url,scope,p).status_code==200
-    assert client.get(endpoint).json()==detail.json()
+    before_response=detail.json();after_response=client.get(endpoint).json()
+    # 当前核对时间独立变化；历史字段、撤销事实与文件仍逐项保持。
+    from datetime import datetime
+    before_checked=before_response['calibration_revocation_impact'].pop('checked_at')
+    after_checked=after_response['calibration_revocation_impact'].pop('checked_at')
+    assert datetime.fromisoformat(after_checked)>=datetime.fromisoformat(before_checked)
+    assert after_response==before_response
     after=client.get(endpoint+'/download')
     assert after.status_code==200 and hashlib.sha256(after.content).digest()==hashlib.sha256(download.content).digest()
     db.expire_all();assert db.get(TestExecution,execution.id).config==before

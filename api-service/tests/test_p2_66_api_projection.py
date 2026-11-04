@@ -41,6 +41,9 @@ class _SingleResultDb:
     def query(self, *_args, **_kwargs):
         return _SingleResultQuery(self.value)
 
+    def get(self, _model, ident):
+        return self.value if self.value is not None and str(self.value.id) == str(ident) else None
+
 
 class _ExecutionMapDb:
     def __init__(self, *executions):

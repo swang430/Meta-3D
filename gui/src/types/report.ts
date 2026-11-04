@@ -264,6 +264,7 @@ export type ReportFormat = 'pdf' | 'html' | 'excel' | 'json'
 export type ReportStatus = 'pending' | 'generating' | 'completed' | 'failed' | 'cancelled'
 
 export interface Report {
+  calibration_revocation_impact?: import('./api').ReportCalibrationRevocationImpact | null
   id: string
   title: string
   description?: string
@@ -301,6 +302,7 @@ export interface Report {
 }
 
 export interface ReportSummary {
+  calibration_revocation_impact?: import('./api').ReportCalibrationRevocationImpact | null
   id: string
   title: string
   report_type: ReportType
