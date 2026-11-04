@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { Alert, Badge, Button, Card, Checkbox, Code, Group, MultiSelect, Stack, Text, Textarea, TextInput, Title } from '@mantine/core'
+import { Alert, Badge, Button, Card, Checkbox, Code, Group, MultiSelect, Stack, Table, Text, Textarea, TextInput, Title } from '@mantine/core'
 import type { BatchJobRecord, BatchPlan, BatchPlanRequest, FixedRouteRecord, RouteSelection } from '../../types/api'
 import { previewRouteCalibrationBatch, startRouteCalibrationBatch, fetchRouteCalibrationBatches, fetchRouteCalibrationBatch,
   continueRouteCalibrationBatch, cancelRouteCalibrationBatch, fetchFixedRouteAcquisition } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
 import {parseMockCalibrationCsv} from './mockCalibrationCsv'
 import {MockCalibrationResult} from './MockCalibrationResult'
-import {withSimulationMarker} from '../LabWorkspace/fixedRouteDisplay'
+import {batchResultRecord} from './calibrationResultView'
+import {fixedRouteDisplay,withSimulationMarker} from '../LabWorkspace/fixedRouteDisplay'
 import { batchCanRelease, batchItemRoute, batchPureSimulationEnded, batchCounts, batchStartAttempt, batchStartRequest, batchToneState, batchRejectionCanRelease, findUnsettledBatch, buildBatchContinue,
   buildBatchRequest, routeMatchesSaved, routeGraphMatchesSaved, type BatchStartAttempt, type BatchReferenceFields, type RouteScope } from './routeCalibrationState'
 
@@ -155,6 +156,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       return record?[record]:[]
     })
     const simulationEnded=batchPureSimulationEnded(row,savedChildren)
+    const displayedRecords=readonly?(!viewedChildren.isError&&!viewedChildren.isPaused&&!viewedChildren.isFetching?viewedChildren.data??[]:[]):(!children.isError&&!children.isPaused&&!children.isFetching?childRecords:[])
     return <Card withBorder data-testid={readonly?'batch-history-detail':'batch-active-detail'}><Stack gap="xs">
       <Text fw={600}>{readonly?'只读批历史':'活动批'}：{row.job_id}</Text>
       <Badge color={row.items.some(i=>i.status==='simulated')?'yellow':'blue'}>{statusLabels[row.status]??'未知'}</Badge>
@@ -162,14 +164,23 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       <Text>外层控制释放：{row.f64_control_released===true?'服务器确认': '未确认'}；父子最终提交：{row.finalization_committed===true&&row.finalization_id?'服务器确认':'未确认'}</Text>
       {simulationEnded&&<Alert color="yellow">纯模拟软件任务已结束；未取得真实控制，未证明实物停发或真实控制释放。模拟结果不可采用。</Alert>}
       {row.error&&<Alert color="red">{row.error}</Alert>}
-      {row.items.map((item,index)=><Card key={item.item_id} withBorder padding="xs"><Stack gap={3}>
-        <Text size="sm">{index+1}. {item.request.chain_id} · {item.request.frequency_mhz} MHz · {item.request.reference_antenna}</Text>
-        <Text size="sm" c={item.request.mock_input||item.status==='simulated'?'yellow':undefined}>{withSimulationMarker(statusLabels[item.status]??item.status,Boolean(item.request.mock_input)||item.status==='simulated')}{index===row.current_index?'（当前项）':''}</Text>
-        {item.error&&<Text size="xs" c="red">{item.error}</Text>}
-        <Text size="xs">所属批{row.job_id}；{row.f64_control_released===true&&row.finalization_committed&&row.finalization_id?'父批外层释放及最终提交已确认，仍需服务器逐项核验采用资格':'外层释放／最终提交未确认，不可采用'}</Text>
-        {item.status==='simulated'&&<Text size="xs" c="yellow">模拟项只能结束软件流程，不证明实物停发，不能正式采用。</Text>}
-        {item.run_id&&<Button size="xs" variant="light" onClick={()=>onInspectChild(item.run_id!,activeId?undefined:batchItemRoute(row.plan?.items.find(i=>i.item_id===item.item_id)))}>查看本项读数及原采用入口</Button>}
-      </Stack></Card>)}
+      <Table.ScrollContainer minWidth={700}><Table withTableBorder striped data-testid="batch-result-table">
+        <Table.Thead><Table.Tr>{['路径／频点','采集状态','净损耗','重复性','单音清理','审阅'].map(label=><Table.Th key={label}>{label}</Table.Th>)}</Table.Tr></Table.Thead>
+        <Table.Tbody>{row.items.map((item,index)=>{
+          const record=batchResultRecord(row,item,displayedRecords),shown=record?fixedRouteDisplay(record):null
+          return <Table.Tr key={item.item_id}>
+            <Table.Td>{item.request.chain_id}<br/>{item.request.frequency_mhz} MHz<br/>{item.request.reference_antenna}</Table.Td>
+            <Table.Td><Text size="sm">{shown?.label??withSimulationMarker(statusLabels[item.status]??'未知',Boolean(item.request.mock_input)||item.status==='simulated')}{index===row.current_index?'（当前项）':''}</Text>
+              {item.error&&<Text size="xs" c="red">{item.error}</Text>}{record?.result?.error&&<Text size="xs" c="red">{record.result.error}</Text>}
+              {record?.result?.missing_items?.map((value,i)=><Text size="xs" c="orange" key={i}>{value}</Text>)}
+            </Table.Td>
+            <Table.Td>{shown?.loss??'未读取对应记录'}</Table.Td><Table.Td>{shown?.repeatability??'未知'}</Table.Td>
+            <Table.Td>{shown?.cleanup??'未确认'}</Table.Td>
+            <Table.Td>{item.run_id?<Button size="xs" variant="light" onClick={()=>onInspectChild(item.run_id!,activeId?undefined:batchItemRoute(row.plan?.items.find(i=>i.item_id===item.item_id)))}>查看读数与采用资格</Button>:<Text size="xs">尚无采集记录</Text>}</Table.Td>
+          </Table.Tr>
+        })}</Table.Tbody>
+      </Table></Table.ScrollContainer>
+      <Text size="xs">重复性为样本标准差，不是完整不确定度。本项停发不等于父批控制已释放；采用资格须逐项向服务器核对。</Text>
       <details><summary>冻结清单、接线声明与逐开关回执</summary><Code block style={{maxHeight:240,overflow:'auto',whiteSpace:'pre-wrap'}}>{JSON.stringify(row,null,2)}</Code></details>
     </Stack></Card>
   }
@@ -254,9 +265,10 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     {activeId&&<Button color="red" loading={cancel.isPending} onClick={()=>cancel.mutate()}>取消批校准并等待真实停发／释放</Button>}
     {history.isError&&<Alert color="red">批历史读取失败：{message(history.error)}；没有据此解锁。</Alert>}
     <div style={{display:reviewVisible?'block':'none'}} data-testid="batch-route-review">
-    <Title order={5}>批历史（不覆盖活动身份）</Title>
+    <details data-testid="batch-history"><summary>批历史（只读查看，不覆盖活动身份）</summary>
     {history.data?.map(row=><Group key={row.job_id} justify="space-between"><Text size="xs">{row.job_id} · {statusLabels[row.status]}{row.items.some(i=>i.request.mock_input||i.status==='simulated')?' · 模拟演练（非实测）':''}</Text><Button size="xs" variant="subtle" onClick={()=>{onPhaseChange?.('review');setViewId(row.job_id)}}>只读查看</Button></Group>)}
     {!history.data?.length&&!history.isError&&<Text size="sm">暂无批历史；不是停发或未启动的证明。</Text>}
+    </details>
     {viewed.isError&&<Alert color="red">只读历史读取失败：{message(viewed.error)}</Alert>}
     {viewed.data&&!viewed.isError&&renderJob(viewed.data,true)}
     {viewed.data&&!viewed.isError&&!viewed.isPaused&&!viewedChildren.isError&&!viewedChildren.isPaused&&<MockCalibrationResult key={`${scope.labId}:${viewId}`} records={(viewedChildren.data??[]).filter(r=>r.lab_profile_id===scope.labId&&viewed.data!.items.some(i=>i.run_id===r.run_id))}/>}

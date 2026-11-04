@@ -54,3 +54,17 @@ R1修复后相关53/53通过；复活排除边的逆变异失败并恢复。浏�
 - `playwright-cli -s=pc06 run-code --filename gui/test/pc06CalibrationSteps.browser.js`：真实App、隔离HTTP，六组通过：步骤保持输入，1×1清单预览/启动，人工及取消常驻，取消后审阅，固定接线保留，采用未知回执跨步骤可见。不是后端／真机验证。
 - 逆变异强制固定接线准备表单常显，浏览器报“两套准备表单同时显示”，非零退出；finally核对并恢复，构建在恢复后独立执行。
 - 内审修正：采用写入回执与核对常驻；去掉批列表刷新后的迟到步骤切换；未选择run时不主动刷新无身份的采用接口。
+
+## PC-06A-5 实现边界补充
+
+重复性只显示原结果的样本标准差，不表示完整不确定度。批结果要求同Lab/run/批项/父批，子记录刷新失败或未读不取旧缓存补数。
+只折叠只读历史、原始证据与模拟明细；撤销组件的状态、在途／失败和核对入口留在外面，表单沿原组件自己的详情折叠。
+
+## PC-06A-5 验证
+
+- `npx --yes tsx --test gui/test/calibrationResultView.test.ts gui/test/pc04FixedRoute.test.ts gui/test/pc04a8MockCalibration.test.ts gui/test/pc04a2RouteCalibration.test.ts gui/test/pc06a1Batch.test.ts`：45/45通过。
+- `playwright-cli -s=pc06 run-code --filename gui/test/pc06CalibrationSteps.browser.js`：真实App/隔离HTTP八组通过，延续三步六组并覆盖标准差摘要、证据折叠、模拟数值不进入正式摘要与采用禁用。无硬件访问。
+- 去掉重复性显示的 `measured` 条件，`npx --yes tsx --test gui/test/calibrationResultView.test.ts` 失败；finally双向核对恢复。恢复后独立构建通过。
+- 独立累计内审及模拟详情增量复审无功能缺陷。撤销警示没有被历史折叠隐藏。
+
+三片只完成软件交付，未执行真实校准或现场验收；PC-06B及其他未验证范围继续保留。
