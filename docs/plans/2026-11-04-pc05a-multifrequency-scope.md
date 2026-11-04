@@ -27,3 +27,7 @@ memory已核对当前流程；目标文件禁令已搜索。NotebookLM不适用�
 内审F1发现JSON列可能含非数组，原长度/索引判断会500并遮住旧有效点。已在索引前收窄为list，补对象/标量三种记录回退断言；相同相关命令用 `/tmp/pc05multi-internal.db` 重跑，exit0，44 passed / 154 warnings / 2.55s，日志 `/tmp/pc05multi-internal.log`。这是实际改动后的必要重跑，不复用旧结果。
 
 F1守卫逆变异：删除两行list限定，formal_sample子集exit1，1 failed / 4 passed / 13 deselected / 66 warnings / 0.19s；finally双向assert恢复原文，日志 `/tmp/pc05multi-mutation.log`。恢复后代码与44项通过版本一致。
+
+外审R1覆盖98e635c6：无P1，一条P2指出服务类说明与编排项目说明仍承诺频率插值。全仓枚举确认这两处为同源现状声明，已收窄为实测频点；其他线性插值命中属于多普勒、方向图角度或VRT，不改。该增量仅说明文本，不改变数值/分支/字段类型；局部事实与编排说明消费者核验，不因外审轮次重跑全量。
+
+增量内审另发现同文件英文注释 interpolation consumer，已同步改称实测点消费者；补查中英文关键词，保留interpolated响应字段本身。原数值逻辑与类型不变。

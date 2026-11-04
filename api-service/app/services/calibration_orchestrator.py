@@ -142,7 +142,7 @@ CALIBRATION_CONFIG = {
     },
     CalibrationItem.MULTI_FREQUENCY: {
         "name": "多频点路损校准",
-        "description": "扫频测量路损，支持频率插值",
+        "description": "扫频测量路损，仅返回实测频点",
         "priority": CalibrationPriority.LOW,
         "validity_days": 180,
         "dependencies": [CalibrationItem.PROBE_PATH_LOSS],
@@ -365,7 +365,7 @@ class CalibrationOrchestrator:
                 # A sweep cert is physical-route scoped. Generic chamber-only
                 # status calls lack enough identity and therefore stay invalid.
                 # When a LabProfile is supplied, reuse the same exact current
-                # route comparison as the interpolation consumer.
+                # route comparison as the exact-sample consumer.
                 cal = None
                 if lab_profile_id is not None:
                     from app.services.calibration.rf_chain_resolver import (

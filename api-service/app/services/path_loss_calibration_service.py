@@ -2012,7 +2012,7 @@ class MultiFrequencyPathLossService:
     """
     多频点路损校准服务
 
-    存储扫频校准的路损数据，支持频率插值。
+    存储扫频校准的路损数据；无经验证插值域时仅返回实测频点。
     """
 
     def __init__(self, db: Session, use_mock: bool = True):
