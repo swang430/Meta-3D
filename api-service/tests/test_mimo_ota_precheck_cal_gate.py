@@ -430,8 +430,8 @@ def _build_context(
     """Build a TestCase + TestExecution + StepExecutionContext pinned to the
     given strict mode and (detached) cal cert.
 
-    ``frequency_hz``: 显式钉住目标频率。**±5% 窗口的边界测试必须给它** ——
-    否则窗口跟着 ``MIMOOTAConfiguration.frequency_hz`` 的默认值漂，改一次默认
+    ``frequency_hz``: 显式钉住目标频率。**频率匹配测试必须给它** ——
+    否则目标频点跟着 ``MIMOOTAConfiguration.frequency_hz`` 的默认值漂，改一次默认
     就红一次（2026-08-07 实证：默认从 3.5e9 换成 3.54999e9 时，三条边界测试
     同时红，而它们测的契约根本没变）。留 None = 沿用 schema 默认（对不关心
     频率的用例是对的）。"""
@@ -850,17 +850,14 @@ async def test_precheck_cal_gate_cartesian(
 # pass precheck silently and then leave Phase 3 with no usable cert.
 #
 # Fix: precheck now goes through ProbePathLossCalibrationService.
-# get_latest_calibration(chamber_id, freq_mhz), which applies the same ±5%
-# frequency window measure.py uses. These tests pin that window contract:
-#   - 3500 MHz target accepts certs in 3325-3675 MHz
-#   - 700 MHz cert at 3500 MHz target → strict FAIL with audit trail showing
-#     "frequency_mismatch"
-#   - bypass: same setup PASSes but cal_pass_reason still records would-fail
+# get_latest_calibration(chamber_id, freq_mhz). PC-05A now requires the
+# exact measured point; unvalidated ±5% proximity is no longer coverage.
+# Both precheck and measure must reject it with frequency_mismatch.
 # ---------------------------------------------------------------------------
 
 
 class TestFrequencyWindow:
-    """Pin the ±5% frequency-matching contract between precheck and measure."""
+    """单频证书必须匹配目标频点，旧近邻窗口不代表覆盖。"""
 
     @pytest.mark.asyncio
     async def test_mismatched_frequency_strict_fails(
@@ -910,48 +907,40 @@ class TestFrequencyWindow:
         assert "fall back to default cable loss" not in warning_text
 
     @pytest.mark.asyncio
-    async def test_upper_boundary_within_window_passes(
+    async def test_upper_former_window_boundary_rejected(
         self, db, lab, chamber, hal_with_mocks,
     ):
-        """3500 × 1.05 = 3675 MHz cert ↔ 3500 MHz target: at-window edge,
-        must pass strict."""
+        """旧5%边界没有覆盖证明，不能作为3500MHz单频补偿。"""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=3675.0)
         ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
                              frequency_hz=3500e6)
         result = await PrecheckExecutor().execute(ctx)
         measurements = result.measurements or {}
-
-        assert result.status == StepExecutionStatus.SUCCESS
-        assert measurements["operational_ready"] is True
-        assert measurements["overall_pass"] is None
-        assert measurements["cal_pass"] is True
-        assert measurements["path_loss_calibration_valid"] is True
-        assert measurements["path_loss_calibration_frequency_mhz"] == 3675.0
+        assert result.status == StepExecutionStatus.FAILED
+        assert measurements["cal_pass"] is False
+        assert measurements["path_loss_calibration_valid"] is False
+        assert measurements["path_loss_calibration_reason"] == "frequency_mismatch"
 
     @pytest.mark.asyncio
-    async def test_lower_boundary_within_window_passes(
+    async def test_lower_former_window_boundary_rejected(
         self, db, lab, chamber, hal_with_mocks,
     ):
-        """3500 × 0.95 = 3325 MHz cert ↔ 3500 MHz target: at-window edge,
-        must pass strict."""
+        """旧5%边界没有覆盖证明，不能作为3500MHz单频补偿。"""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=3325.0)
         ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
                              frequency_hz=3500e6)
         result = await PrecheckExecutor().execute(ctx)
         measurements = result.measurements or {}
-
-        assert result.status == StepExecutionStatus.SUCCESS
-        assert measurements["operational_ready"] is True
-        assert measurements["overall_pass"] is None
-        assert measurements["cal_pass"] is True
-        assert measurements["path_loss_calibration_valid"] is True
+        assert result.status == StepExecutionStatus.FAILED
+        assert measurements["cal_pass"] is False
+        assert measurements["path_loss_calibration_valid"] is False
+        assert measurements["path_loss_calibration_reason"] == "frequency_mismatch"
 
     @pytest.mark.asyncio
     async def test_just_outside_upper_boundary_fails_strict(
         self, db, lab, chamber, hal_with_mocks,
     ):
-        """Just above the +5% window: 3676 MHz cert vs 3500 MHz target →
-        out of window → FAIL strict."""
+        """3676 MHz 单频证书不覆盖3500 MHz，严格预检拒绝。"""
         _seed_path_loss_cal(db, chamber.id, frequency_mhz=3676.0)
         ctx = _build_context(db, lab, cal_cert=None, strict_mode=True,
                              frequency_hz=3500e6)

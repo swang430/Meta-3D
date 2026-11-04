@@ -197,7 +197,7 @@ def get_latest_path_loss_calibration(
 
     Args:
         chamber_id: 暗室配置 ID
-        frequency_mhz: 目标频率，用于查找最接近的校准
+        frequency_mhz: 目标频率，指定时仅匹配精确频点的校准
     """
     service = ProbePathLossCalibrationService(db, use_mock=False)
     calibration = service.get_latest_calibration(chamber_id, frequency_mhz)

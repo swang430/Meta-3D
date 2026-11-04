@@ -40,7 +40,7 @@ def _execution_route(route):
 
 
 def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
-    """新确认仅精确频点/完整路径适用；旧来源仍沿既有频率/mode政策逐链核对。"""
+    """新确认仅精确频点/完整路径适用；旧单频来源也只匹配精确频点，沿既有mode政策逐链核对。"""
     lab=db.get(LabProfile,UUID(str(lab_id)))
     if lab is None or not lab.is_active:
         raise ValueError('执行路损冻结需要明确活动实验室')
@@ -65,12 +65,12 @@ def resolve_effective_route_compensation(db,lab_id,mode,frequency_mhz):
     legacy=ProbePathLossCalibrationService(db,use_mock=False).resolve_latest_calibration(
         lab.chamber_config_id,frequency_mhz,operating_mode=mode,require_real=True)
     certificate=legacy.certificate
-    # 沿旧VALID/有效期/±5%政策，精确mode优先、再未标记mode；逐链寻找实际覆盖，不能整份latest遮住别链。
+    # 沿VALID/有效期政策，单频记录仅精确频点适用，精确mode优先、再未标记mode；逐链寻找实际覆盖，不能整份latest遮住别链。
     old_query=db.query(ProbePathLossCalibration).filter(
         ProbePathLossCalibration.chamber_id==lab.chamber_config_id,
         ProbePathLossCalibration.status==CalibrationStatus.VALID.value,
         ProbePathLossCalibration.valid_until>datetime.utcnow(),ProbePathLossCalibration.use_mock.is_(False),
-        ProbePathLossCalibration.frequency_mhz.between(frequency_mhz*.95,frequency_mhz*1.05))
+        ProbePathLossCalibration.frequency_mhz == frequency_mhz)
     old_candidates=(old_query.filter(ProbePathLossCalibration.operating_mode==mode)
         .order_by(ProbePathLossCalibration.calibrated_at.desc()).all()+
         old_query.filter(ProbePathLossCalibration.operating_mode.is_(None))

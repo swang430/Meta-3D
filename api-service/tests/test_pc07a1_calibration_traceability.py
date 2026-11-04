@@ -120,11 +120,21 @@ async def test_single_source_execution_uses_only_its_selected_rows(
         db_session.commit()
         run = real_capture()
         assert confirm(client, configured, payload(client, configured, run)).status_code == 201
-    else:
-        # 旧来源覆盖频点与本次执行频点不同，仍沿既有±5%政策选中；展示不得抹平。
-        legacy.frequency_mhz = 2500
-        db_session.commit()
     execution = await launch()
+    if kind == 'legacy_certificate':
+        # 显式构造旧版±5%策略留下的历史冻结；新创建入口不再选近邻。
+        # 历史投影仍须忠实保留当时的不同频点，不能按新策略改写。
+        import copy
+        from app.hal.base_station_compatibility import canonical_payload_digest
+        config = copy.deepcopy(execution.config)
+        frozen = config['route_calibration_freeze']
+        for source in frozen['source_records']:
+            if source['source_kind'] == 'legacy_certificate':
+                source['snapshot']['frequency_mhz'] = 2500
+        frozen.pop('digest')
+        frozen['digest'] = canonical_payload_digest(frozen)
+        execution.config = config
+        db_session.commit()
     application = evaluate_path_loss_preflight(
         db_session, execution, chamber_id=configured.chamber_config_id, frequency_mhz=2595,
         operating_mode='mimo_ota', precheck_strict_cal=True,

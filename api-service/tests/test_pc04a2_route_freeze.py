@@ -343,3 +343,19 @@ async def test_multihop_freeze_uses_complete_route_without_relabelling_actual_ta
     actual=orchestrate_switch_topology(db_session,configured.chamber_config_id,'mimo_ota')
     assert next(binding.ce_port for binding in actual.probe_bindings if binding.connection_id=='conn_p0v')=='B1.1'
     assert frozen_route_identity_error(db_session,frozen,resolved_topology=actual) is None
+
+
+@pytest.mark.asyncio
+async def test_single_point_legacy_frequency_scope_and_history(legacy, launch, db_session):
+    from app.services.mimo_ota.route_calibration_freeze import read_execution_route_compensation
+    exact = await launch(2595)
+    old = copy.deepcopy(read_execution_route_compensation(exact))
+    nearby = await launch(2595.01)
+    frozen = read_execution_route_compensation(nearby)
+    assert frozen['legacy_selection_reason'] == 'frequency_mismatch'
+    assert frozen['route_entries']
+    assert all(row['source_kind'] == 'unavailable' and row['value_db'] is None
+               for row in frozen['route_entries'])
+    legacy.frequency_mhz = 2600
+    db_session.commit()
+    assert read_execution_route_compensation(exact) == old

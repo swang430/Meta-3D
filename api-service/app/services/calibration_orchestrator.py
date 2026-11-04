@@ -1071,8 +1071,9 @@ class CalibrationOrchestrator:
 
         factors = {
             "path_loss_db": 0.0,
-            "ul_gain_db": 0.0,
-            "dl_gain_db": 0.0,
+            # 未配置该方向硬件无需增益补偿；已配置却缺证据必须保留未知。
+            "ul_gain_db": None if chamber.has_lna else 0.0,
+            "dl_gain_db": None if chamber.has_pa else 0.0,
             "duplexer_loss_db": 0.0,
             "path_loss_provenance": "missing",
             "path_loss_usable": False,
@@ -1104,21 +1105,27 @@ class CalibrationOrchestrator:
 
         # 获取上行链路增益 (TRP 测量用)
         if chamber.has_lna:
-            ul_gain = self.rf_chain_service.get_uplink_gain(chamber_id, frequency_mhz)
-            if ul_gain:
-                factors["ul_gain_db"] = ul_gain
+            factors["ul_gain_db"] = self.rf_chain_service.get_uplink_gain(
+                chamber_id, frequency_mhz
+            )
 
         # 获取下行链路增益 (TIS 测量用)
         if chamber.has_pa:
-            dl_gain = self.rf_chain_service.get_downlink_gain(chamber_id, frequency_mhz)
-            if dl_gain:
-                factors["dl_gain_db"] = dl_gain
+            factors["dl_gain_db"] = self.rf_chain_service.get_downlink_gain(
+                chamber_id, frequency_mhz
+            )
 
         # 计算总补偿
         # TRP: P_dut = P_measured + PathLoss - UL_Gain
         # TIS: P_dut = P_delivered - PathLoss + DL_Gain
-        factors["trp_compensation_db"] = factors["path_loss_db"] - factors["ul_gain_db"]
-        factors["tis_compensation_db"] = -factors["path_loss_db"] + factors["dl_gain_db"]
+        factors["trp_compensation_db"] = (
+            factors["path_loss_db"] - factors["ul_gain_db"]
+            if factors["path_loss_usable"] and factors["ul_gain_db"] is not None else None
+        )
+        factors["tis_compensation_db"] = (
+            -factors["path_loss_db"] + factors["dl_gain_db"]
+            if factors["path_loss_usable"] and factors["dl_gain_db"] is not None else None
+        )
 
         return factors
 

@@ -99,6 +99,15 @@ class MeasurementCompensator:
                 ),
                 "warning": "No explicitly real path-loss calibration available",
             }
+        if ul_gain is None:
+            return {
+                "path_loss_db": path_loss,
+                "ul_gain_db": None,
+                "total_compensation_db": None,
+                "valid": False,
+                "path_loss_provenance": factors.get("path_loss_provenance"),
+                "warning": "No applicable UL gain calibration available",
+            }
         total = path_loss - ul_gain
 
         return {
@@ -162,6 +171,15 @@ class MeasurementCompensator:
                     "path_loss_provenance", "missing"
                 ),
                 "warning": "No explicitly real path-loss calibration available",
+            }
+        if dl_gain is None:
+            return {
+                "path_loss_db": path_loss,
+                "dl_gain_db": None,
+                "total_compensation_db": None,
+                "valid": False,
+                "path_loss_provenance": factors.get("path_loss_provenance"),
+                "warning": "No applicable DL gain calibration available",
             }
         total = dl_gain - path_loss
 

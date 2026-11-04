@@ -1021,3 +1021,56 @@ class TestIntegration:
 
         assert factors["path_loss_db"] > 0
         assert factors["ul_gain_db"] != 0 or factors["dl_gain_db"] != 0
+
+
+@pytest.mark.parametrize('direction,kind,gain_key,power_key', [
+    ('uplink', 'trp', 'ul_gain_db', 'compensated_power_dbm'),
+    ('downlink', 'tis', 'dl_gain_db', 'power_at_dut_dbm'),
+])
+@pytest.mark.parametrize('state', ['missing', 'nearby', 'mock', 'unknown', 'expired', 'zero', 'exact', 'not_required'])
+def test_required_gain_evidence_reaches_all_compensation_consumers(
+        db_session, type_d_chamber, direction, kind, gain_key, power_key, state):
+    chamber = type_d_chamber
+    # 只要求本方向硬件，另一方向不得被错误连带阻塞。
+    chamber.has_lna = kind == 'trp' and state != 'not_required'
+    chamber.has_pa = kind == 'tis' and state != 'not_required'
+    now = datetime.utcnow()
+    db_session.add(ProbePathLossCalibration(chamber_id=chamber.id,
+        frequency_mhz=3500, use_mock=False, status='valid', calibrated_at=now,
+        valid_until=now + timedelta(days=1), sgh_model='reference', sgh_gain_dbi=8,
+        probe_path_losses={'0': {'path_loss_db': 20}}))
+    if state not in ('missing', 'not_required'):
+        db_session.add(RFChainCalibration(chamber_id=chamber.id, chain_type=direction,
+            frequency_mhz=3501 if state == 'nearby' else 3500,
+            use_mock=True if state == 'mock' else None if state == 'unknown' else False,
+            status='valid', calibrated_at=now,
+            valid_until=now + timedelta(days=-1 if state == 'expired' else 1),
+            total_chain_gain_db=0 if state == 'zero' else 8))
+    db_session.commit()
+    valid = state in ('zero', 'exact', 'not_required')
+    expected_gain = 8 if state == 'exact' else 0 if valid else None
+    expected_total = (20 - expected_gain) * (1 if kind == 'trp' else -1) if valid else None
+    factors = CalibrationOrchestrator(db_session, use_mock=False).get_compensation_factors(
+        chamber.id, 0, 'V', 3500)
+    assert factors[gain_key] == expected_gain
+    assert factors[f'{kind}_compensation_db'] == expected_total
+    query = client.get(f'/api/v1/calibration/compensation/{kind}/{chamber.id}/0',
+        params={'frequency_mhz': 3500})
+    assert query.status_code == 200, query.text
+    assert query.json()['valid'] is valid
+    assert query.json()['total_compensation_db'] == expected_total
+    response = client.post(f'/api/v1/calibration/compensation/apply-{kind}', params={
+        'chamber_id': str(chamber.id), 'probe_id': 0, 'frequency_mhz': 3500,
+        'raw_power_dbm' if kind == 'trp' else 'delivered_power_dbm': -50})
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body['details']['valid'] is valid
+    assert body['compensation_applied_db'] == expected_total
+    assert body[power_key] == (-50 + expected_total if valid else None)
+    summary = get_system_compensation_summary(db_session, chamber.id, 3500)
+    assert summary['typical_compensation'][gain_key] == expected_gain
+    assert summary['typical_compensation'][f'{kind}_compensation_db'] == expected_total
+    if kind == 'trp' and not valid:
+        total, detail = MeasurementCompensator(db_session, use_mock=False).compute_compensated_trp(
+            {0: -50}, chamber.id, 'V', 3500)
+        assert total is None and detail['valid'] is False
