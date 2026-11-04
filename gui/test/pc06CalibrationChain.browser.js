@@ -8,7 +8,7 @@ async page => {
     connections:types.slice(0,5).map((type,i)=>({id:'edge'+i,source:type,target:types[i+1],source_pin:'out',target_pin:'in',modes:[i===0?'mimo_ota':'calibration']})),
     operating_modes:[{id:'mimo_ota',name:'正常测试',active_connections:['edge0']},{id:'calibration',name:'参考接线',active_connections:['edge1','edge2','edge3','edge4']}]};
   await page.route('**/api/v1/**',async route=>{
-    const p=new URL(route.request().url()).pathname; requests.push(route.request().method()); let body={};
+    const p=new URL(route.request().url()).pathname; requests.push({method:route.request().method(),path:p}); let body={};
     if(p.endsWith('/lab-profiles'))body=[{id:lab,name:'校准回归实验室',is_active:true,chamber_config_id:chamber}];
     else if(p.endsWith('/instruments/catalog'))body={categories:[{key:'rfSwitch',categoryId:'switch',label:'射频开关',models:[],connection:{invalid_fields:{}},driverMode:'mock'},{key:'signalAnalyzer',categoryId:'sa',label:'分析仪资源',models:[],connection:{invalid_fields:{}},driverMode:'mock'}]};
     else if(p.endsWith('/hal/readiness')){
@@ -32,7 +32,7 @@ async page => {
   mode='wrong';await card.getByRole('button',{name:'刷新仪器状态'}).click();await card.getByText(/运行快照读取中、不可用/).waitFor();
   if(await card.getByText(/HAL快照：ok/).count())throw Error('错Lab仍发布旧快照');
   mode='error';await card.getByRole('button',{name:'刷新仪器状态'}).click();await card.getByText(/运行快照读取中、不可用/).waitFor();
-  if(requests.some(method=>method!=='GET'))throw Error('展示触发写操作');
+  if(requests.some(r=>r.method!=='GET'&&!r.path.includes('/frontend-logs')))throw Error('展示触发写操作 '+JSON.stringify(requests.filter(r=>r.method!=='GET')));
   await page.getByRole('button',{name:'添加器件',exact:true}).click();
   if(await card.getByRole('button',{name:'前往仪器资源核对驱动'}).count())throw Error('草稿仍可绕过导航保护');
   return {passed:['完整接线含普通pad及孤立VNA/信号源','错Lab与失败保持未知','只读不发硬件写操作','草稿禁止快捷离开']};

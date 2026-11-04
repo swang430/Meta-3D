@@ -38,3 +38,7 @@ GUI 投影不改后端采集；若必须修改共享后端契约，先明确范�
 - `playwright-cli -s=pc06 run-code --filename gui/test/pc06CalibrationChain.browser.js`：真实App、HTTP隔离夹具，完整参考支路（含普通pad）、孤立矢网/信号源、错Lab/失败未知、展示只读、草稿阻断快捷导航四组通过。不是真机验证。
 - 逆变异将 `calibrationCanvasConnections` 的显示条件反转，`node --experimental-strip-types --test gui/test/calibrationChainView.test.ts` 非零退出；finally双向核对并恢复原文。未修改设备与实测数据。
 - 内审F1导航保护、F2普通校准中间节点及同源器件列表均已修正；原启动/停发/采用后端未变。
+
+R1指出两套校准声明不能无条件并集，已换源为原 `getDraftModeConnectionIds`，显式清单优先，旧边标签只在空清单时回退；新增排除边回归。
+
+R1修复后相关53/53通过；复活排除边的逆变异失败并恢复。浏览器四组重跑通过（允许应用自身错误日志上报，不允许仪器/校准写操作）。最终构建在变异恢复后独立执行。

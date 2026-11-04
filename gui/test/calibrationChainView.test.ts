@@ -28,3 +28,8 @@ test('目录存在不是运行就绪；错实验室快照拒绝发布',()=>{
   assert.match(instrumentPresentation(node,categories,report,'lab').resource,/配置模式 mock/)
   assert.match(instrumentPresentation(node,[],report,'lab').resource,/未关联/)
 })
+
+test('显式校准清单优先于旧边标签，不复活已排除连线',()=>{
+  const current={...graph,connections:[...graph.connections,{id:'excluded',modes:['calibration']}]} as SwitchTopology
+  assert.deepEqual(calibrationCanvasConnections(current,['normal'],true),['normal','ref','wire'])
+})

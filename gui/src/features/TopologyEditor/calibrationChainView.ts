@@ -1,3 +1,4 @@
+import { getDraftModeConnectionIds } from './topologyDraft'
 import type { SwitchTopology, TopologyNode } from '../../api/switchTopologyService'
 import type { HALReadinessResponse, InstrumentCategory } from '../../types/api'
 
@@ -6,8 +7,7 @@ export const calibrationNodeTypes = new Set(['reference_antenna', 'signal_analyz
 /** 显示原图的校准声明，不创建连接，也不把声明变成可执行路线。 */
 export function calibrationCanvasConnections(graph: SwitchTopology, normal: string[], visible: boolean) {
   if (!visible) return normal
-  const declared = graph.operating_modes.find(mode => mode.id === 'calibration')?.active_connections ?? []
-  return [...new Set([...normal, ...declared, ...graph.connections.filter(edge => edge.modes?.includes('calibration')).map(edge => edge.id)])]
+  return [...new Set([...normal, ...getDraftModeConnectionIds(graph, 'calibration')])]
 }
 
 export function calibrationNodeVisible(node: TopologyNode, visible: boolean) {
