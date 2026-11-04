@@ -2425,7 +2425,7 @@ class MultiFrequencyPathLossService:
         operating_mode: str = "mimo_ota",
     ) -> Optional[float]:
         """
-        获取指定频率的路损 (支持插值)
+        获取指定实测频点的路损；没有经验证插值域时不推算中间点。
 
         Args:
             chamber_id: 暗室 ID
@@ -2434,7 +2434,7 @@ class MultiFrequencyPathLossService:
             frequency_mhz: 目标频率
 
         Returns:
-            插值后的路损值
+            实测频点的路损值，缺少适用样本时返回 None
         """
         if self.use_mock or lab_profile_id is None:
             return None
@@ -2479,13 +2479,19 @@ class MultiFrequencyPathLossService:
             MultiFrequencyPathLoss.use_mock.is_(False),
             MultiFrequencyPathLoss.valid_until > datetime.utcnow(),
         )
-        calibration = calibration.order_by(desc(MultiFrequencyPathLoss.calibrated_at)).first()
-
-        if not calibration:
-            return None
-
-        # 线性插值
-        freq_points = calibration.frequency_points_mhz
-        path_losses = calibration.path_loss_db
-
-        return float(np.interp(frequency_mhz, freq_points, path_losses))
+        # 起止范围只用于筛选候选，不证明插值适用性。新扫频缺少目标点时，
+        # 继续查找旧的有效实测点，不让新范围遮住旧证据。
+        for candidate in calibration.order_by(desc(MultiFrequencyPathLoss.calibrated_at)):
+            freq_points = candidate.frequency_points_mhz
+            path_losses = candidate.path_loss_db
+            if not isinstance(freq_points, list) or not isinstance(path_losses, list):
+                continue
+            if not freq_points or len(freq_points) != len(path_losses):
+                continue
+            matches = [i for i, point in enumerate(freq_points) if point == frequency_mhz]
+            if len(matches) != 1:
+                continue
+            value = path_losses[matches[0]]
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and np.isfinite(value):
+                return float(value)
+        return None
