@@ -12,6 +12,7 @@ import { buildRouteAcquisitionRequest, buildRouteConfirmation, canAdoptRoute, ro
   routeMatchesSaved, routeForAdoption, routeGraphMatchesSaved, runningRouteIdentity, canReleaseRouteStart, batchChildReady, type RouteFields } from './routeCalibrationState'
 import { RouteBatchPanel } from './RouteBatchPanel'
 import { MockCalibrationResult } from './MockCalibrationResult'
+import { RouteRevocationControl } from './RouteRevocationControl'
 import type { ExplicitMockInput } from '../../types/api'
 
 function failure(error:unknown) {
@@ -115,7 +116,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   const adoptionRoute=routeForAdoption(scope,result,route)
   const allowed=canAdoptRoute(scope,adoptionRoute,preview.data,runId??undefined)&&result?.status==='completed'&&
     batchChildReady(result)&&!preview.isFetching&&!preview.isError&&!preview.isPaused&&!progress.isError&&!busy
-  const display=preview.data?routePreviewDisplay(preview.data):null
+  const display=preview.data&&!preview.isFetching&&!preview.isError&&!preview.isPaused?routePreviewDisplay(preview.data):null
   return <Card withBorder radius={0} data-testid="route-calibration-panel" style={{height:'100%',overflowY:'auto'}}><Stack gap="sm">
     <Title order={4}>通路采集与确认采用</Title>
     <Alert color="blue">单项入口保持固定接线；同图多项入口按服务器清单逐项切换／等待人工。采用整条实测损耗后只作用于适用的新执行；既有执行保持冻结。认证资格未知，不代表DUT功率。</Alert>
@@ -196,7 +197,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
       }catch(error){setInputError(failure(error))}}}>确认采用此实测记录</Button>
       <Button variant="subtle" disabled={busy||preview.isFetching} onClick={()=>{void preview.refetch();void adoptedHistory.refetch()}}>重新读取采用预览与历史</Button>
       {adopt.isError&&<Alert color="red">确认请求未获成功回执：{failure(adopt.error)}。原结果保留，未据此标为已采用；请重新读取预览及采用历史核对服务器是否保存。</Alert>}
-      {adopt.data&&<Alert color="blue">已保存操作员确认采用记录：{adopt.data.id}。适用的新执行将一次使用该值；不是认证通过，也不改变旧执行。</Alert>}
+      {adopt.data&&<Alert color="blue">已保存操作员确认采用记录：{adopt.data.id}。后续选源以服务器当前适用性及撤销状态为准；不是认证通过，也不改变旧执行。</Alert>}
     </Stack></Card>}
     <Text size="xs">执行支持：MIMO-First ASC以waveform方式只补一次；native GCM、外部ASC、B2没有整条参考面消费者，显示不支持／未应用，严格模式在硬件前拒绝。</Text>
     <Title order={5}>采集历史</Title>
@@ -207,7 +208,10 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
     {!history.data?.length&&!history.isError&&<Text size="sm">暂无采集记录。</Text>}
     <Title order={5}>所选通路采用历史</Title>
     {adoptedHistory.isError&&<Alert color="red">采用历史读取失败：{failure(adoptedHistory.error)}</Alert>}
-    {adoptedHistory.data?.map(row=><Text size="xs" key={row.id} style={{overflowWrap:'anywhere'}}>{new Date(row.confirmed_at).toLocaleString()} · {row.selection_snapshot.operating_mode} / {row.frequency_mhz} MHz · {row.net_loss_db.toFixed(2)} dB · 认证资格未知 · 截止{String(row.coverage_snapshot.adoption_valid_until??'未知')} · 采集{row.acquisition_run_id} · 采用{row.id}</Text>)}
+    {!adoptedHistory.isError&&!adoptedHistory.isPaused&&adoptedHistory.data?.map(row=><Card withBorder key={`${labId}:${row.id}`}>
+      <Text size="xs" style={{overflowWrap:'anywhere'}}>{new Date(row.confirmed_at).toLocaleString()} · {row.selection_snapshot.operating_mode} / {row.frequency_mhz} MHz · {row.net_loss_db.toFixed(2)} dB · 认证资格未知 · 截止{String(row.coverage_snapshot.adoption_valid_until??'未知')} · 采集{row.acquisition_run_id} · 采用{row.id}</Text>
+      <RouteRevocationControl labId={labId} record={row} blocked={busy}/>
+    </Card>)}
     {!adoptedHistory.data?.length&&<Text size="sm">当前通路暂无确认采用记录。</Text>}
     {batchPaths.isError&&<Alert color="red">逐项保存路径候选读取失败：{failure(batchPaths.error)}</Alert>}
     <RouteBatchPanel key={`${labId}:${topologyId}:${mode}`} scope={scope} paths={!batchPaths.isError&&!batchPaths.isPaused?batchPaths.data??[]:[]} blocked={busy} onSelectRoute={setBatchRoute} onRunningRoute={onRunningRoute}

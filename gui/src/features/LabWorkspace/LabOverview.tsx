@@ -4,6 +4,7 @@ import { fetchInstrumentCatalog, fetchReadiness } from '../../api/service'
 import { fetchRFChains } from '../../api/labProfileService'
 import { useOperationalLab } from '../OperationalLab'
 import { CalibrationScopeCard } from './CalibrationScopeCard'
+import { RouteAvailabilityCard } from './RouteAvailabilityCard'
 import { F64CalibrationStateCard } from './F64CalibrationStateCard'
 import type { BaseStationBindingPreviewResponse, ChannelEmulatorBindingPreviewResponse } from '../../types/api'
 
@@ -68,6 +69,7 @@ export function LabOverview() {
     </Group>
     <Alert color="blue">默认总览不连接仪器、不同步LabProfile。主动点击“读取 F64 状态”会连接本实验室绑定的 F64 并保存诊断记录；不自动校准，不表示正式测试资格。</Alert>
     <CalibrationScopeCard key={`${labId}:${chamberId}`} labId={labId} chamberId={chamberId} />
+    <RouteAvailabilityCard key={`availability:${labId}:${chamberId}`} labId={labId} />
     <Alert color="blue">固定通路自动采集、历史和确认采用已移至「射频拓扑」原画布侧栏；先保存接线，再选择完整通路。下方人工参考量说明仍保留。</Alert>
     <Card withBorder data-testid="fixed-route-method"><Stack gap="xs">
       <Title order={4}>整条通路测量方法与参考面</Title>
