@@ -22,7 +22,8 @@ const message=(error:unknown)=>{
   return typeof detail==='string'?detail:error instanceof Error?error.message:'请求失败，服务器状态未知'
 }
 
-export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChild,onRunningRoute}:{scope:RouteScope;paths:RouteSelection[];blocked:boolean;
+export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChild,onRunningRoute,preparationVisible=true,reviewVisible=true,onPhaseChange}:{scope:RouteScope;paths:RouteSelection[];blocked:boolean;
+  preparationVisible?:boolean;reviewVisible?:boolean;onPhaseChange?:(phase:'prepare'|'collect'|'review')=>void;
   onSelectRoute:(route:RouteSelection|null)=>void;onInspectChild:(runId:string,route:RouteSelection|undefined)=>void;onRunningRoute:(route:RouteSelection)=>void}) {
   const {beginWork}=useOperationalLab(),cache=useQueryClient(),key=`${scope.labId}:${scope.topologyId}`
   const [activeId,setActiveId]=useState<string|null>(sessions.get(key)?.jobId??null),[viewId,setViewId]=useState<string|null>(null)
@@ -68,10 +69,11 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
   },[scope.graph,scope.mode,scope.dirty])
   useEffect(()=>{setMockEnabled(false);setCsv('');setReferences([]);setIds([]);setViewId(null)},[scope.labId,scope.topologyId,scope.mode])
   useEffect(()=>{
-    if(current&&batchCanRelease(current,childRecords)){setViewId(current.job_id);setActiveId(null);onSelectRoute(null)}
+    if(current&&batchCanRelease(current,childRecords)){onPhaseChange?.('review');setViewId(current.job_id);setActiveId(null);onSelectRoute(null)}
   },[current,children.data,onSelectRoute])
 
   const track=(row:BatchJobRecord)=>{
+    onPhaseChange?.('collect')
     cache.setQueryData(['route-batch',scope.labId,row.job_id],row)
     setActiveId(row.job_id);setUnknown(false)
     let session=sessions.get(key)
@@ -140,7 +142,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     const attempt=batchStartAttempt(old?.attempt??null,body,crypto.randomUUID())
     if(!old)sessions.set(key,{attempt,release:beginWork('route-batch','批量开始回执未确认，禁止切换实验室')})
     else old.attempt=attempt
-    setUnknown(true);start.mutate(attempt)
+    setUnknown(true);onPhaseChange?.('collect');start.mutate(attempt)
   }catch(cause){setError(message(cause))}}
   const frequencyList=frequencies.split(/[,，\s]+/).filter(Boolean).map(Number)
   const formBlocked=blocked||unknown||Boolean(activeId)||scope.dirty||scope.mode!=='mimo_ota'||history.isPending||history.isError
@@ -172,7 +174,9 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     </Stack></Card>
   }
   return <Stack gap="sm" data-testid="route-batch-panel">
-    <Title order={4}>同图多项校准工作台</Title>
+    <div style={{display:preparationVisible?'block':'none'}} data-testid="batch-route-preparation">
+    <Title order={5}>采集清单</Title>
+    <Text size="sm">一条路径、一个频点也是一项清单；可能切换开关，须先核对服务器预览。</Text>
     <Alert color="blue">使用本图保存路径，先完整预览再明确开始。自动切换仅限服务器核验支持的SP6T目标槽；SPDT／未知拒绝。固定直连零开关I/O、无需开关接线声明；换线或移动参考天线等待人工。声明不是RF认证。</Alert>
     <fieldset disabled={formBlocked||preview.isPending} style={{border:0,padding:0,minWidth:0}}><Stack gap="xs">
       <MultiSelect label="批量保存路径" value={ids} data={paths.map(p=>({value:p.chain_id,label:`${p.ce_port} → 探头${p.probe_id}${p.polarization} · ${p.chain_id}`}))}
@@ -229,6 +233,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       <Text size="xs" style={{overflowWrap:'anywhere'}}>预览摘要：{plan.preview_digest}</Text>
       <Button disabled={formBlocked||preview.isPending||Boolean(plan.switch_scope_digest&&(!plan.switch_wiring_confirmation||!request.switch_wiring_confirmation))} loading={start.isPending} onClick={begin}>明确开始此批校准</Button>
     </Stack></Card>}
+    </div>
     {unknown&&!activeId&&<Alert color="yellow"><Text>启动回执未知，空历史不代表未启动。保持请求及UUID不变；锁未释放。</Text>
       <Button loading={start.isPending} disabled={!sessions.get(key)?.attempt} onClick={()=>{const attempt=sessions.get(key)?.attempt;if(attempt)start.mutate(attempt)}}>用同一幂等键重读开始回执</Button></Alert>}
     <Button variant="light" loading={history.isFetching} onClick={()=>{void history.refetch();if(activeId)void active.refetch();if(viewId)void viewed.refetch()}}>读取批历史／恢复活动批</Button>
@@ -248,11 +253,13 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     </Stack></Alert>}
     {activeId&&<Button color="red" loading={cancel.isPending} onClick={()=>cancel.mutate()}>取消批校准并等待真实停发／释放</Button>}
     {history.isError&&<Alert color="red">批历史读取失败：{message(history.error)}；没有据此解锁。</Alert>}
+    <div style={{display:reviewVisible?'block':'none'}} data-testid="batch-route-review">
     <Title order={5}>批历史（不覆盖活动身份）</Title>
-    {history.data?.map(row=><Group key={row.job_id} justify="space-between"><Text size="xs">{row.job_id} · {statusLabels[row.status]}{row.items.some(i=>i.request.mock_input||i.status==='simulated')?' · 模拟演练（非实测）':''}</Text><Button size="xs" variant="subtle" onClick={()=>setViewId(row.job_id)}>只读查看</Button></Group>)}
+    {history.data?.map(row=><Group key={row.job_id} justify="space-between"><Text size="xs">{row.job_id} · {statusLabels[row.status]}{row.items.some(i=>i.request.mock_input||i.status==='simulated')?' · 模拟演练（非实测）':''}</Text><Button size="xs" variant="subtle" onClick={()=>{onPhaseChange?.('review');setViewId(row.job_id)}}>只读查看</Button></Group>)}
     {!history.data?.length&&!history.isError&&<Text size="sm">暂无批历史；不是停发或未启动的证明。</Text>}
     {viewed.isError&&<Alert color="red">只读历史读取失败：{message(viewed.error)}</Alert>}
     {viewed.data&&!viewed.isError&&renderJob(viewed.data,true)}
     {viewed.data&&!viewed.isError&&!viewed.isPaused&&!viewedChildren.isError&&!viewedChildren.isPaused&&<MockCalibrationResult key={`${scope.labId}:${viewId}`} records={(viewedChildren.data??[]).filter(r=>r.lab_profile_id===scope.labId&&viewed.data!.items.some(i=>i.run_id===r.run_id))}/>}
+    </div>
   </Stack>
 }
