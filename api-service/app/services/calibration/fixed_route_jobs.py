@@ -82,14 +82,13 @@ def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest,
     lab = db.get(LabProfile, lab_id)
     if lab is None or not lab.is_active:
         raise ValueError('实验室配置不存在或已停用')
-    if request.mock_input is not None and batch_item_context is None:
+    if batch_item_context is None:
         require_explicit_mock_context(db, lab_id, hal)
     try:
         if batch_item_context is not None:
             from app.services.calibration.route_batch_jobs import validated_batch_item
             item = validated_batch_item(db, lab_id, request, batch_item_context)
-            if request.mock_input is not None:
-                require_explicit_mock_context(db, lab_id, hal, switch_steps=item.switch_steps)
+            require_explicit_mock_context(db, lab_id, hal, switch_steps=item.switch_steps)
             snapshot = build_selected_route_calibration_scope(db, lab_id, request.operating_mode,
                 topology_id=item.route_selection.topology_id, chain_id=item.request.chain_id)
         else:
@@ -159,10 +158,14 @@ def resolve_configuration(db: Session, lab_id: UUID, request: FixedRouteRequest,
     # 是首批支持的F64物理口集合，不接受解析器的历史宽松正整数域。
     if not 1 <= output <= 32:
         raise ValueError('F64输出口必须为1到32')
-    return dict(snapshot=snapshot.model_dump(mode='json'), chain=dict(chain_id=chain.chain_id,ce_port=chain.ce_port,
+    config = dict(snapshot=snapshot.model_dump(mode='json'), chain=dict(chain_id=chain.chain_id,ce_port=chain.ce_port,
         probe_id=chain.probe_id,polarization=chain.polarization), route_selection=chain.model_dump(mode='json'),
         binding=ce_binding.model_dump(mode='json'), analyzer_binding=binding,
-        analyzer_connection_id=str(connection.id), analyzer_instrument_id=sa.instrument_id), output, ce, sa
+        analyzer_connection_id=str(connection.id), analyzer_instrument_id=sa.instrument_id)
+    if request.mock_model:
+        from app.services.calibration.fixed_route_simulation import model_quantities
+        model_quantities(config, request)
+    return config, output, ce, sa
 
 
 def _sequence_evidence(result: FixedRouteResult, duration_ms: int = 0):
@@ -282,6 +285,10 @@ async def _execute(result, token, cancel):
                 raise ValueError('未完成采集配置核对')
             result.configuration, output, ce, sa = selected
             result.states['lease_id'] = lease.lease_id
+            if result.request.mock_model:
+                from app.services.calibration.fixed_route_simulation import prepare_model_record
+                with SessionLocal() as db:
+                    prepare_model_record(db, result)
             await collect_fixed_route(ce, sa, result, output_port=output, cancel=cancel)
         result.states['f64_control_released'] = lease.channel_emulator_transport_released_confirmed
     except (Exception, asyncio.CancelledError) as exc:

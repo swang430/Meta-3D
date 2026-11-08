@@ -33,7 +33,8 @@ async def test_explicit_mock_uses_measured_sample_formula_once(cable,source,want
     assert len(value.samples)==2 and value.net_loss_db==want
     assert value.sample_std_db==(0. if want is not None else None)
     assert value.cleanup_confirmed is None
-    assert all(e.simulated and e.response is None for e in value.exchanges)
+    assert all(e.simulated for e in value.exchanges)
+    assert any(e.response is not None for e in value.exchanges)
 
 
 @pytest.mark.parametrize('value', [True,'-20',float('nan'),float('inf')])

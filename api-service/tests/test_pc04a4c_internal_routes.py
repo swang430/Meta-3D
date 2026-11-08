@@ -11,6 +11,19 @@ from app.services.topology_service import TopologyService
 from tests.test_pc06a1_batch_plan import shared_switch
 
 
+@pytest.fixture
+def batch_hal():
+    from types import SimpleNamespace
+    from app.hal.channel_emulator import MockChannelEmulator
+    from app.hal.signal_analyzer import MockSignalAnalyzer
+    from app.hal.rf_switch import MockRfSwitch
+    return SimpleNamespace(drivers={
+        'channelEmulator': MockChannelEmulator('ce', {}),
+        'signalAnalyzer': MockSignalAnalyzer('sa', {}),
+        'rfSwitch': MockRfSwitch('switch', {}),
+    })
+
+
 def declared(node, pairs=None):
     node['params'].update(ports=['in', 'out'],
         port_directions={'in': 'input', 'out': 'output'},
@@ -401,7 +414,7 @@ def test_pair_changed_before_control_is_rechecked_without_io(
     assert not is_test_lease_active()
 
 
-def test_declared_splitter_is_not_a_simultaneous_or_batch_switch(client, configured, graph, db_session):
+def test_declared_splitter_is_not_a_simultaneous_or_batch_switch(client, configured, graph, db_session, batch_hal):
     from app.services.calibration.route_batch_plan import build_batch_plan
     from tests.test_pc06a1_batch_plan import request_for
     nodes = [dict(id='ce', type='ce_port', label='B1.1', params={}),
@@ -420,7 +433,7 @@ def test_declared_splitter_is_not_a_simultaneous_or_batch_switch(client, configu
     db_session.commit()
     assert paths(client, configured, graph).status_code == 422
     with pytest.raises(ValueError, match='互斥开关'):
-        build_batch_plan(db_session, configured.id, request_for(graph, chains=('v', 'h'), frequencies=(2595.,)), None)
+        build_batch_plan(db_session, configured.id, request_for(graph, chains=('v', 'h'), frequencies=(2595.,)), batch_hal)
 
 
 @pytest.mark.parametrize('fault', ['missing_mapping', 'wrong_pair', 'relay_conflict', 'empty_internal'])

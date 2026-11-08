@@ -32,6 +32,13 @@ class TopologyNode(BaseModel):
         '模板导入仅容旧缺声明，显式错误仍拒绝；声明不授予硬件、实测、校准采用或执行资格。'))
 
 
+class SyntheticCableModel(BaseModel):
+    """人为声明的模拟线缆模型，不是标称参数或实测校准记录。"""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    frequency_mhz: float = Field(strict=True, gt=0, allow_inf_nan=False)
+    loss_db: float = Field(strict=True, ge=0, allow_inf_nan=False)
+
+
 class TopologyConnection(BaseModel):
     id: str
     source: str
@@ -39,6 +46,9 @@ class TopologyConnection(BaseModel):
     target: str
     target_pin: str = "in"
     cable_type: str = ""
+    # 缺键允许且保持缺键；显式null不是合法模型，删除时省略该键。
+    simulation_model: SyntheticCableModel = Field(default=None,
+        description='可省略，不接受null；人为合成的频率与线缆损耗，不是实测或校准资格。')
     cable_loss_db: float | None = Field(default=None, allow_inf_nan=False, description='标称线缆损耗(dB)，null/缺键为未知；显式0为已声明零值，不代表校准实测。新增/变更为有限非负number或null，旧未修改typed字符串沿保形契约。')
     loss_owner_connection_id: str | None = Field(default=None, description='仅显式同线缆两侧引用另一原边量值；持久化不接受null/self/环/半组，缺键沿旧语义，不授予实物或校准资格。')
     pa_gain_db: JsonValue = Field(default=None, description=(

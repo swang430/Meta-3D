@@ -44,7 +44,7 @@ def _record(db,row):
 @router.post(BASE+'/preview',response_model=BatchPlan)
 def preview(lab_profile_id: UUID,request: BatchPlanRequest,db: Session=Depends(get_db)):
     try:
-        return build_batch_plan(db,lab_profile_id,request,get_hal_service() if request.mock_inputs is not None else None)
+        return build_batch_plan(db,lab_profile_id,request,get_hal_service())
     except RouteScopeConflict as exc:
         raise HTTPException(409,str(exc)) from exc
     except LookupError as exc:

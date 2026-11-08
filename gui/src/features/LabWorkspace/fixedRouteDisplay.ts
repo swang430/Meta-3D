@@ -20,7 +20,7 @@ export function fixedRouteStillActive(runId: string | null, record: FixedRouteRe
 export function fixedRouteDisplay(record: FixedRouteRecord) {
   const result = record.result
   const binding = result?.configuration?.binding
-  const explicit=Boolean(result?.request?.mock_input||result?.simulation_input_source)
+  const explicit=Boolean(result?.request?.mock_model||result?.request?.mock_input||result?.simulation_input_source)
   const simulated = explicit || record.status === 'simulated' || (typeof binding === 'object' && binding !== null
     && !Array.isArray(binding) && 'execution_mode' in binding && binding.execution_mode === 'simulated')
   const measured = !simulated && record.status === 'completed' && result?.status === 'completed' && result.cleanup_confirmed === true

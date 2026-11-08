@@ -33,7 +33,7 @@ class BatchSwitchWiringConfirmation(BaseModel):
 
 
 class BatchPlanRequest(BaseModel):
-    model_config=ConfigDict(extra='forbid',frozen=True)
+    model_config=ConfigDict(extra='forbid',frozen=True,json_schema_mode_override='validation')
     topology_id: UUID
     operating_mode: Literal['mimo_ota']='mimo_ota'
     chain_ids: tuple[Text,...]=Field(min_length=1)
@@ -45,6 +45,7 @@ class BatchPlanRequest(BaseModel):
     safety_confirmed: Literal[True]
     preview_digest: str | None=Field(default=None,pattern=r'^[a-f0-9]{64}$')
     switch_wiring_confirmation: BatchSwitchWiringConfirmation | None=None
+    mock_model: Literal['full_route_v1'] | None = None
     mock_inputs: tuple[BatchMockInput,...] | None=Field(default=None,min_length=1)
 
     @field_validator('fixed_route_confirmed','safety_confirmed',mode='before')
@@ -65,7 +66,10 @@ class BatchPlanRequest(BaseModel):
             raise ValueError('每条通路每个频点必须有唯一参考件与线缆来源')
         if self.fixed_route_confirmed is not True or self.safety_confirmed is not True:
             raise ValueError('必须明确确认固定接线和安全条件')
-        if self.mock_inputs is None:
+        if self.mock_model is not None:
+            if self.mock_inputs is not None or any(r.receive_cable_loss_db is not None or r.receive_cable_source is not None for r in self.references):
+                raise ValueError('完整模型模拟与显式样本、手填线缆值互斥')
+        elif self.mock_inputs is None:
             if any(r.receive_cable_loss_db is None or not r.receive_cable_source for r in self.references):
                 raise ValueError('普通批采集每个频点必须有线缆损耗与来源')
         else:

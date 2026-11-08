@@ -332,3 +332,9 @@ def test_batch_output_nested_working_copies_cannot_rewrite_frozen_plan(db_sessio
     restored.items[0].configuration_scope.payload.chains[0].ce_port='B9'
     restored.items[0].switch_steps[0].mapping['output_port']='NC'
     assert restored.model_dump(mode='json')==original
+
+
+@pytest.fixture(autouse=True)
+def internal_plan_only(monkeypatch):
+    """本模块只验证纯计划构造；PC13全Mock公开入口守卫有独立API测试。"""
+    monkeypatch.setattr('app.services.calibration.fixed_route_jobs.require_explicit_mock_context',lambda *a,**k:None)

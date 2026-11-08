@@ -103,6 +103,7 @@ export interface TopologyConnection {
   loss_owner_connection_id?: string;
   pa_gain_db?: JsonValue;
   nominal_metadata?: JsonValue;
+  simulation_model?: JsonValue;
   ce_port?: string;
   switch_port?: string;
   cable_length_m?: number;

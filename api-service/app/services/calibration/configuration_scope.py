@@ -159,13 +159,16 @@ def _build_scope_payload(db,lab_id,mode,resolution,*,selected_route=None):
             graph['selected_chain_id']=selected_route.chain_id
             graph['selected_route_digest']=selected_route.route_digest
         selected_mode = next((m for m in topology.operating_modes or [] if m.get('id') == mode), {})
-        active = set(selected_mode.get('active_connections') or [])
+        # 与保存路径解析同源：空清单按连线的模式声明选择，不能漏掉其模拟参数。
+        active = set(selected_mode.get('active_connections') or [c['id'] for c in topology.connections or []
+            if mode in c.get('modes', [])])
         connections = [c for c in topology.connections or [] if c.get('id') in active]
         node_ids = {c.get(k) for c in connections for k in ('source', 'target')}
         graph['connections'] = _ordered([{k: c.get(k) for k in (
             'id', 'source', 'source_pin', 'target', 'target_pin', 'cable_type', 'cable_length_m',
             'cable_loss_db', 'pa_gain_db', 'switch_port', 'direction', 'calibrated_phase_deg',
             'calibrated_loss_db', 'ce_port')}
+                                         | ({'simulation_model':c['simulation_model']} if 'simulation_model' in c else {})
                                          for c in connections])
         # label 是 CE 端口解析输入，而非纯显示名称；因此保留。
         graph['nodes'] = _ordered([{
