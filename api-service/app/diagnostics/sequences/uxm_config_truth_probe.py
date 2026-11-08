@@ -43,6 +43,7 @@ from app.diagnostics.sequences.uxm_scpi_compatibility import (
     _profile_for_driver,
 )
 from app.services.diagnostic_context import DiagnosticContext
+from app.diagnostics.uxm_error_queue import drain_diagnostic_errors
 
 
 metadata = SequenceMetadata(
@@ -95,6 +96,7 @@ async def run(
 
     profile = _profile_for_driver(bs)
     profile_name = getattr(profile, "PROFILE_NAME", "?")
+    error_query = getattr(profile, "ERR", None)
     status_q_t = getattr(profile, "CELL_STATUS_QUERY", None)
     apply_cmd = getattr(profile, "CONFIG_APPLY", None)
     arfcn_t = getattr(profile, "CELL_DL_ARFCN", None)
@@ -122,7 +124,7 @@ async def run(
 
     async def _err_after(label: str) -> Optional[int]:
         """写动作后读一次错误队列; 返回错误码 (0=干净, None=读不出)。"""
-        raw_e = await _q("SYST:ERR?")
+        raw_e = await _q(error_query)
         code, text = _parse_err(raw_e or "")
         steps.append(SequenceStepResult(
             label=f"{label} → SYST:ERR?",
@@ -140,23 +142,12 @@ async def run(
         ))
         log(f"  {'✓' if success else '✗'} {label}: {detail}")
 
-    # ── 0. 排空错误队列 (先读空, 判据同兄弟序列: None ≠ 干净) ──
-    stale: List[str] = []
-    for _ in range(100):
-        raw_e = await _q("SYST:ERR?")
-        code_e, _t = _parse_err(raw_e or "")
-        if code_e is None:
-            return SequenceRunResult(
-                success=False,
-                steps=steps,
-                summary=(
-                    "开跑前排空错误队列失败: SYST:ERR? 回复读不出错误码 — "
-                    "会话状态未知, 不能带着它做写动作。先跑 uxm_scpi_compatibility 排障。"
-                ),
-            )
-        if code_e == 0:
-            break
-        stale.append(raw_e or "")
+    reads, failure = await drain_diagnostic_errors(_q, error_query)
+    extra["queue_reads"] = reads
+    if failure:
+        return SequenceRunResult(success=False, steps=steps, extra=extra,
+                                 summary=f"开跑前排空错误队列失败: {failure}")
+    stale = reads[:-1]
     if stale:
         extra["stale_errors_cleared"] = stale
         log(f"  · 清掉 {len(stale)} 条遗留错误")
