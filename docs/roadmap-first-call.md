@@ -72,7 +72,9 @@
 - P3-21：已由#568合并21836bfc，统一两个诊断序列的前置排队与profile命令来源，未读到明确空队列不得进入后续动作；见[实施记录](plans/2026-11-08-p3-21-uxm-diagnostic-queue.md)。
 - P3-23：已由#569合并fb5b1827，两次试行复核完成，见[证据与效率边界](plans/2026-11-08-p3-23-trial-review.md)。随后依次做两资料片，前片合并前不开下一功能WIP。
 
-- P2-52/P2-54资料片：本次复核完成；IRAT适用性、错误队列及恢复依据仍缺，保持阻塞。见[厂商待答清单](plans/2026-11-08-uxm-irat-evidence-refresh.md)。不标硬件完成；下一片P1-79E。
+- P2-52/P2-54资料片：已由#570合并c29840bf，本次复核完成；IRAT适用性、错误队列及恢复依据仍缺，保持阻塞。见[厂商待答清单](plans/2026-11-08-uxm-irat-evidence-refresh.md)。不标硬件完成。
+
+- P1-79E资料片：复核取得ASCII VERSION固件读取新依据，但型号recipe及现场版本适用性仍缺，保持Hardware/Vendor-Protocol Blocked；见[新增原文与待答清单](plans/2026-11-08-p1-79e-identity-refresh.md)。本批五项的维护/复核工作已完成，不代表两个厂商/现场阻塞已解除。
 
 ### 2026-10-26 批准：器件参数与物理端口完整性（4a～4e软件已交付）
 
@@ -5856,7 +5858,7 @@ CLAUDE 的 `验证分档与结果复用` / `外审请求与等待`；reviewer �
 | **P1-79B（本片软件修复，PR 合并后关闭）** | `config_confirmed=False` → 签发不了基站站点认证（09-16 无人尝试签发，去签也会被拒）、attempt 生命周期与正式信封返回 `config_not_confirmed` | 配置其实回读了：10 个非空请求字段 7 个 confirmed；`radio_technology` / `channel_kind` / `frequency_mhz` 是冻结描述 / 派生字段，不是独立仪器控制；旧规则却要求它们具有设备回读 | 已从配置回执的必需确认集合移出三个描述字段；冻结 request / compatibility / RAT-aware schema 继续保护这些真值，全部实际控制字段仍须同次权威回读，任一缺失或漂移继续 fail-closed；未新增/修改 SCPI，未改变 manifest/digest/provenance |
 | **P1-79C（本片软件修复，PR 合并后关闭）** | `base_station.pcell.config_applied`、`base_station.throughput.azimuth.NNN` 恒缺失（45.82 Mbps 读到了但没被记成强制证据） | `measure.py` 以 `hasattr` 守着写方，专用 builder 与身份快照只有 UXM 驱动有；记录器本身按 UXM 目录写死 | 已实现 vendor-neutral 共同投影：配置只消费同 attempt/lease/session 的冻结 manifest、配置与 attach 回执；吞吐只消费 cleanup 后持久化的同一窗口与 metric registry。错误仪表、字段缺 proof、模拟/诊断、漂移与畸形现代证据均 fail-closed；执行器不再按 builder 存在性分叉。UXM 共同配置不足时仅保留既有已核验目录兼容回退，CMW500 不借该路径升级；未新增/修改 SCPI、未改变 provenance 白名单 |
 | **P1-79D（软件完成，交付状态以本片 PR 为准）** | 正式判词恒停在 `frequency_identity_not_fully_verified` | 基站侧 `get_frequency_identity` 仅 UXM 有，频率一致性网记 BaseStation「未报告(跳过)」 | 复用现有有 R&S 手册出处的 Band / DL EARFCN / bandwidth 精确回读；仅同次正式配置回执三个 control 均 confirmed 才形成 RAT-aware 身份，失败/取消/旧入口/断连均清旧证明；不新增 SCPI、不从请求或默认缓存补真 |
-| **P1-79E**（= U-8；Hardware/Vendor-Protocol Blocked） | `positioner.azimuth.NNN` 恒 `unknown`（角度回读无误，误差 0.0°） | Aerotech 驱动的身份快照把 `model` / `firmware_version` 写死为 `None`；[2026-09-22 取证](plans/2026-09-22-p1-79e-aerotech-identity-research.md)确认当前取得的 Ensemble 3.04 资料没有可审计且覆盖现场未知型号/固件的只读 recipe | 保持 `unknown`；解除条件 = 厂商给出覆盖现场控制器/版本的同协议只读 recipe，或另行批准并设计 Windows SDK 身份采集子系统；禁止把 Automation1 函数、configured model 或 SDK 安装版本移植为运行时真值 |
+| **P1-79E**（= U-8；Hardware/Vendor-Protocol Blocked） | `positioner.azimuth.NNN` 恒 `unknown`（角度回读无误，误差 0.0°） | Aerotech 驱动的身份快照把 `model` / `firmware_version` 写死为 `None`；[2026-11-08复核](plans/2026-11-08-p1-79e-identity-refresh.md)新获ASCII VERSION固件依据，但完整型号recipe及现场版本适用性仍缺 | 保持 `unknown`；解除条件 = 厂商给出覆盖现场控制器/版本的同协议只读 recipe，或另行批准并设计 Windows SDK 身份采集子系统；禁止把 Automation1 函数、configured model 或 SDK 安装版本移植为运行时真值 |
 
 判「正式」有三层：① 资格 ② 强制证据 ③ ANALYSIS 阶段的 KPI 结论。前两层没有路损 / 校准条件，上述子项都在这两层；第三层按顺序还要过频率身份 → 路损校准 → 吞吐 → RF 指标 → 静区场扫描 —— 子项做完而校准未做时，站点认证签得出、执行可归 formal、证据层通过，但报告 KPI 结论仍 `UNKNOWN`，原因换成路损。候选（不立项）：CMW500 的 RSRP / SINR / RI 无真实来源证据（`rf_kpi_verified=false`），校准启动时再评估。
 
