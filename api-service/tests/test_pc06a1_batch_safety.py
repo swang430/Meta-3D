@@ -279,7 +279,9 @@ async def test_identity_changes_between_items_refuses_second_collect(db_session,
         await task
 
 
-def test_wiring_declaration_is_scoped_to_frozen_bindings_and_changes_preview_digest(db_session,configured,shared_switch):
+def test_wiring_declaration_is_scoped_to_frozen_bindings_and_changes_preview_digest(db_session,configured,shared_switch,monkeypatch):
+    # 纯计划范围测试；公开全Mock准入另有HTTP负例。
+    monkeypatch.setattr('app.services.calibration.fixed_route_jobs.require_explicit_mock_context',lambda *a,**k:None)
     from app.services.calibration.route_batch_plan import build_batch_plan
     from app.schemas import route_batch as schema
     from datetime import datetime, timezone

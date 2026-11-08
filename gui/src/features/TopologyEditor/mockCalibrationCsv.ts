@@ -58,12 +58,14 @@ export function parseMockCalibrationCsv(text:string,selection:{chainIds:string[]
 
 export function exportMockCalibrationCsv(records:FixedRouteRecord[]):string {
  if(!records.length)throw new Error('无服务器演练记录')
- const output:string[][]=[['run_id','lab_profile_id',...columns,'net_loss_db','sample_std_db','expected_delta_db','simulation_input_source','formal_eligible','host_time','time_basis']]
+ const output:string[][]=[['run_id','lab_profile_id',...columns,'net_loss_db','sample_std_db','expected_delta_db','simulation_input_source','formal_eligible','host_time','time_basis','receive_cable_record_id','receive_cable_identity','input_reference_plane','output_reference_plane','receive_cable_observation_json']]
  const encode=(v:unknown,text=false)=>{let s=v==null?'':String(v);if(text&&/^\s*[=+\-@]/.test(s))s="'"+s;return /[,"\r\n]/.test(s)?'"'+s.replaceAll('"','""')+'"':s}
  for(const record of records){
   const result=record.result,mock=fixedRouteDisplay(record).mock
-  if(!record.run_id||!record.lab_profile_id||!result||result.run_id!==record.run_id||result.lab_profile_id!==record.lab_profile_id||!mock||result.simulation_input_source!=='operator_supplied_synthetic'||!result.samples?.length)throw new Error('仅能导出身份一致且具服务器来源及样本的演练结果')
-  result.samples.forEach((s,i)=>output.push([encode(record.run_id,true),encode(record.lab_profile_id,true),encode(result.request.chain_id,true),encode(result.request.frequency_mhz),encode(i+1),encode(s.source_before_dbm),encode(s.received_dbm),encode(s.source_after_dbm),encode(result.request.receive_cable_loss_db),encode(result.request.receive_cable_source,true),encode(mock.expected),encode(mock.netLoss),encode(mock.std),encode(mock.expectedDelta),encode(result.simulation_input_source,true),'false',encode(s.host_time,true),'simulation_processing_time']))
+  if(!record.run_id||!record.lab_profile_id||!result||result.run_id!==record.run_id||result.lab_profile_id!==record.lab_profile_id||!mock||!['operator_supplied_synthetic','model_synthetic'].includes(result.simulation_input_source??'')||result.formal_eligible!==false||!result.samples?.length)throw new Error('仅能导出身份一致且具服务器来源及样本的演练结果')
+  const model=result.simulation_input_source==='model_synthetic',cable=result.receive_cable_calibration
+  if(model&&(!cable||cable.simulated!==true||!cable.run_id||cable.lab_profile_id!==record.lab_profile_id||cable.frequency_mhz!==result.request.frequency_mhz))throw new Error('模型结果缺少身份及频率一致的模拟接收线缆记录')
+  result.samples.forEach((s,i)=>output.push([encode(record.run_id,true),encode(record.lab_profile_id,true),encode(result.request.chain_id,true),encode(result.request.frequency_mhz),encode(i+1),encode(s.source_before_dbm),encode(s.received_dbm),encode(s.source_after_dbm),encode(model?cable!.loss_db:result.request.receive_cable_loss_db),encode(model?cable!.run_id:result.request.receive_cable_source,true),encode(mock.expected),encode(mock.netLoss),encode(mock.std),encode(mock.expectedDelta),encode(result.simulation_input_source,true),'false',encode(s.host_time,true),'simulation_processing_time',encode(model?cable!.run_id:null,true),encode(model?cable!.cable_node_id:null,true),encode(model?cable!.input_reference_plane:null,true),encode(model?cable!.output_reference_plane:null,true),encode(model?JSON.stringify(cable):null,true)]))
  }
  return output.map(row=>row.join(',')).join('\r\n')
 }

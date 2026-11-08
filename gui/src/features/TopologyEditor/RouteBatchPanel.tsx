@@ -32,6 +32,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
   const [fixed,setFixed]=useState(false),[safe,setSafe]=useState(false),[references,setReferences]=useState<BatchReferenceFields[]>([])
   const [plan,setPlan]=useState<BatchPlan|null>(null),[request,setRequest]=useState<BatchPlanRequest|null>(null)
   const [mockEnabled,setMockEnabled]=useState(false),[csv,setCsv]=useState('')
+  const [modelMock,setModelMock]=useState(false)
   const previewRequest=useRef<BatchPlanRequest|null>(null)
   const inputVersion=useRef(0)
   const [operator,setOperator]=useState(''),[note,setNote]=useState(''),[error,setError]=useState('')
@@ -170,7 +171,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
           const record=batchResultRecord(row,item,displayedRecords),shown=record?fixedRouteDisplay(record):null
           return <Table.Tr key={item.item_id}>
             <Table.Td>{item.request.chain_id}<br/>{item.request.frequency_mhz} MHz<br/>{item.request.reference_antenna}</Table.Td>
-            <Table.Td><Text size="sm">{shown?.label??withSimulationMarker(statusLabels[item.status]??'未知',Boolean(item.request.mock_input)||item.status==='simulated')}{index===row.current_index?'（当前项）':''}</Text>
+            <Table.Td><Text size="sm">{shown?.label??withSimulationMarker(statusLabels[item.status]??'未知',Boolean(item.request.mock_input||item.request.mock_model)||item.status==='simulated')}{index===row.current_index?'（当前项）':''}</Text>
               {item.error&&<Text size="xs" c="red">{item.error}</Text>}{record?.result?.error&&<Text size="xs" c="red">{record.result.error}</Text>}
               {record?.result?.missing_items?.map((value,i)=><Text size="xs" c="orange" key={i}>{value}</Text>)}
             </Table.Td>
@@ -187,6 +188,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
   return <Stack gap="sm" data-testid="route-batch-panel">
     <div style={{display:preparationVisible?'block':'none'}} data-testid="batch-route-preparation">
     <Title order={5}>采集清单</Title>
+    <Alert color="yellow">当前仅开放全模拟采集；真实F64场景启动授权及全部输出安全范围尚待核对，不能按本模拟结果操作真机。</Alert>
     <Text size="sm">一条路径、一个频点也是一项清单；可能切换开关，须先核对服务器预览。</Text>
     <Alert color="blue">使用本图保存路径，先完整预览再明确开始。自动切换仅限服务器核验支持的SP6T目标槽；SPDT／未知拒绝。固定直连零开关I/O、无需开关接线声明；换线或移动参考天线等待人工。声明不是RF认证。</Alert>
     <fieldset disabled={formBlocked||preview.isPending} style={{border:0,padding:0,minWidth:0}}><Stack gap="xs">
@@ -195,14 +197,17 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
       <TextInput label="批量频点（MHz，逗号分隔）" value={frequencies} onChange={e=>{clearPreview();setFrequencies(e.currentTarget.value)}}/>
       <TextInput label="批量请求功率（dBm，不作实测值）" value={power} onChange={e=>{clearPreview();setPower(e.currentTarget.value)}}/>
       <TextInput label="每项采样数（2–10）" value={samples} onChange={e=>{clearPreview();setSamples(e.currentTarget.value)}}/>
-      <Checkbox label="批量模拟演练样本（CSV）" checked={mockEnabled} onChange={e=>{clearPreview();setMockEnabled(e.currentTarget.checked);setCsv('')}}/>
+      <Checkbox label="按完整链路模型模拟（非实测）" checked={modelMock} onChange={e=>{clearPreview();setModelMock(e.currentTarget.checked);setMockEnabled(false)}}/>
+      {modelMock&&<Alert color="yellow">仅允许全模拟仪器。接收线缆先生成带来源的模拟校准记录，完整通路引用并去嵌一次；无需输入样本或线损，不能正式采用。</Alert>}
+      <Checkbox label="批量模拟演练样本（CSV）" checked={mockEnabled} onChange={e=>{clearPreview();setMockEnabled(e.currentTarget.checked);setModelMock(false);setCsv('')}}/>
       {ids.flatMap(chainId=>frequencyList.filter(f=>Number.isFinite(f)&&f>0).map(frequency=>{
         const ref=references.find(r=>r.chainId===chainId&&r.frequency===frequency)??{chainId,frequency,antenna:'',cable:'',cableSource:''}
         const change=(field:'antenna'|'cable'|'cableSource',value:string)=>{clearPreview();setReferences(old=>[...old.filter(r=>r.chainId!==chainId||r.frequency!==frequency),{...ref,[field]:value}])}
         return <Card withBorder key={`${chainId}:${frequency}`} padding="xs"><Stack gap="xs"><Text size="sm">{chainId} · {frequency} MHz</Text>
           <TextInput label={`参考天线／位置 ${chainId} @${frequency}`} value={ref.antenna} onChange={e=>change('antenna',e.currentTarget.value)}/>
-          <TextInput label={`接收线损（dB） ${chainId} @${frequency}`} value={ref.cable} readOnly={mockEnabled} onChange={e=>change('cable',e.currentTarget.value)}/>
-          <TextInput label={`接收线依据 ${chainId} @${frequency}`} value={ref.cableSource} readOnly={mockEnabled} onChange={e=>change('cableSource',e.currentTarget.value)}/>
+          <TextInput label={`接收线损（dB） ${chainId} @${frequency}`} value={ref.cable} readOnly={mockEnabled||modelMock} onChange={e=>change('cable',e.currentTarget.value)}/>
+          <TextInput label={`接收线依据 ${chainId} @${frequency}`} value={ref.cableSource} readOnly={mockEnabled||modelMock} onChange={e=>change('cableSource',e.currentTarget.value)}/>
+          {modelMock&&<Text size="xs">手填线损不参与模型模拟，以服务器关联线缆记录为准。</Text>}
           {mockEnabled&&<Text size="xs" c="dimmed">接收线损与依据由CSV提供，为只读；修改CSV后重新预览。</Text>}
         </Stack></Card>
       }))}
@@ -221,7 +226,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
           const imported=parseMockCalibrationCsv(csv,{chainIds:ids,frequenciesMhz:frequencyList,sampleCount:Number(samples),referenceAntennas:antennas})
           matrix=imported.mockInputs;refs=imported.references.map(r=>({chainId:r.chain_id,frequency:r.frequency_mhz,antenna:r.reference_antenna,cable:r.receive_cable_loss_db==null?'':String(r.receive_cable_loss_db),cableSource:r.receive_cable_source??''}))
         }
-        const body=buildBatchRequest(scope,paths,ids,frequencyList,refs,{power,samples,fixed,safe},matrix??undefined)
+        const body=buildBatchRequest(scope,paths,ids,frequencyList,refs,{power,samples,fixed,safe},matrix??undefined,modelMock)
         if(mockEnabled)setReferences(refs)
         preview.mutate(body)
       }catch(cause){setError(message(cause))}}}>预览完整批清单</Button>
@@ -266,7 +271,7 @@ export function RouteBatchPanel({scope,paths,blocked,onSelectRoute,onInspectChil
     {history.isError&&<Alert color="red">批历史读取失败：{message(history.error)}；没有据此解锁。</Alert>}
     <div style={{display:reviewVisible?'block':'none'}} data-testid="batch-route-review">
     <details data-testid="batch-history"><summary>批历史（只读查看，不覆盖活动身份）</summary>
-    {history.data?.map(row=><Group key={row.job_id} justify="space-between"><Text size="xs">{row.job_id} · {statusLabels[row.status]}{row.items.some(i=>i.request.mock_input||i.status==='simulated')?' · 模拟演练（非实测）':''}</Text><Button size="xs" variant="subtle" onClick={()=>{onPhaseChange?.('review');setViewId(row.job_id)}}>只读查看</Button></Group>)}
+    {history.data?.map(row=><Group key={row.job_id} justify="space-between"><Text size="xs">{row.job_id} · {statusLabels[row.status]}{row.items.some(i=>i.request.mock_input||i.request.mock_model||i.status==='simulated')?' · 模拟演练（非实测）':''}</Text><Button size="xs" variant="subtle" onClick={()=>{onPhaseChange?.('review');setViewId(row.job_id)}}>只读查看</Button></Group>)}
     {!history.data?.length&&!history.isError&&<Text size="sm">暂无批历史；不是停发或未启动的证明。</Text>}
     </details>
     {viewed.isError&&<Alert color="red">只读历史读取失败：{message(viewed.error)}</Alert>}

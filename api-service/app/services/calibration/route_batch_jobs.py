@@ -281,6 +281,12 @@ async def _pause_failure(ident,value,item,active,error):
     value.update(status='running',transition_id=None)
 
 
+def _simulation_cleanup_confirmed(result):
+    """只供模拟编排继续/取消，不赋予真机停止确认或正式采用资格。"""
+    return (result.states.get('measurement_provenance')=='simulated' and
+            result.states.get('simulated_cleanup_confirmed') is True)
+
+
 async def _execute(ident,token,active):
     results=[];lease=None;value=None
     try:
@@ -332,13 +338,17 @@ async def _execute(ident,token,active):
                     progress=value['items'][index]
                     progress.update(status='measuring',run_id=str(result.run_id))
                     _commit_progress(ident,value,result)
+                    if result.request.mock_model:
+                        from app.services.calibration.fixed_route_simulation import prepare_model_record
+                        with SessionLocal() as db:
+                            prepare_model_record(db,result)
                     await collect_fixed_route(ce,sa,result,output_port=output,cancel=active.cancel)
                     # collect的tone收尾不构成外层Remote释放。
                     result.states['f64_control_released']=None
                     if result.status=='cancelled': active.cancel.set()
                     progress.update(status=result.status,error=result.error)
                     _commit_progress(ident,value,result)
-                    if result.status=='cleanup_unconfirmed' or (result.status!='simulated' and result.cleanup_confirmed is not True):
+                    if result.status=='cleanup_unconfirmed' or (not _simulation_cleanup_confirmed(result) and result.cleanup_confirmed is not True):
                         value.update(status='cleanup_unconfirmed',error=result.error or '可能仍在发射；本项tone停止未确认，禁止换线或继续')
                         break
                     if result.status not in ('completed','simulated'):
@@ -364,9 +374,9 @@ async def _execute(ident,token,active):
                 value['f64_control_released']=released
                 clean=all(r.cleanup_confirmed is True for r in results)
                 value['all_started_cleanup_confirmed']=clean
-                if results and not clean and any(r.status!='simulated' for r in results):
+                if results and not clean and any(not _simulation_cleanup_confirmed(r) for r in results):
                     value['status']='cleanup_unconfirmed'
-                if (lease is not None and (released is False or (results and any(r.status!='simulated' for r in results) and released is not True))
+                if (lease is not None and (released is False or (results and any(not _simulation_cleanup_confirmed(r) for r in results) and released is not True))
                     and value['status']!='cleanup_unconfirmed'):
                     value['status']='cleanup_unconfirmed'
                 if value['status']=='cleanup_unconfirmed':

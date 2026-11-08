@@ -24,7 +24,7 @@ def real_capture(client, configured, db_session, monkeypatch):
         ce=RealPropsimF64Driver('ce-real-script',{'ip':'192.0.2.10'})
         sa=RealRsFsvaDriver('sa-real-script',{'ip':'192.0.2.10'})
         ce_resource=_ScriptedVisaResource({'*IDN?':'Keysight Technologies,F8800A,SN-CE,8.0',
-            'SYSTem:ERRor?':'0,"No error"','DIAG:SIMU:STATE?':'RUNNING',
+            'SYSTem:ERRor?':'0,"No error"','DIAG:SIMU:STATE?':'STOPPED','*OPC?':'1',
             'OUTPut:INTERFerence:GET?':'0',f'OUTPut:LOSS:GET? {output}':'0',
             f'OUTPut:MEASure:RESult:GET? {output},1':source,'SYSTem:CALIBration:VALid?':'1,1',
             'SYSTem:CALIBration:USER:GET?':'','OUTPut:GAIN:CH? 1':'0'})
@@ -32,6 +32,12 @@ def real_capture(client, configured, db_session, monkeypatch):
             'SENSe:CORRection:TRANsducer:CATalog?':catalog,
             'SENSe:CORRection:TRANsducer:STATe?':'0','INITiate:IMMediate; *OPC?':'1',
             'CALCulate:MARKer:FUNCtion:POWer:RESult? CPOWer':received})
+        original_write=ce_resource.write
+        def stateful_write(command):
+            original_write(command)
+            if command=='DIAG:SIMU:GO': ce_resource._replies['DIAG:SIMU:STATE?']='RUNNING'
+            elif command=='DIAG:SIMU:STOP': ce_resource._replies['DIAG:SIMU:STATE?']='STOPPED'
+        ce_resource.write=stateful_write
         ce._visa_resource,sa._visa_session=ce_resource,sa_resource
         ce._status=InstrumentStatus.READY;ce._local_control_reserved=False;ce.has_interference_generator=True
         hal=SimpleNamespace(drivers={'channelEmulator':ce,'signalAnalyzer':sa})
@@ -40,19 +46,31 @@ def real_capture(client, configured, db_session, monkeypatch):
         monkeypatch.setattr(jobs,'instrument_test_lease',lease.hold)
         configured.instrument_bindings=[{**binding,'driver_mode':'real'} for binding in configured.instrument_bindings]
         db_session.query(InstrumentCategory).update({'driver_mode':'real'});db_session.commit()
-        response=start(client,configured)
-        assert response.status_code==202,response.text
-        value=finish(client,configured,response.json()['run_id'])
-        # 用显式字符串保留失败原因，避免pytest把整个封套dict的关键error截断。
-        # 只输出本fixture脚本化交换，不输出绑定/连接配置或请求参考件原文。
-        assert value['status']=='completed',json.dumps({
-            'run_id':value.get('run_id'),'status':value.get('status'),
-            'error':(value.get('result') or {}).get('error'),
-            'cleanup_confirmed':(value.get('result') or {}).get('cleanup_confirmed'),
-            'failed_exchanges':[event for event in (value.get('result') or {}).get('exchanges',[]) if event.get('error')],
-            'recent_exchanges':(value.get('result') or {}).get('exchanges',[])[-8:],
-        },ensure_ascii=False)
-        return db_session.get(DiagnosticRun,UUID(value['run_id']))
+        # PC13公开真实入口关闭；本fixture通过内部事务构造历史真实证据，
+        # 不再以公开启动接口成功来证明资格。仅外部传输脚本化。
+        import asyncio
+        from uuid import uuid4
+        from unittest.mock import patch
+        from app.schemas.fixed_route_acquisition import FixedRouteResult, FixedRouteRequest
+        from app.services.calibration.fixed_route_acquisition import _collect_fixed_route_transaction
+        from app.services.calibration.configuration_scope import build_calibration_scope
+        from tests.test_pc_04a_fixed_route_acquisition import request
+        class HistoricalRequestBuilder:
+            def get(self,*args,**kwargs): return client.get(*args,**kwargs)
+            def post(self,url,*,json): return FixedRouteRequest.model_validate(json)
+        body=start(HistoricalRequestBuilder(),configured)
+        with patch.object(jobs,'require_explicit_mock_context',lambda *a,**k:None):
+            config,port,_,_=jobs.resolve_configuration(db_session,configured.id,body,hal)
+        result=FixedRouteResult(version=2,run_id=uuid4(),lab_profile_id=configured.id,request=body,configuration=config)
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            executor.submit(asyncio.run,_collect_fixed_route_transaction(ce,sa,result,output_port=port,cancel=asyncio.Event())).result()
+        assert result.status=='completed',result.error
+        result.states['f64_control_released']=True
+        row=jobs.build_record_row(result)
+        jobs.save_record_result(row,result)
+        db_session.add(row);db_session.commit()
+        return row
     return capture
 
 

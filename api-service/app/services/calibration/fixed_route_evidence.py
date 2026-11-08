@@ -10,8 +10,8 @@ from app.schemas.route_calibration import RouteSelection
 
 
 def has_explicit_mock_input(result: FixedRouteResult) -> bool:
-    return (result.request.mock_input is not None or
-            result.simulation_input_source == 'operator_supplied_synthetic')
+    return (result.request.mock_input is not None or result.request.mock_model is not None or result.receive_cable_calibration is not None or
+            result.simulation_input_source in ('operator_supplied_synthetic', 'model_synthetic'))
 
 
 def check_fixed_route_evidence(result: FixedRouteResult) -> tuple[str,list[str]]:
@@ -85,8 +85,8 @@ def check_fixed_route_evidence(result: FixedRouteResult) -> tuple[str,list[str]]
         require(len(powers)==2*len(result.samples),'missing_source_measurements')
         states=[(i,e) for i,e in ce if e.command==state_command]
         losses=[(i,e) for i,e in ce if e.command==loss_command]
-        require(len(states)==2 and all(e.response=='RUNNING' for _,e in states) and
-            states[0][0]<powers[0][0] and states[-1][0]>powers[-1][0],'unverified_running_window')
+        require(len(states)==4 and [e.response for _,e in states]==['STOPPED','RUNNING','RUNNING','STOPPED'] and
+            states[1][0]<powers[0][0] and states[2][0]>powers[-1][0],'unverified_running_window')
         require(len(losses)==2 and all(equal(e.response,0) for _,e in losses) and
             losses[0][0]<powers[0][0] and losses[-1][0]>powers[-1][0],'unverified_output_loss')
         tone_id='pc04_'+result.run_id.hex
@@ -101,10 +101,15 @@ def check_fixed_route_evidence(result: FixedRouteResult) -> tuple[str,list[str]]
             cursor=iter(rows)
             for command in expected:
                 require(any(event.command==command for _,event in cursor),'missing_measurement_setup')
-        ordered_commands([(i,e) for i,e in ce if i<powers[0][0]],tone)
+        require(states[0][0]<tone_start,'missing_stopped_before_add')
+        ordered_commands([(i,e) for i,e in ce if i<powers[0][0]],tone+['DIAG:SIMU:GO','*OPC?',state_command])
+        completion=[(i,e) for i,e in ce if e.command=='*OPC?']
+        require(len(completion)==2 and all(e.response=='1' for _,e in completion) and
+            tone_start<completion[0][0]<states[1][0] and states[2][0]<completion[1][0]<states[3][0],
+            'unverified_start_stop_completion')
         # 原采集收尾依据User Reference §20.4.9.3/.2，只验证本run唯一单音的禁用/移除证据。
         ordered_commands([(i,e) for i,e in ce if i>powers[-1][0]],
-            [f'OUTPut:INTERFerence:STatus {tone_id},0',f'OUTPut:INTERFerence:REMove {tone_id}'])
+            [f'OUTPut:INTERFerence:STatus {tone_id},0','DIAG:SIMU:STOP','*OPC?',state_command,f'OUTPut:INTERFerence:REMove {tone_id}'])
         for index,sample in enumerate(result.samples):
             before,after=powers[index*2],powers[index*2+1]
             require(equal(before[1].response,sample.source_before_dbm) and equal(after[1].response,sample.source_after_dbm),'source_sample_mismatch')

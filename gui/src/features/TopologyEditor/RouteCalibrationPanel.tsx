@@ -42,6 +42,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
   const [inputError,setInputError]=useState(''),[deadline,setDeadline]=useState('')
   const [values,setValues]=useState<RouteFields>({frequency:'',power:'',antenna:'',cable:'',cableSource:'',samples:'5',fixed:false,safe:false})
   const [mockEnabled,setMockEnabled]=useState(false),[expected,setExpected]=useState('')
+  const [modelMock,setModelMock]=useState(false)
   const [mockSamples,setMockSamples]=useState<{before:string;received:string;after:string}[]>([])
   useEffect(()=>{setMockEnabled(false);setExpected('');setMockSamples([]);setRunId(null);setChainId(null)},[labId,topologyId,mode])
   const mounted=useRef(true),tracking=useRef<string|null>(null),pendingRelease=useRef<(()=>void)|null>(null)
@@ -134,6 +135,7 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
     {dirty&&<Alert color="yellow">拓扑草稿未保存：先保存，再选择服务器完整通路；不会采集旧图而高亮草稿。</Alert>}
     {mode==='calibration'&&<Alert color="blue">此模式用于编辑参考接线。请切回正常测试模式选择完整待测通路；历史记录身份不随模式改变。</Alert>}
     <div style={{display:phase==='prepare'&&method==='fixed'?'block':'none'}} data-testid="fixed-route-preparation">
+    <Alert color="yellow">自动采集当前仅开放全模拟仪器。真实F64须补齐已加载场景、全部输出及启动授权核对，尚未开放；安全确认不替代这些证据。</Alert>
     <Select label="完整校准通路" placeholder="选择已保存的CE→探头通路" searchable value={activeRunId?activeSnapshot?.chain_id??null:chainId}
       disabled={busy||dirty||saving||mode==='calibration'||paths.isFetching}
       data={(activeRunId?(activeSnapshot?[activeSnapshot]:[]):paths.data)?.map(row=>({value:row.chain_id,label:`${row.ce_port} → 探头${row.probe_id} ${row.polarization} · ${row.chain_id}${activeSnapshot?'（本次冻结）':''}`}))??[]}
@@ -156,11 +158,13 @@ export function RouteCalibrationPanel({labId,topologyId,mode,dirty,saving,revisi
       const mockInput:ExplicitMockInput|undefined=mockEnabled?{samples:Array.from({length:Number(values.samples)},(_,i)=>{
         const s=mockSamples[i]??{before:'',received:'',after:''};return {source_before_dbm:number(s.before),received_dbm:number(s.received),source_after_dbm:number(s.after)}
       }),expected_loss_db:expected.trim()?number(expected):null}:undefined
-      const body=buildRouteAcquisitionRequest(scope,route,values,mockInput);setInputError('');cancel.reset();adopt.reset();start.mutate(body)
+      const body=buildRouteAcquisitionRequest(scope,route,values,mockInput,modelMock);setInputError('');cancel.reset();adopt.reset();start.mutate(body)
     }catch(error){setInputError(failure(error))}}}>
       <fieldset disabled={busy||saving||dirty||history.isPending||history.isError||!routeMatchesSaved(scope,route)} style={{border:0,padding:0,margin:0,minWidth:0}}>
-        <FixedRouteAcquisitionFields values={values} onChange={(key,value)=>{setValues(old=>({...old,[key]:value}));setRunId(null);setInputError('')}}/>
-        <Checkbox mt="sm" label="模拟演练样本" checked={mockEnabled} onChange={e=>{setMockEnabled(e.currentTarget.checked);setMockSamples([]);setExpected('');setRunId(null)}}/>
+        <FixedRouteAcquisitionFields modelMock={modelMock} values={values} onChange={(key,value)=>{setValues(old=>({...old,[key]:value}));setRunId(null);setInputError('')}}/>
+        <Checkbox mt="sm" label="按完整链路模型模拟（非实测）" checked={modelMock} onChange={e=>{setModelMock(e.currentTarget.checked);setMockEnabled(false);setRunId(null)}}/>
+        {modelMock&&<Alert color="yellow">仅允许全模拟仪器。按保存的完整链路执行控制流程，先生成模拟接收线缆记录，再采样；所有量值均为合成，不可正式采用。</Alert>}
+        <Checkbox mt="sm" label="模拟演练样本" checked={mockEnabled} onChange={e=>{setMockEnabled(e.currentTarget.checked);setModelMock(false);setMockSamples([]);setExpected('');setRunId(null)}}/>
         {mockEnabled&&<Stack gap="xs" mt="xs"><Alert color="yellow">操作员自备合成样本，非实测。expected仅计算差值；缺接收线损或来源时只留样本，不计算损耗。</Alert>
           {Array.from({length:Math.max(0,Math.min(10,Number(values.samples)||0))},(_,i)=><Card withBorder key={i} padding="xs"><Text size="sm">模拟样本{i+1}</Text>
             {(['before','received','after'] as const).map((key,j)=><TextInput key={key} label={`样本${i+1} ${['源前','接收','源后'][j]}功率（dBm）`} type="number" step="any" value={mockSamples[i]?.[key]??''} onChange={e=>{const value=e.currentTarget.value;setRunId(null);setMockSamples(old=>{const next=[...old];next[i]={...(next[i]??{before:'',received:'',after:''}),[key]:value};return next})}}/>)}</Card>)}

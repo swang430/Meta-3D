@@ -48,6 +48,7 @@ import { useOperationalLab, useOperationalLabSwitchGuard } from '../OperationalL
 import { customNodeTypes } from './CustomNodes';
 import { customEdgeTypes, ReadOnlySignalEdge } from './CustomEdges';
 import {NominalPropertyFields} from './NominalPropertyFields';
+import {SimulationModelFields,simulationModelValid,simulationQuantityForNode} from './SimulationModelFields';
 import {PortDeclarationFields} from './PortDeclarationFields';
 import {InternalPathFields} from './InternalPathFields';
 import {LegacyConversionPanel} from './LegacyConversionPanel';
@@ -384,7 +385,7 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
   }, [selectedEdge]);
 
   const applyConnectionEdit = useCallback(() => {
-    if (!selectedEdge || !edgeNominalValid || !cableNominalValid) return;
+    if (!selectedEdge || !edgeNominalValid || !cableNominalValid || !simulationModelValid(selectedEdge.simulation_model,'loss_db')) return;
     if (changeDraft(current=>updateDraftConnection(current,selectedEdge))) {
       setNumericDeclarations(current=>mergeConnectionDeclarations(current,selectedEdge.id,edgeNumericDeclarations));
       setEdgeNumericDeclarations([]);
@@ -558,6 +559,8 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
   };
   const applyNodeEdit = () => {
     if (!selectedNode || !nodeNominalValid || isWriteBlocked()) return;
+    const quantity=simulationQuantityForNode(selectedNode.type);
+    if(quantity&&!simulationModelValid(selectedNode.params.simulation_model,quantity))return;
     const ports = portText.split(/[,，\n]/).map(p=>p.trim()).filter(Boolean);
     if (!selectedNode.label.trim() || (portsExplicit&&(!ports.length || new Set(ports).size!==ports.length))) {
       notifications.show({color:'red',message:'请填写器件名称，以及不重复的端口名称'}); return;
@@ -746,7 +749,11 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
             onRestore={()=>{if(isWriteBlocked())return;const original=draft.nodes.find(n=>n.id===selectedNode.id);if(!original)return;
               const params={...selectedNode.params};if(Object.hasOwn(original.params,'internal_paths'))params.internal_paths=original.params.internal_paths;else delete params.internal_paths;
               setSelectedNode({...selectedNode,params})}}/>
-          {['cable','receive_cable'].includes(selectedNode.type)&&<Text size="xs">A/B是同一物理线缆两端，可按实际名称修改；须点击应用才成为端口声明。损耗仅在相邻连线编辑，不在器件重复计入。</Text>}
+          {['cable','receive_cable'].includes(selectedNode.type)&&<Text size="xs">A/B是同一物理线缆两端，可按实际名称修改；须点击应用才成为端口声明。标称损耗仅在相邻连线编辑，不在器件重复计入；下方模拟损耗是独立合成模型。</Text>}
+          {simulationQuantityForNode(selectedNode.type)&&<SimulationModelFields quantity={simulationQuantityForNode(selectedNode.type)!}
+            value={selectedNode.params.simulation_model} disabled={editingBlocked} onChange={value=>{if(isWriteBlocked())return;
+              const params={...selectedNode.params};if(value===undefined)delete params.simulation_model;else params.simulation_model=value;
+              setSelectedNode({...selectedNode,params})}}/>}
           <NominalPropertyFields key={selectedNode.id} fields={nominalFieldsForNode(selectedNode.type)} values={selectedNode.params}
             metadata={selectedNode.params.nominal_metadata} disabled={editingBlocked} onValidityChange={setNodeNominalValid}
             onChange={(key,value,metadata)=>{if(!isWriteBlocked())setSelectedNode(current=>current?setNodeNominal(current,key,value,metadata):null)}}/>
@@ -775,7 +782,7 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
                 switch_mappings:[...declaration.switch_mappings.filter((m:{node_id:string})=>m.node_id!==node.id),{node_id:node.id,path_name:e.currentTarget.value}]}}})}}/>)}
           </Stack>}
           <Alert color="blue">此处只声明拓扑接线。自动控制和正式校准资格由采集入口另行核验。</Alert>
-          <Group><Button onClick={applyNodeEdit} disabled={editingBlocked||!nodeNominalValid}>应用器件修改</Button><Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>deleteNodes([selectedNode.id])}>删除器件</Button></Group>
+          <Group><Button onClick={applyNodeEdit} disabled={editingBlocked||!nodeNominalValid||Boolean(simulationQuantityForNode(selectedNode.type)&&!simulationModelValid(selectedNode.params.simulation_model,simulationQuantityForNode(selectedNode.type)!))}>应用器件修改</Button><Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>deleteNodes([selectedNode.id])}>删除器件</Button></Group>
         </Stack>}
       </Drawer>
 
@@ -899,6 +906,9 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
               metadata={selectedEdge.nominal_metadata} disabled={editingBlocked} onValidityChange={setEdgeNominalValid}
               onChange={(key,value,metadata)=>{if(!isWriteBlocked())setSelectedEdge(current=>current?setEdgeNominal(current,key,value,metadata):null)}}/>
             <Text size="xs" c="dimmed">旧PA按精确边ID定位，不自动创建PA器件或切换模式。标称净值仅供显示，非实测；保存标称不等于采用校准，数值修改可能触发原通路一致性复核。</Text>
+            <SimulationModelFields quantity="loss_db" value={selectedEdge.simulation_model} disabled={editingBlocked}
+              onChange={value=>{if(isWriteBlocked())return;setSelectedEdge(current=>{if(!current)return null;const next={...current};
+                if(value===undefined)delete next.simulation_model;else next.simulation_model=value;return next})}}/>
             <Divider label="校准数据 (只读)" labelPosition="center" />
 
             <TextInput
@@ -919,7 +929,7 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
             <Group justify="flex-end" mt="md">
               <Button variant="outline" onClick={() => {setDrawerOpen(false);setEdgeNumericDeclarations([]);}}>取消</Button>
               <Button color="red" variant="outline" disabled={editingBlocked} onClick={()=>{if(changeDraft(current=>removeDraftConnections(current,[selectedEdge.id])))setDrawerOpen(false);}}>删除连线</Button>
-              <Button onClick={applyConnectionEdit} disabled={editingBlocked||!edgeNominalValid||!cableNominalValid}>应用修改</Button>
+              <Button onClick={applyConnectionEdit} disabled={editingBlocked||!edgeNominalValid||!cableNominalValid||!simulationModelValid(selectedEdge.simulation_model,'loss_db')}>应用修改</Button>
             </Group>
           </Stack>
           );

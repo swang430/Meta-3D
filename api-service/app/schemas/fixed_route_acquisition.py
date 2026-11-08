@@ -24,7 +24,7 @@ class ExplicitMockInput(BaseModel):
 
 
 class FixedRouteRequest(BaseModel):
-    model_config = ConfigDict(extra='forbid')
+    model_config = ConfigDict(extra='forbid', json_schema_mode_override='validation')
     chain_id: Text
     configuration_digest: str = Field(pattern=r'^[a-f0-9]{64}$')
     topology_id: UUID | None = None
@@ -40,9 +40,13 @@ class FixedRouteRequest(BaseModel):
     safety_confirmed: Literal[True] = Field(description='操作员已确认专用校准仿真、固定接线、无其它混入信号及允许功率')
     sample_count: int = Field(default=5, ge=2, le=10, strict=True)
     mock_input: ExplicitMockInput | None = None
+    mock_model: Literal['full_route_v1'] | None = None
 
     @model_validator(mode='after')
     def explicit_sample_count(self):
+        if self.mock_model is not None and (self.mock_input is not None or
+                self.receive_cable_loss_db is not None or self.receive_cable_source is not None):
+            raise ValueError('完整模型模拟与显式样本、手填线缆值互斥')
         if self.mock_input is not None and len(self.mock_input.samples) != self.sample_count:
             raise ValueError('模拟样本数必须等于本次sample_count')
         return self
@@ -72,6 +76,23 @@ class FixedRouteSample(BaseModel):
     host_time: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class SimulatedReceiveCableRecord(BaseModel):
+    """仅合成数据模型产生的接收线缆观测；不是VNA命令或校准资格。"""
+    model_config = ConfigDict(extra='forbid', frozen=True)
+    run_id: UUID
+    lab_profile_id: UUID
+    cable_node_id: Text
+    frequency_mhz: Number = Field(gt=0)
+    input_reference_plane: Text
+    output_reference_plane: Text
+    source_power_dbm: Number
+    received_power_dbm: Number
+    loss_db: Number
+    formula: Text
+    simulated: Literal[True] = True
+    method: Literal['synthetic_receive_cable_v1'] = 'synthetic_receive_cable_v1'
+
+
 class FixedRouteResult(BaseModel):
     model_config = ConfigDict(extra='forbid')
     version: Literal[1, 2] = 1
@@ -90,7 +111,8 @@ class FixedRouteResult(BaseModel):
     missing_items: list[str] = Field(default_factory=lambda: ['仪器绝对准确度、参考件证书及完整不确定度预算仍需现场核验；本记录不签发校准资格'])
     method: Literal['fixed_route_port_to_reference_v1'] = 'fixed_route_port_to_reference_v1'
     formal_eligible: Literal[False] = False
-    simulation_input_source: Literal['operator_supplied_synthetic'] | None = None
+    receive_cable_calibration: SimulatedReceiveCableRecord | None = None
+    simulation_input_source: Literal['operator_supplied_synthetic', 'model_synthetic'] | None = None
 
     @model_validator(mode='after')
     def require_version2_route_snapshot(self):

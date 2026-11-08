@@ -30,14 +30,14 @@ def test_request_rejects_coerced_power_and_nonboolean_safety_confirmation(field,
         FixedRouteRequest.model_validate(payload)
 
 
-def instruments(*, receive='-50', state='RUNNING', loss='0', source='-20', stop_error=False):
+def instruments(*, receive='-50', state='STOPPED', loss='0', source='-20', stop_error=False):
     ce = RealPropsimF64Driver('ce-test', {'ip': '127.0.0.1'})
     ce.has_interference_generator = True
     sa = RealRsFsvaDriver('sa-test', {'ip': '127.0.0.2'})
     writes, queries = [], []
     ce_errors, sa_errors = [], []
     replies = {'*IDN?': 'Keysight Technologies,F8800A,SN-CE,8.0',
-        'DIAG:SIMU:STATE?': state, 'OUTPut:LOSS:GET? 1': loss,
+        'DIAG:SIMU:STATE?': state, '*OPC?': '1', 'OUTPut:LOSS:GET? 1': loss,
         'OUTPut:MEASure:RESult:GET? 1,1': source, 'OUTPut:INTERFerence:GET?': '0',
         'SYSTem:CALIBration:VALid?': '1,1', 'SYSTem:CALIBration:USER:GET?': '',
         'SYSTem:CALIBration:GET?': 'auto-1', 'OUTPut:GAIN:CH? 1': '0'}
@@ -54,6 +54,8 @@ def instruments(*, receive='-50', state='RUNNING', loss='0', source='-20', stop_
 
     async def write(command):
         writes.append(('ce', command))
+        if command=='DIAG:SIMU:GO': replies['DIAG:SIMU:STATE?']='RUNNING'
+        if command=='DIAG:SIMU:STOP': replies['DIAG:SIMU:STATE?']='STOPPED'
         if stop_error and command.startswith('OUTPut:INTERFerence:STatus ') and command.endswith(',0'):
             ce_errors.append('-200,"stop rejected"')
 
@@ -84,7 +86,7 @@ async def collect(ce, sa, monkeypatch, cancel=None):
     monkeypatch.setattr(module, '_settle', settle)
     result = FixedRouteResult(run_id=uuid4(), lab_profile_id=uuid4(), request=request(),
         configuration={'chain_id': 'conn_p0v', 'ce_port': 'B1.1'})
-    return await module.collect_fixed_route(ce, sa, result, output_port=1, cancel=cancel or asyncio.Event())
+    return await module._collect_fixed_route_transaction(ce, sa, result, output_port=1, cancel=cancel or asyncio.Event())
 
 
 @pytest.mark.parametrize('receive,want', [('-50', 28), ('-10', -12)])
@@ -105,7 +107,7 @@ async def test_real_command_chain_computes_from_measured_power_not_requested_pow
     assert not any('ROUT' in command or '*RST' in command for _, command in writes)
 
 
-@pytest.mark.parametrize('changes', [{'state': 'STOPPED'}, {'loss': '2'}, {'source': 'not ready'},
+@pytest.mark.parametrize('changes', [{'state': 'RUNNING'}, {'loss': '2'}, {'source': 'not ready'},
     {'receive': 'nan'}, {'source': TimeoutError('no result')}])
 async def test_unknown_stopped_and_nonfinite_never_produce_loss(monkeypatch, changes):
     ce, sa, writes, _, _ = instruments(**changes)
@@ -154,8 +156,9 @@ async def test_mock_uses_same_commands_without_inventing_measurements(monkeypatc
     value = await collect(MockChannelEmulator('ce', {}), MockSignalAnalyzer('sa', {}), monkeypatch)
     assert value.status == 'simulated'
     assert not value.samples and value.net_loss_db is None
-    assert all(e.simulated and e.response is None for e in value.exchanges)
-    assert any(e.command == 'OUTPut:MEASure:RESult:GET? 1,1' for e in value.exchanges)
+    assert all(e.simulated for e in value.exchanges)
+    assert any(e.response is not None for e in value.exchanges)
+    assert any(e.command == 'DIAG:SIMU:GO' for e in value.exchanges)
     assert value.formal_eligible is False
 
 

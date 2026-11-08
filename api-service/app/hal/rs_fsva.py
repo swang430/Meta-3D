@@ -335,89 +335,8 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             return False
 
     def capture_fixed_route_power(self, frequency_hz: float, exchanges: list) -> float:
-        """PC-04完整同步事务；不把其它应用/IQ单位移植到绝对功率。
-
-        FSV/A3000手册1178.8520.02─16 p883～885：完整单次结束后CPOWer
-        才有效，log尺度返回当前单位；p1340～1341：检查全部存储换能修正的启用状态。
-        """
-        import csv
-        from app.schemas.fixed_route_acquisition import PowerExchange
-        with self._scpi_rlock:
-            def query(command):
-                event = PowerExchange(instrument_id=self.instrument_id, command=command)
-                exchanges.append(event)
-                try:
-                    event.response = self._query(command)
-                    if not isinstance(event.response, str):
-                        raise ValueError(f'分析仪回复缺失：{command}')
-                    return event.response.strip()
-                except Exception as exc:
-                    event.error = str(exc)
-                    raise
-
-            def errors():
-                # p1386 SYSTem:ERRor[:NEXT]?：每条回复保留，未知或非零不能判成功。
-                entries = []
-                for _ in range(20):
-                    raw = query(FsvaScpi.ERR)
-                    if int(raw.split(',', 1)[0]) == 0:
-                        if entries:
-                            raise ValueError('分析仪错误队列：' + '; '.join(entries))
-                        return
-                    entries.append(raw)
-                raise ValueError('分析仪错误队列未排尽')
-
-            def write(command):
-                event = PowerExchange(instrument_id=self.instrument_id, command=command)
-                exchanges.append(event)
-                try:
-                    self._write(command)
-                    errors()
-                except Exception as exc:
-                    event.error = str(exc)
-                    raise
-
-            try:
-                errors()
-                identity = query('*IDN?')  # p867：厂家、型号、序列号、版本。
-                errors()
-                model = identity.split(',')[1].strip() if len(identity.split(',')) == 4 else ''
-                if not model.startswith('FSVA3') or not model[5:].isdigit():
-                    raise ValueError('实际分析仪不是本方法已核对的FSVA3000系列')
-                for command in fixed_route_spectrum_commands(frequency_hz):
-                    if command == FsvaScpi.TRIG:
-                        # 不用*OPC?单独判成功：随后完整消费错误队列。
-                        if query(command) != '1':
-                            raise ValueError('分析仪单次测量未确认完成')
-                        errors()
-                    elif command == FsvaScpi.READ_CHP:
-                        raw = query(command)
-                        errors()
-                        power = float(raw)
-                        if not math.isfinite(power):
-                            raise ValueError('分析仪功率不是有限数值')
-                        return power
-                    else:
-                        write(command)
-                        if command.startswith('INSTrument:'):
-                            # p1339～1341：目录前两项为存储量，其后文件大小/文件名成对。
-                            catalog = query('SENSe:CORRection:TRANsducer:CATalog?')
-                            errors()
-                            parts = next(csv.reader([catalog], quotechar="'", skipinitialspace=True))
-                            if len(parts) < 2 or len(parts) % 2:
-                                raise ValueError('分析仪修正目录回复不完整')
-                            for name in parts[3::2]:
-                                if not name or "'" in name or '\n' in name:
-                                    raise ValueError('分析仪修正名称不可安全选择')
-                                write(f"SENSe:CORRection:TRANsducer:SELect '{name}'")
-                                enabled = query('SENSe:CORRection:TRANsducer:STATe?')
-                                errors()
-                                if enabled != '0':
-                                    raise ValueError('分析仪启用了外部换能修正，不能冒充输入口功率')
-            except Exception as exc:
-                self._abort_failed_measurement('固定通路功率采集', exc)
-                raise
-        raise RuntimeError('分析仪未取得功率')
+        """复用同一设置、查询、错误检查及失败中止事务。"""
+        return capture_fixed_route_power(self, frequency_hz, exchanges)
 
     async def measure_channel_power(self, bandwidth_hz: float) -> float:
         """
@@ -927,3 +846,89 @@ class RealRsFsvaDriver(SignalAnalyzerDriver):
             return self._visa_session.query(cmd)
         finally:
             self._scpi_rlock.release()
+
+
+def capture_fixed_route_power(transport, frequency_hz: float, exchanges: list, *, simulated: bool = False) -> float:
+    """PC-04完整同步事务；不把其它应用/IQ单位移植到绝对功率。
+
+    FSV/A3000手册1178.8520.02─16 p883～885：完整单次结束后CPOWer
+    才有效，log尺度返回当前单位；p1340～1341：检查全部存储换能修正的启用状态。
+    """
+    import csv
+    from app.schemas.fixed_route_acquisition import PowerExchange
+    with transport._scpi_rlock:
+        def query(command):
+            event = PowerExchange(instrument_id=transport.instrument_id, command=command, simulated=simulated)
+            exchanges.append(event)
+            try:
+                event.response = transport._query(command)
+                if not isinstance(event.response, str):
+                    raise ValueError(f'分析仪回复缺失：{command}')
+                return event.response.strip()
+            except Exception as exc:
+                event.error = str(exc)
+                raise
+
+        def errors():
+            # p1386 SYSTem:ERRor[:NEXT]?：每条回复保留，未知或非零不能判成功。
+            entries = []
+            for _ in range(20):
+                raw = query(FsvaScpi.ERR)
+                if int(raw.split(',', 1)[0]) == 0:
+                    if entries:
+                        raise ValueError('分析仪错误队列：' + '; '.join(entries))
+                    return
+                entries.append(raw)
+            raise ValueError('分析仪错误队列未排尽')
+
+        def write(command):
+            event = PowerExchange(instrument_id=transport.instrument_id, command=command, simulated=simulated)
+            exchanges.append(event)
+            try:
+                transport._write(command)
+                errors()
+            except Exception as exc:
+                event.error = str(exc)
+                raise
+
+        try:
+            errors()
+            identity = query('*IDN?')  # p867：厂家、型号、序列号、版本。
+            errors()
+            model = identity.split(',')[1].strip() if len(identity.split(',')) == 4 else ''
+            if not model.startswith('FSVA3') or not model[5:].isdigit():
+                raise ValueError('实际分析仪不是本方法已核对的FSVA3000系列')
+            for command in fixed_route_spectrum_commands(frequency_hz):
+                if command == FsvaScpi.TRIG:
+                    # 不用*OPC?单独判成功：随后完整消费错误队列。
+                    if query(command) != '1':
+                        raise ValueError('分析仪单次测量未确认完成')
+                    errors()
+                elif command == FsvaScpi.READ_CHP:
+                    raw = query(command)
+                    errors()
+                    power = float(raw)
+                    if not math.isfinite(power):
+                        raise ValueError('分析仪功率不是有限数值')
+                    return power
+                else:
+                    write(command)
+                    if command.startswith('INSTrument:'):
+                        # p1339～1341：目录前两项为存储量，其后文件大小/文件名成对。
+                        catalog = query('SENSe:CORRection:TRANsducer:CATalog?')
+                        errors()
+                        parts = next(csv.reader([catalog], quotechar="'", skipinitialspace=True))
+                        if len(parts) < 2 or len(parts) % 2:
+                            raise ValueError('分析仪修正目录回复不完整')
+                        for name in parts[3::2]:
+                            if not name or "'" in name or '\n' in name:
+                                raise ValueError('分析仪修正名称不可安全选择')
+                            write(f"SENSe:CORRection:TRANsducer:SELect '{name}'")
+                            enabled = query('SENSe:CORRection:TRANsducer:STATe?')
+                            errors()
+                            if enabled != '0':
+                                raise ValueError('分析仪启用了外部换能修正，不能冒充输入口功率')
+        except Exception as exc:
+            transport._abort_failed_measurement('固定通路功率采集', exc)
+            raise
+    raise RuntimeError('分析仪未取得功率')

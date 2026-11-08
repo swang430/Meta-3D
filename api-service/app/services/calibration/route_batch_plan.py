@@ -70,14 +70,17 @@ def build_batch_plan(db: Session,lab_id: UUID,request: BatchPlanRequest,hal) -> 
                 requested_power_dbm=request.requested_power_dbm,reference_antenna=ref.reference_antenna,
                 receive_cable_loss_db=ref.receive_cable_loss_db,receive_cable_source=ref.receive_cable_source,
                 fixed_route_confirmed=request.fixed_route_confirmed,safety_confirmed=request.safety_confirmed,
-                sample_count=request.sample_count,mock_input=mock_input)
+                sample_count=request.sample_count,mock_input=mock_input,mock_model=request.mock_model)
+            if child.mock_model:
+                from app.services.calibration.fixed_route_simulation import model_quantities
+                binding=next((b for b in lab.instrument_bindings or [] if b.get('category_id')==route.analyzer_category_id),{})
+                model_quantities({'route_selection':route.model_dump(mode='json'),'analyzer_binding':binding},child)
             items.append(BatchPlanItem(item_id=_digest([chain,frequency]),request=child,route_selection=route,
                 configuration_scope=scope,switch_steps=steps,transition_kind='manual',
                 transition_reasons=('核对本项参考天线位置与接线；自动资格须由本次作业严格写读核验',)))
-    if request.mock_inputs is not None:
-        from app.services.calibration.fixed_route_jobs import require_explicit_mock_context
-        for item in items:
-            require_explicit_mock_context(db,lab_id,hal,switch_steps=item.switch_steps)
+    from app.services.calibration.fixed_route_jobs import require_explicit_mock_context
+    for item in items:
+        require_explicit_mock_context(db,lab_id,hal,switch_steps=item.switch_steps)
     # 批复用同一物理CE只能由同继电器不同位置的互斥保存映射实现，不把分配器当开关。
     from app.hal.propsim_f64 import RealPropsimF64Driver
     for index,(route,steps) in enumerate(selected):

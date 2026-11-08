@@ -10,6 +10,19 @@ from tests.test_pc04a10_source_boundary import boundary_graph, edge
 from tests.test_pc06a1_batch_plan import request_for, shared_switch
 
 
+@pytest.fixture
+def batch_hal():
+    from types import SimpleNamespace
+    from app.hal.channel_emulator import MockChannelEmulator
+    from app.hal.signal_analyzer import MockSignalAnalyzer
+    from app.hal.rf_switch import MockRfSwitch
+    return SimpleNamespace(drivers={
+        'channelEmulator': MockChannelEmulator('ce', {}),
+        'signalAnalyzer': MockSignalAnalyzer('sa', {}),
+        'rfSwitch': MockRfSwitch('switch', {}),
+    })
+
+
 def save_boundary(graph, db, *, explicit=False, pa=False, ce_type='ce_port'):
     nodes, edges = boundary_graph(explicit=explicit, pa=pa, ce_type=ce_type)
     # 参考测量段沿用独立out端；不能让不相关的结构缺项遮蔽本片源端门。
@@ -29,7 +42,7 @@ def save_boundary(graph, db, *, explicit=False, pa=False, ce_type='ce_port'):
 @pytest.mark.parametrize('pa', [False, True])
 @pytest.mark.parametrize('ce_type', ['ce_port', 'channel_emulator'])
 def test_legal_input_reaches_http_scope_batch_and_formal_freeze_without_upstream_loss(
-        client, configured, graph, db_session, explicit, pa, ce_type):
+        client, configured, graph, db_session, batch_hal, explicit, pa, ce_type):
     from app.services.calibration.route_calibration import resolve_explicit_route_selection
     from app.services.calibration.configuration_scope import build_selected_route_calibration_scope
     from app.services.calibration.route_batch_plan import build_batch_plan
@@ -52,7 +65,7 @@ def test_legal_input_reaches_http_scope_batch_and_formal_freeze_without_upstream
     scope = build_selected_route_calibration_scope(db_session, configured.id, 'mimo_ota',
         topology_id=graph.id, chain_id='terminal')
     assert scope.configuration_complete, scope.warnings
-    plan = build_batch_plan(db_session, configured.id, request_for(graph, chains=('terminal',), frequencies=(2595.,)), None)
+    plan = build_batch_plan(db_session, configured.id, request_for(graph, chains=('terminal',), frequencies=(2595.,)), batch_hal)
     assert plan.items[0].route_selection.connection_ids == expected
     actual = orchestrate_switch_topology(db_session, configured.chamber_config_id)
     assert actual.success and len(actual.probe_bindings) == 1
@@ -131,11 +144,19 @@ def test_structural_draft_save_is_not_promoted_to_complete_mode_runtime_gate(cli
     assert 'ce.input1' in runtime.json()['detail']
 
 
-def test_independent_input_does_not_relax_simultaneous_vs_serial_resource_gate(configured, shared_switch, db_session):
+def test_independent_input_does_not_relax_simultaneous_vs_serial_resource_gate(configured, shared_switch, db_session, batch_hal):
     from app.services.calibration.route_calibration import list_route_selections, list_individual_route_selections
     from app.services.calibration.route_batch_plan import build_batch_plan
     from app.services.mimo_ota.switch_orchestrator import orchestrate_switch_topology
     topology, connection = shared_switch
+    from app.models.instrument import InstrumentCategory
+    # 本例验证物理资源互斥，批预览参与仪器须有一致的全Mock上下文。
+    db_session.get(InstrumentCategory, connection.category_id).driver_mode = 'mock'
+    configured.instrument_bindings = [
+        {**binding, 'driver_mode': 'mock'}
+        if binding['category_id'] == str(connection.category_id) else binding
+        for binding in configured.instrument_bindings
+    ]
     nodes, edges, modes = copy.deepcopy(topology.nodes), copy.deepcopy(topology.connections), copy.deepcopy(topology.operating_modes)
     nodes[0]['params'].update(ports=['in', 'out'], port_directions={'in': 'input', 'out': 'output'})
     nodes.append(dict(id='bse', type='bse_port', params={'ports': ['DL'], 'port_roles': {'DL': 'dl'}}))
@@ -148,7 +169,7 @@ def test_independent_input_does_not_relax_simultaneous_vs_serial_resource_gate(c
     topology.nodes, topology.connections, topology.operating_modes = nodes, edges, modes
     db_session.commit()
     assert {r.chain_id for r in list_individual_route_selections(db_session, configured.id, topology.id, 'mimo_ota')} == {'ov', 'oh'}
-    assert len(build_batch_plan(db_session, configured.id, request_for(topology, frequencies=(2595.,)), None).items) == 2
+    assert len(build_batch_plan(db_session, configured.id, request_for(topology, frequencies=(2595.,)), batch_hal).items) == 2
     with pytest.raises(ValueError):
         list_route_selections(db_session, configured.id, topology.id, 'mimo_ota')
     with pytest.raises(ValueError):

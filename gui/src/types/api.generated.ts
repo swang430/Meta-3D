@@ -4455,7 +4455,7 @@ export interface components {
         TopologyConversionCommit: {
             /** Source Digest */
             source_digest: string;
-            changes: components["schemas"]["TopologyConversionRequest"];
+            changes: components["schemas"]["TopologyConversionRequest-Input"];
         };
         /** TopologyConversionRequest */
         TopologyConversionRequest: {
@@ -4701,6 +4701,8 @@ export interface components {
              * @default
              */
             cable_type: string;
+            /** @description 可省略，不接受null；人为合成的频率与线缆损耗，不是实测或校准资格。 */
+            simulation_model?: components["schemas"]["SyntheticCableModel"];
             /**
              * Cable Loss Db
              * @description 标称线缆损耗(dB)，null/缺键为未知；显式0为已声明零值，不代表校准实测。新增/变更为有限非负number或null，旧未修改typed字符串沿保形契约。
@@ -4898,6 +4900,8 @@ export interface components {
             /** Preview Digest */
             preview_digest?: string | null;
             switch_wiring_confirmation?: components["schemas"]["BatchSwitchWiringConfirmation"] | null;
+            /** Mock Model */
+            mock_model?: "full_route_v1" | null;
             /** Mock Inputs */
             mock_inputs?: components["schemas"]["BatchMockInput"][] | null;
         };
@@ -4951,7 +4955,7 @@ export interface components {
             item_id: string;
             request: components["schemas"]["FixedRouteRequest"];
             route_selection: components["schemas"]["RouteSelection"];
-            configuration_scope: components["schemas"]["CalibrationScopeSnapshot"];
+            configuration_scope: components["schemas"]["CalibrationScopeSnapshot-Output"];
             /**
              * Switch Steps
              * @default []
@@ -5395,6 +5399,62 @@ export interface components {
              */
             sample_count: number;
             mock_input?: components["schemas"]["ExplicitMockInput"] | null;
+            /** Mock Model */
+            mock_model?: "full_route_v1" | null;
+        };
+        /**
+         * SimulatedReceiveCableRecord
+         * @description 仅合成数据模型产生的接收线缆观测；不是VNA命令或校准资格。
+         */
+        SimulatedReceiveCableRecord: {
+            /**
+             * Run Id
+             * Format: uuid
+             */
+            run_id: string;
+            /**
+             * Lab Profile Id
+             * Format: uuid
+             */
+            lab_profile_id: string;
+            /** Cable Node Id */
+            cable_node_id: string;
+            /** Frequency Mhz */
+            frequency_mhz: number;
+            /** Input Reference Plane */
+            input_reference_plane: string;
+            /** Output Reference Plane */
+            output_reference_plane: string;
+            /** Source Power Dbm */
+            source_power_dbm: number;
+            /** Received Power Dbm */
+            received_power_dbm: number;
+            /** Loss Db */
+            loss_db: number;
+            /** Formula */
+            formula: string;
+            /**
+             * Simulated
+             * @default true
+             * @constant
+             */
+            simulated: true;
+            /**
+             * Method
+             * @default synthetic_receive_cable_v1
+             * @constant
+             */
+            method: "synthetic_receive_cable_v1";
+        };
+        /**
+         * SyntheticCableModel
+         * @description 人为声明的模拟线缆模型，不是标称参数或实测校准记录。
+         */
+        SyntheticCableModel: {
+            /** Frequency Mhz */
+            frequency_mhz: number;
+            /** Loss Db */
+            loss_db: number;
         };
         /** FixedRouteResult */
         FixedRouteResult: {
@@ -5455,8 +5515,9 @@ export interface components {
              * @constant
              */
             formal_eligible: false;
+            receive_cable_calibration?: components["schemas"]["SimulatedReceiveCableRecord"] | null;
             /** Simulation Input Source */
-            simulation_input_source?: "operator_supplied_synthetic" | null;
+            simulation_input_source?: ("operator_supplied_synthetic" | "model_synthetic") | null;
         };
         /** FixedRouteSample */
         FixedRouteSample: {
@@ -5899,10 +5960,6 @@ export interface components {
             msg: string;
             /** Error Type */
             type: string;
-            /** Input */
-            input?: unknown;
-            /** Context */
-            ctx?: Record<string, never>;
         };
         F64RuntimeSnapshot: {
             /** Format: date-time */
@@ -7717,6 +7774,35 @@ export interface components {
             state_file?: string | null;
             compatible_test_apps?: string[] | null;
             notes?: string | null;
+        };
+        /** CalibrationScopeSnapshot */
+        "CalibrationScopeSnapshot-Output": {
+            payload: components["schemas"]["CalibrationScopePayload"];
+            /** Digest */
+            digest: string;
+            /**
+             * Physical Identity
+             * @default unverified
+             * @constant
+             */
+            physical_identity: "unverified";
+            /**
+             * Formal Eligible
+             * @default false
+             * @constant
+             */
+            formal_eligible: false;
+            /** Configuration Complete */
+            configuration_complete: boolean;
+            /** Warnings */
+            warnings: string[];
+        };
+        /** TopologyConversionRequest */
+        "TopologyConversionRequest-Input": {
+            /** Nodes */
+            nodes?: components["schemas"]["ConversionNodeEdit"][];
+            /** Connections */
+            connections?: components["schemas"]["ConversionConnectionEdit"][];
         };
     };
     responses: never;

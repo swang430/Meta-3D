@@ -216,7 +216,7 @@ def test_acquisition_running_and_terminal_are_readable_in_shared_diagnostic_hist
             assert envelope['duration_ms'] > 0
 
 
-def test_real_http_lease_and_real_driver_transport_keeps_measured_source_not_setting(client, configured, db_session, monkeypatch):
+def test_real_http_refuses_unverified_whole_scene_before_lease(client, configured, db_session, monkeypatch):
     from app.services.calibration import fixed_route_jobs as jobs
     from app.hal.propsim_f64 import RealPropsimF64Driver
     from app.hal.rs_fsva import RealRsFsvaDriver
@@ -248,14 +248,10 @@ def test_real_http_lease_and_real_driver_transport_keeps_measured_source_not_set
     db_session.query(InstrumentCategory).update({'driver_mode':'real'})
     db_session.commit()
     response = start(client, configured)
-    assert response.status_code == 202, response.text
-    value = finish(client, configured, response.json()['run_id'])
-    assert value['status'] == 'completed', value
-    assert value['result']['net_loss_db'] == 23  # -25 - (-50+2)，不能用请求-20得到28。
-    assert value['result']['cleanup_confirmed'] is True
-    assert 'OUTPut:MEASure:RESult:GET? 1,1' in ce_resource.commands
-    assert any(command.endswith(',0') and ':STatus ' in command for command in ce_resource.commands)
-    assert ce_resource.closed and not lease.is_active
+    assert response.status_code == 422, response.text
+    assert 'mock' in response.text.lower()
+    assert ce_resource.commands == []
+    assert not lease.is_active
 
 
 def test_live_checked_openapi_and_generated_types_cover_all_pc04_routes():

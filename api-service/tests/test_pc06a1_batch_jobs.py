@@ -30,7 +30,7 @@ def runtime(db_session, configured, monkeypatch):
     ce=RealPropsimF64Driver('ce-real-script',{'ip':'192.0.2.10'})
     sa=RealRsFsvaDriver('sa-real-script',{'ip':'192.0.2.10'})
     ce._visa_resource=_ScriptedVisaResource({'*IDN?':'Keysight Technologies,F8800A,SN-CE,8.0',
-        'SYSTem:ERRor?':'0,"No error"','DIAG:SIMU:STATE?':'RUNNING','OUTPut:INTERFerence:GET?':'0',
+        'SYSTem:ERRor?':'0,"No error"','DIAG:SIMU:STATE?':'STOPPED','*OPC?':'1','OUTPut:INTERFerence:GET?':'0',
         'OUTPut:LOSS:GET? 1':'0','OUTPut:LOSS:GET? 2':'0',
         'OUTPut:MEASure:RESult:GET? 1,1':'-30','OUTPut:MEASure:RESult:GET? 2,1':'-30',
         'SYST:INFO?':SYS_INFO_WITH_INT,
@@ -38,6 +38,16 @@ def runtime(db_session, configured, monkeypatch):
         'OUTPut:GAIN:CH? 1':'0','OUTPut:GAIN:CH? 2':'0'})
     monkeypatch.setattr('pyvisa.ResourceManager',lambda *a,**k:_ScriptedRM(ce._visa_resource or reconnect_resource))
     reconnect_resource=ce._visa_resource
+    original_write=ce._visa_resource.write
+    def stateful_write(command):
+        original_write(command)
+        if command=='DIAG:SIMU:GO': reconnect_resource._replies['DIAG:SIMU:STATE?']='RUNNING'
+        elif command=='DIAG:SIMU:STOP': reconnect_resource._replies['DIAG:SIMU:STATE?']='STOPPED'
+    reconnect_resource.write=stateful_write
+    from app.services.calibration.fixed_route_acquisition import _collect_fixed_route_transaction
+    # 仅测试内部编排及事务，PC13公开入口不授权真实启动。
+    monkeypatch.setattr(single,'require_explicit_mock_context',lambda *a,**k:None)
+    monkeypatch.setattr(jobs,'collect_fixed_route',_collect_fixed_route_transaction)
     sa._visa_session=_ScriptedVisaResource({'*IDN?':'Rohde&Schwarz,FSVA3044,SN-SA,1.0',
         'SENSe:CORRection:TRANsducer:CATalog?':"0,0",'SENSe:CORRection:TRANsducer:STATe?':'0',
         'INITiate:IMMediate; *OPC?':'1','CALCulate:MARKer:FUNCtion:POWer:RESult? CPOWer':'-60'})
