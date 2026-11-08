@@ -1,6 +1,36 @@
 // playwright-cli --session pc04a4e run-code --filename；输入 localStorage 的本片manifest与URL stage。
 // 仅DOM/真实鼠标/真实HTTP；不访问React内部，不替换API响应。
 async page => {
+  // 只通过现有模式/显示控件与真实画布点击；未归属模式的历史边不得补归属。
+  function connectionModes(graph,id){
+    return graph.operating_modes.filter(m=>(m.active_connections?.length?m.active_connections:graph.connections.filter(c=>c.modes?.includes(m.id)).map(c=>c.id)).includes(id));
+  }
+  async function showAuxiliary(){
+    const expand=page.getByRole('button',{name:'展开辅助区',exact:true});
+    if(await expand.isVisible())await expand.click();
+  }
+  async function openCanvasConnection(graph,id){
+    await page.locator('.mantine-Drawer-overlay').waitFor({state:'hidden'});
+    const modes=connectionModes(graph,id);
+    if(!modes.length)throw new Error(`连线${id}未纳入任何模式；只能核对原值保形，不能自动补归属`);
+    await showAuxiliary();
+    const select=page.getByRole('textbox',{name:'操作模式',exact:true});
+    const currentMode=await select.inputValue(),mode=modes.find(m=>m.name===currentMode)||modes[0];
+    if(await select.inputValue()!==mode.name){await select.click();await page.getByRole('option',{name:mode.name,exact:true}).click()}
+    await page.getByRole('button',{name:'定位全图',exact:true}).click();
+    const point=await(await page.waitForFunction(id=>{
+      const group=Array.from(document.querySelectorAll('.react-flow__edge,.topology-readonly-edge')).find(e=>e.getAttribute('data-id')===id);
+      const path=group?.querySelector('.react-flow__edge-interaction')??group?.querySelector('path');
+      const matrix=path?.getScreenCTM();if(!matrix)return null;
+      for(const f of [.2,.3,.4,.6,.7,.8]){const p=path.getPointAtLength(path.getTotalLength()*f),x=matrix.a*p.x+matrix.c*p.y+matrix.e,y=matrix.b*p.x+matrix.d*p.y+matrix.f;
+        if(document.elementFromPoint(x,y)?.closest('.react-flow__edge,.topology-readonly-edge')===group)return{x,y}}
+      return null;
+    },id)).jsonValue();
+    await page.mouse.click(point.x,point.y);
+    await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).getByText(id,{exact:true}).waitFor();
+    return mode;
+  }
+
   const manifest = await page.evaluate(()=>JSON.parse(localStorage.getItem('pc04a4e.manifest')));
   if(!manifest?.all_category_and_lab_bindings_mock)throw Error('缺少已核Mock manifest');
   const origin = new URL(page.url()).origin, stage = new URL(page.url()).searchParams.get('stage')||'inventory';
@@ -13,7 +43,7 @@ async page => {
   let graphId=stage==='caict'?lab.source_topology_id:stage.startsWith('legacy')?lab.legacy_topology_id:lab.display_topology_id;
   const read=()=>request('get',endpoint(graphId));
   const shot=async(name)=>{const path=`output/playwright/pc04a4e-${stage}-${attempt}-${name}.png`;await page.screenshot({path,fullPage:true,animations:'disabled'});return path};
-  const enter=async()=>{await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();await page.locator('.react-flow').first().waitFor()};
+  const enter=async()=>{await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();await page.locator('.react-flow').first().waitFor();await showAuxiliary()};
   const selectSwitch=async(category)=>{await page.getByRole('textbox',{name:'射频开关设备',exact:true}).click();await page.getByRole('option').filter({hasText:category}).click()};
   const reload=async()=>{await page.reload();await enter();await selectSwitch(stage==='caict'?'PC04A4eCAICT源图':stage.startsWith('legacy')?'PC04A4e历史参考图':'射频开关');};
   const drawer=page.getByRole('dialog',{name:'器件属性',exact:true});
@@ -61,7 +91,7 @@ async page => {
       }
     } else if(stage==='caict') {
       eq(graphId,lab.caict_display_topology_id,'原CAICT源/展示不同');const edge=initial.connections.find(e=>e.pa_gain_db!==null&&e.pa_gain_db!==undefined);check(edge,'无旧PA边');
-      const locate=async()=>{await page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true}).fill(edge.id);await page.getByRole('option').filter({hasText:edge.id}).click();await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor()};
+      const locate=async()=>openCanvasConnection(initial,edge.id);
       for(const value of [0,14.5,null]){await locate();await page.getByLabel('旧PA标称增益 (dB)',{exact:true}).fill('1');await page.getByLabel('旧PA标称增益 (dB)',{exact:true}).fill(value===null?'':String(value));await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('E10隔离声明，非实测');await shot('pa-'+value);await page.getByRole('button',{name:'应用修改',exact:true}).click();const after=await save();eq(after.connections.find(e=>e.id===edge.id).pa_gain_db,value,'原PA未保存');eq(after.nodes,initial.nodes,'PA改了节点');await reload();checks.push({id:'E10-原PA',source_topology_id:graphId,display_topology_id:graphId,request_topology_id:graphId,edge_id:edge.id,value,after});}
     } else if(stage==='conversion'||stage==='owner') {
       const changes=stage==='conversion'?[['ce','channel_emulator'],['bse_port','communication_tester'],['sa_port','signal_analyzer']]:[['wire-out','wire-in'],['wire-out','__remove__']];
@@ -177,7 +207,7 @@ async page => {
       check(jobs[0].job_id!==jobs[1].job_id,'批重入复用job');
     } else if(stage==='legacy-metadata') {
       const edge=initial.connections.find(e=>e.id==='pa-reference-edge');
-      await page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true}).fill(edge.id);await page.getByRole('option').filter({hasText:edge.id}).click();
+      await openCanvasConnection(initial,edge.id);
       const dialog=page.getByRole('dialog',{name:'连线参数编辑',exact:true});await dialog.waitFor();check((await dialog.innerText()).includes('旧值格式未核实'),'旧字符串未提示');
       await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('E07仅metadata，保留旧字符串/缺键');await page.getByRole('button',{name:'应用修改',exact:true}).click();const after=await save();await reload();checks.push({id:'E07-metadata-only旧字符串及缺键',before:initial,after,screenshot:await shot('metadata-only')});
     } else if(stage==='legacy') {
