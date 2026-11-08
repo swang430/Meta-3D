@@ -64,6 +64,13 @@
 
 ## 🎯 Current Focus
 
+### 2026-11-08 批准：非 PC 维护与资料取证
+
+用户批准连续完成，WIP=1：P3-20 → P3-21 → P3-23 → P2-52/P2-54 UXM资料复核 → P1-79E资料复核。原维护池不自动启动的限制由本次明确授权取代；不恢复HOLD硬件动作、不扩充候选池。资料片交付可核对结论及缺口，不以调研完成冒充硬件验收。
+
+- P3-20：删除无调用的旧编排器导入/导出方法，保留其他服务同名方法；本片实施与验证见[记录](plans/2026-11-08-p3-20-dead-transfer-removal.md)。
+- 后续四片分别核实实际缺口后串行交付，前片合并前不开下一功能WIP。
+
 ### 2026-10-26 批准：器件参数与物理端口完整性（4a～4e软件已交付）
 
 用户要求基于PA不可编辑及同类审计，完善设计、功能列表并按开发流程串行完成。设计见[器件与端口契约](design/2026-10-26-topology-device-port-contract.md)。4a 已由 [PR #539](https://github.com/swang430/Meta-3D/pull/539) 于2026-10-26T14:29:23Z合并至 `1207f8c547df3f253430cc8c84694343ff50aa71`；[R2回执](https://github.com/swang430/Meta-3D/pull/539#issuecomment-6418381233)覆盖 `111e5126cd`，无重大问题。R1修复相关182项通过，新库唯一全后端 **7558 passed /17 skipped /1 failed**（同一历史G8，不称全绿）；原首轮6失败、三项异常后续未再现但根因未知、V1有效参考PA身份/冻结未覆盖及ASC/CE未执行边界保留，见[4a验证摘要](validation/2026-10-26-pc04a4a-nominal-properties.md)。4b实现、综合验证、独立任务/累计审查及R1/R2已完成，由[PR #540](https://github.com/swang430/Meta-3D/pull/540)于2026-10-26T17:48:55Z合并至`8d5bc6d48805b6de7be246e4c40940de33534fa8`，[R2回执](https://github.com/swang430/Meta-3D/pull/540#issuecomment-6423156398)覆盖`75b4ef9332`无重大问题。4b相关后端469/GUI77及构建通过；其唯一最终全后端 **7663 passed /17 skipped /1 failed /7579 warnings**（历史G8，不称全绿）仅是前片证据，见[4b计划](plans/2026-10-26-pc04a4b-topology-port-roles.md)及[4b验证摘要](validation/2026-10-26-pc04a4b-topology-port-roles.md)。4c 已由 [PR #541](https://github.com/swang430/Meta-3D/pull/541) 于 `2026-10-26T22:31:48Z` 合并至 `39d4bb0bc27ab6e13eca04ec0f7b4c82f14eb46a`；[R2 回执](https://github.com/swang430/Meta-3D/pull/541#issuecomment-6428803419)于 `22:26:25Z` 覆盖 `fd473fba1cbad208f5604d4f2465279dab39ba7b` 无发现。主目录 main 已快进同步，用户修改与资料保留。新版最终全后端 **7822 passed /17 skipped /1 历史 G8 failed**（8597 warnings，700.70s，exit1）不称全绿；C07真实鼠标未验和现场B/HOLD边界保留。当前4d Task1～4及前累计内审已完成，PR542 R1唯一P2修复a5013706已独立ADDRESSED；新版全后端7945通过/17跳过/1历史G8失败（9654 warnings，793.12s，exit1，不称全绿），输入起止一致。旧7941/17/1及未变GUI/浏览器证据的复用边界见[4d验证摘要](validation/2026-10-27-pc04a4d-legacy-conversion.md)。4d已由[PR #542](https://github.com/swang430/Meta-3D/pull/542)于2026-10-27T04:29:08Z合并至`780a4b460d8612b5e39db456ee4a0fb4e73fbc3f`；[R2回执](https://github.com/swang430/Meta-3D/pull/542#issuecomment-6433718993)覆盖`89f94ac736bcfb25ecf0fffa0a0bab6b5383af0c`无发现。4a～4e批准软件待办已全部交付，4e由[PR #543](https://github.com/swang430/Meta-3D/pull/543)已于`2026-10-27T10:09:41Z`合并至`c7da8832cd5d513973cb558a871106f9c7245da0`；[R2回执](https://github.com/swang430/Meta-3D/pull/543#issuecomment-6438906866)覆盖`ab434986bcd1233994449d3966c146b474c8c627`无重大问题。Task2规格有限通过/质量Approved及证据缺口保留，前片统计不代表新版全量。用户已批准4a～4e无需逐片重复确认；本批不解除现场B/HOLD。
