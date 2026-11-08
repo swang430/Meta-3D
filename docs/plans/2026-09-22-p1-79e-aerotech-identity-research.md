@@ -2,6 +2,8 @@
 
 **日期**：2026-09-22。**性质**：厂商资料、现有协议实现与正式证据链核对；本次没有连接、查询或写入真实转台。
 
+> 2026-11-08后续：新官网帮助包已有ASCII `VERSION` 固件读取依据；型号与现场适用性仍缺。当前增量见[复核记录](2026-11-08-p1-79e-identity-refresh.md)。下文保留2026-09-22当时取证范围，不作为新资料不存在的断言。
+
 ## 1. 裁决
 
 当前 CAICT Aerotech 的活跃控制路径是 AeroBasic/TCP；当前取得的厂商资料包为 Ensemble 3.04，但它仍没有足够厂商证据支持“安全只读地取得现场控制器型号与固件版本”。现场控制器的实际型号和固件版本本身仍是未知，不能由资料包版本反推。因此 P1-79E **不能进入 HAL 实现**，`RealAerotechDriver.capture_evidence_environment()` 继续把 `model` / `firmware_version` 保持为 `None`，`positioner.azimuth.NNN` 的正式判词继续 fail-closed 为 `unknown`。
