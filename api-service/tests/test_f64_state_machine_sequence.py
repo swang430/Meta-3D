@@ -567,7 +567,7 @@ class TestUxmManualSpellingProbe:
             self._cmds = UxmLteNrIratProfile()
 
         async def _query(self, cmd: str) -> str:
-            if cmd == "SYST:ERR?":
+            if cmd in ("SYST:ERR?", "SYSTem:ERRor?"):
                 err, self._pending_err = self._pending_err, '0,"No error"'
                 return err
             self.queries.append(cmd)
@@ -771,7 +771,7 @@ class TestUxmProbeRound2:
                 self._n = 0
 
             async def _query(self, cmd):
-                if cmd == "SYST:ERR?":
+                if cmd in ("SYST:ERR?", "SYSTem:ERRor?"):
                     self._n += 1
                     if self._n > 1:      # 第 1 次是开跑前清队列, 之后就断
                         raise TimeoutError("VI_ERROR_TMO")
@@ -876,7 +876,7 @@ class TestUxmProbeCodex229:
         会让整轮报成功, 而我们**从没拿到过一个能当状态真值源的值**。"""
         class _SilentButClean(TestUxmManualSpellingProbe._FakeUxm):
             async def _query(self, cmd):
-                if cmd == "SYST:ERR?":
+                if cmd in ("SYST:ERR?", "SYSTem:ERRor?"):
                     return '0,"No error"'      # 队列永远干净
                 self.queries.append(cmd)
                 raise TimeoutError("VI_ERROR_TMO")   # 查询永远不回话
@@ -964,7 +964,7 @@ class TestUxmProbeCodex229B:
         ⚠ 归一化只用于判定, raw 仍要存原样(那是本序列的产出)。"""
         class _BlankReply(TestUxmManualSpellingProbe._FakeUxm):
             async def _query(self, cmd):
-                if cmd == "SYST:ERR?":
+                if cmd in ("SYST:ERR?", "SYSTem:ERRor?"):
                     return '0,"No error"'
                 self.queries.append(cmd)
                 return "   "          # 回了空白
@@ -1064,7 +1064,7 @@ class TestUxmProbeCodex229D:
         把可用命令误判成不支持, 而本序列的产出正是"哪个拼法可用"。"""
         class _GarbledDrain(TestUxmManualSpellingProbe._FakeUxm):
             async def _query(self, cmd):
-                if cmd == "SYST:ERR?":
+                if cmd in ("SYST:ERR?", "SYSTem:ERRor?"):
                     return "???"
                 return await super()._query(cmd)
 
@@ -1356,7 +1356,7 @@ class TestUxmProbeCodex229F:
                 self._n = 0
 
             async def _query(self, cmd):
-                if cmd == "SYST:ERR?":
+                if cmd in ("SYST:ERR?", "SYSTem:ERRor?"):
                     self._n += 1
                     return '0,"No error"' if self._n <= 1 else err
                 if "BSE:STATus:NR5G" in cmd:

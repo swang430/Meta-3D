@@ -50,6 +50,7 @@ from app.diagnostics.sequences.uxm_scpi_compatibility import (
     _profile_for_driver,
 )
 from app.services.diagnostic_context import DiagnosticContext
+from app.diagnostics.uxm_error_queue import drain_diagnostic_errors
 
 
 # (名字, 手册确切写法(带 {cell} 占位), 我们驱动里对应的常量名, 为什么要验)
@@ -159,6 +160,7 @@ async def run(
 
     profile = _profile_for_driver(bs)
     profile_name = getattr(profile, "PROFILE_NAME", "?")
+    error_query = getattr(profile, "ERR", None)
 
     # ⚠ 12 条候选的**根**硬编码成 `BSE:` —— 那是 Test App Framework(LTE_NR_IRAT)
     # 的命令树。另一套方言 5G_NR_Test 用的是裸 `CONFig:` / `CALL:` 根, 且主小区是
@@ -190,45 +192,22 @@ async def run(
         raw = await _maybe_await(bs._query(cmd))  # noqa: SLF001
         return raw if isinstance(raw, str) else (None if raw is None else str(raw))
 
-    # 开跑前把队列清干净 —— 否则上一次操作(或兄弟探针)留下的 -113 会被算到第一条
-    # 候选头上, 而第一条恰恰是 _CRITICAL 的 CELL_STATUS → 整轮误报"关键项不可用"。
-    # 这就是同轮在 F64 剧本上刚修的那个坑, 换台仪器重演 (审查 P2)。顺序同样是
-    # **先读空再 `*CLS`**: 先清会把"开跑前有什么遗留"这条线索冲掉。
-    stale: List[str] = []
+    reads, failure = await drain_diagnostic_errors(_q, error_query)
+    if failure:
+        return SequenceRunResult(
+            success=False, summary=f"开跑前排空错误队列失败: {failure}",
+            extra={"queue_reads": reads},
+            steps=[SequenceStepResult(label="开跑前排空错误队列", success=False,
+                                      detail=failure, raw=reads[-1] if reads else None)],
+        )
+    stale = reads[:-1]
     try:
-        for _ in range(100):
-            raw_e = await _q("SYST:ERR?")
-            code_e, _t = _parse_err(raw_e or "")
-            # ⚠ `None` = 读不出错误码(空/畸形/会话错位), **不是**"队列干净"。
-            # 带着未验证的会话开始 12 条探测, 旧错误或迟到应答会跟首条关键的
-            # CELL_STATUS 回复错配 → 把可用命令误判成不支持, 或归档错误的字面值,
-            # 而本序列的产出正是"哪个拼法可用 + 它返回什么"。判据与 F64 剧本同源
-            # (Codex #229 第四轮 P1: F64 那边上一轮已改, 这里是**漏掉的同族站点** ——
-            # 同一条规则存两份, 改的时候只改了一份, 正是 memory
-            # feedback_clear_stale_state_enumerate_all_sources 说的那个坑)。
-            if code_e is None:
-                return SequenceRunResult(
-                    success=False,
-                    steps=[SequenceStepResult(
-                        label="开跑前排空错误队列", success=False,
-                        detail=f"SYST:ERR? 读不出错误码 ({raw_e!r}) — 队列状态未知, 不能当干净",
-                        raw=raw_e,
-                    )],
-                    summary=("开跑前排空错误队列失败: SYST:ERR? 回复读不出错误码 — "
-                             "SCPI 会话未经验证, 此时探测出的'支持/不支持'结论不可信。"
-                             "先确认通道正常再跑。"),
-                )
-            if code_e == 0:
-                break
-            stale.append((raw_e or "").strip())
         wfn = getattr(bs, "_write", None)
         if callable(wfn):
             await _maybe_await(wfn("*CLS"))
-    except Exception as e:  # noqa: BLE001
-        return SequenceRunResult(
-            success=False,
-            summary=f"开跑前清错误队列失败: {type(e).__name__}: {e} — SCPI 通道可能已经卡死",
-        )
+    except Exception as e:
+        return SequenceRunResult(success=False, summary=f"开跑前清错误队列失败: {e}",
+                                 extra={"queue_reads": reads})
     if stale:
         log(f"  · 清掉 {len(stale)} 条开跑前的遗留错误")
 
@@ -249,7 +228,7 @@ async def run(
                 # 不支持的命令常常是"不回话 + 往队列压 -113" —— 真正的判据在错误队列,
                 # 这里超时不算失败。
                 reply = None
-            raw_err = await _q("SYST:ERR?")
+            raw_err = await _q(error_query)
         except Exception as e:  # noqa: BLE001
             steps.append(SequenceStepResult(
                 label=f"{name} → {cmd}", success=False,
