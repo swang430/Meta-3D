@@ -39,7 +39,7 @@ class AcquisitionBusy(ValueError):
 
 
 def require_explicit_mock_context(db: Session, lab_id: UUID, hal, *, switch_steps=()) -> None:
-    """只核对当前保存身份与运行驱动；不连接、不查询、不修补绑定。"""
+    """保存 mock/auto 策略须一致，参与驱动须实际为 Mock；零 I/O、不修补绑定。"""
     lab = db.get(LabProfile, lab_id)
     if lab is None or not lab.is_active or not lab.instrument_bindings:
         raise ValueError('显式模拟需要当前实验室的完整Mock绑定')
@@ -59,10 +59,11 @@ def require_explicit_mock_context(db: Session, lab_id: UUID, hal, *, switch_step
             connection = db.query(InstrumentConnection).filter_by(category_id=category_id).one_or_none()
             model = db.get(InstrumentModel, category.selected_model_id) if category and category.selected_model_id else None
             if (category is None or connection is None or model is None or model.category_id != category_id or
-                category.driver_mode != 'mock' or binding.get('driver_mode') != 'mock' or
+                category.driver_mode not in ('mock', 'auto') or
+                binding.get('driver_mode') != category.driver_mode or
                 str(category.selected_model_id) != binding.get('instrument_model_id') or
                 connection.endpoint != binding.get('connection_endpoint')):
-                raise ValueError('显式模拟需要一致的全Mock实验室绑定')
+                raise ValueError('显式模拟需要一致的实验室绑定，配置策略仅允许 mock/auto')
         required = {'channelEmulator', 'signalAnalyzer'} | ({'rfSwitch'} if switch_steps else set())
         for key in required:
             category = db.query(InstrumentCategory).filter_by(category_key=key).one_or_none()
@@ -70,8 +71,8 @@ def require_explicit_mock_context(db: Session, lab_id: UUID, hal, *, switch_step
             if category is None or not category.is_active or category.id not in seen or not is_mock_driver(driver):
                 raise ValueError('显式模拟的参与仪器未获全Mock运行时证明')
         for step in switch_steps:
-            if step.driver_mode != 'mock' or step.category_id not in seen:
-                raise ValueError('显式模拟的开关绑定不是Mock')
+            if step.driver_mode not in ('mock', 'auto') or step.category_id not in seen:
+                raise ValueError('显式模拟的开关绑定策略不是 mock/auto')
     except MultipleResultsFound as exc:
         raise ValueError('显式模拟的仪器配置不唯一') from exc
 
