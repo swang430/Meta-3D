@@ -196,7 +196,7 @@ def save_record_result(row: DiagnosticRun, result: FixedRouteResult, duration_ms
     row.error_message = result.error
 
 
-def record(row: DiagnosticRun, *, batch_context=None) -> FixedRouteRecord:
+def record(row: DiagnosticRun, *, batch_context=None, active: bool | None = None) -> FixedRouteRecord:
     value = None
     try:
         envelope = SequenceEvidence.model_validate(row.sequence_evidence)
@@ -215,7 +215,8 @@ def record(row: DiagnosticRun, *, batch_context=None) -> FixedRouteRecord:
         except ValidationError:
             # 仅收窄读取边界；损坏元数据不转字符串、不补身份，也不能证明父批释放。
             batch_context = dict(active=False, finalized=False)
-    active = (batch_context or {}).get('active') is True if batch_id else row.id in _running
+    active = ((batch_context or {}).get('active') is True if batch_id else
+              row.id in _running if active is None else active)
     if batch_id and (batch_context or {}).get('finalized') is not True:
         value = value.model_copy(deep=True)
         if value.states.get('f64_control_released') is True:
@@ -233,27 +234,64 @@ def record(row: DiagnosticRun, *, batch_context=None) -> FixedRouteRecord:
         result=value,batch_context=batch_context if batch_id else None)
 
 
+def read_record(db: Session, row: DiagnosticRun) -> FixedRouteRecord:
+    """仅状态API使用：观察退出后至多重读一次，不改变调用者事务。
+
+    启动先注册再commit，结束先commit再pop；同一run_id不会重新注册。
+    因此在读到行之后观察到inactive，再读已提交值，可以区分旧快照与孤儿。
+    正式采用继续直接调用record，不在锁内隐式另开Session。
+    """
+    from app.services.calibration.route_batch_jobs import batch_child_context
+    context = batch_child_context(db, row)
+    value = record(row, batch_context=context, active=True)
+    active = context.get('active') is True if context is not None else row.id in _running
+    if active or (context is None and value.status != 'running'):
+        return value
+    # 批子项即便已经completed，也须重新读取父子最终提交标记。
+    with SessionLocal() as fresh_db:
+        fresh = fresh_db.query(DiagnosticRun).filter_by(id=row.id, lab_profile_id=row.lab_profile_id,
+            target_name=TARGET, kind='scpi_sequence').one_or_none()
+        if fresh is None:
+            raise LookupError('本实验室中没有这条采集记录')
+        # denied只说明关联未核验，不等于实际观察到父任务退出。
+        parent_inactive = bool(context and context.get('job_id') and context.get('active') is False)
+        return record(fresh, active=False if context is None else None,
+            batch_context=batch_child_context(fresh_db, fresh, active=False if parent_inactive else None))
+
+
 async def start(db: Session, lab_id: UUID, request: FixedRouteRequest):
     if has_active_case_run() or has_running_case_run_row(db):
         raise AcquisitionBusy('已有测试执行在运行，不能开始校准采集')
     token = try_acquire_unsafe_diagnostic(TARGET)
     if token is None:
         raise AcquisitionBusy('已有测试或诊断占用仪器，请等待结束')
+    task = None
+    run_id = None
     try:
         config, _, _, _ = resolve_configuration(db, lab_id, request, get_hal_service())
         run_id = uuid4()
         result = FixedRouteResult(version=2, run_id=run_id, lab_profile_id=lab_id, request=request, configuration=config)
         row = build_record_row(result)
         db.add(row)
-        db.commit()
-        db.refresh(row)
+        db.flush()
         cancel = asyncio.Event()
+        # 默认task调度下，此处至commit无await：任务尚未执行，线程读取却已能看见注册。
         task = asyncio.create_task(_execute(result, token, cancel))
         _running[run_id] = (task, cancel)
-        return record(row)
+        db.commit()
     except BaseException:
-        release_unsafe_diagnostic(token)
+        if task is not None:
+            task.cancel()
+            if _running.get(run_id, (None,))[0] is task:
+                _running.pop(run_id)
+        try:
+            db.rollback()
+        finally:
+            release_unsafe_diagnostic(token)
         raise
+    # 提交成功即把生命周期交给task；响应读取失败不得提前释放互斥。
+    db.refresh(row)
+    return record(row)
 
 
 async def _execute(result, token, cancel):

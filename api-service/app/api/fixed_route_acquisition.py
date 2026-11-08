@@ -19,6 +19,13 @@ def _row(db, lab_id, run_id):
     return row
 
 
+def _record(db, row):
+    try:
+        return jobs.read_record(db, row)
+    except LookupError as exc:
+        raise HTTPException(404, str(exc)) from exc
+
+
 @router.post('/{lab_profile_id}/fixed-route-acquisitions', response_model=FixedRouteRecord, status_code=202)
 async def start(lab_profile_id: UUID, request: FixedRouteRequest, db: Session = Depends(get_db)):
     try:
@@ -34,13 +41,13 @@ def history(lab_profile_id: UUID, limit: int = Query(20, ge=1, le=100), db: Sess
     if db.get(LabProfile, lab_profile_id) is None:
         raise HTTPException(404, '实验室配置不存在')
     rows = db.query(DiagnosticRun).filter_by(lab_profile_id=lab_profile_id, target_name=jobs.TARGET, kind='scpi_sequence').order_by(DiagnosticRun.run_at.desc(), DiagnosticRun.id.desc()).limit(limit).all()
-    return [jobs.record(row, batch_context=batch_child_context(db,row)) for row in rows]
+    return [_record(db, row) for row in rows]
 
 
 @router.get('/{lab_profile_id}/fixed-route-acquisitions/{run_id}', response_model=FixedRouteRecord)
 def progress(lab_profile_id: UUID, run_id: UUID, db: Session = Depends(get_db)):
     row = _row(db, lab_profile_id, run_id)
-    return jobs.record(row, batch_context=batch_child_context(db,row))
+    return _record(db, row)
 
 
 @router.post('/{lab_profile_id}/fixed-route-acquisitions/{run_id}/cancel', response_model=FixedRouteRecord)
@@ -55,4 +62,4 @@ async def cancel(lab_profile_id: UUID, run_id: UUID, db: Session = Depends(get_d
         jobs.request_cancel(run_id)
     except jobs.AcquisitionBusy as exc:
         raise HTTPException(409, str(exc)) from exc
-    return jobs.record(row, batch_context=batch_child_context(db,row))
+    return _record(db, row)
