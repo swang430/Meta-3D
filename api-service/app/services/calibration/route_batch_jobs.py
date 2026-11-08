@@ -72,21 +72,44 @@ def _save_parent(row,value):
     row.error_message=value.get('error')
 
 
-def record(db,row):
+def job_activity(job_id):
+    active = _running.get(job_id)
+    return (active is not None, active.cancel.is_set() if active is not None else False)
+
+
+def record(db,row, *, activity=None):
+    active, cancel_requested = job_activity(row.id) if activity is None else activity
     try:
         value=_payload(row)
     except (ValueError,TypeError,ValidationError):
         return dict(job_id=str(row.id),lab_id=str(row.lab_profile_id),status='incomplete',
             finalization_committed=False,f64_control_released=None,items=[],error='批审计记录缺损，需现场核验')
-    if row.id in _running:
-        value['cancel_requested']=_running[row.id].cancel.is_set()
-    if value['status'] in ACTIVE and row.id not in _running:
+    if active and value['status'] in ACTIVE:
+        value['cancel_requested']=cancel_requested
+    if value['status'] in ACTIVE and not active:
         value.update(status='interrupted',f64_control_released=None,finalization_committed=False,
             error='服务已中断；未自动续跑，历史中断不等于已停发，请现场核验')
         for item in value['items']:
             if item['status'] in ('measuring','waiting_manual'):
                 item['status']='interrupted'
     return value
+
+
+def read_record(db,row):
+    """状态API读到活动态但已退出时，独立会话核对一次已提交结果；无重试。"""
+    activity = job_activity(row.id)
+    value = record(db, row, activity=activity)
+    if activity[0] or value['status'] != 'interrupted':
+        return value
+    # 仅重核由活动态派生的中断；已保存的历史中断不重新解释。
+    if _payload(row)['status'] not in ACTIVE:
+        return value
+    with SessionLocal() as fresh_db:
+        fresh = fresh_db.query(DiagnosticRun).filter_by(id=row.id, lab_profile_id=row.lab_profile_id,
+            target_name=TARGET, kind='scpi_sequence').one_or_none()
+        if fresh is None:
+            raise LookupError('本实验室中没有此批记录')
+        return record(fresh_db, fresh, activity=(False, False))
 
 
 def validated_batch_item(db,lab_id,request,context):
@@ -106,7 +129,7 @@ def validated_batch_item(db,lab_id,request,context):
     return items[0]
 
 
-def batch_child_context(db,row):
+def batch_child_context(db,row, *, active: bool | None = None):
     """数据库父子归属/lease/finalization是权威；运行表只提供当前活动事实。"""
     denied=dict(active=False,finalized=False)
     try:
@@ -121,7 +144,8 @@ def batch_child_context(db,row):
         matches=[i for i in value['items'] if i.get('item_id')==states.get('batch_item_id') and i.get('run_id')==str(row.id)]
         if len(matches)!=1 or not states.get('lease_id') or states['lease_id']!=value.get('lease_id'):
             return denied
-        active=parent.id in _running
+        if active is None:
+            active=job_activity(parent.id)[0]
         finalized=(not active and value['status'] in TERMINAL-{'cleanup_unconfirmed','interrupted','incomplete'}
             and value.get('persistence_failed') is False
             and value.get('finalization_committed') is True and value.get('f64_control_released') is True
@@ -155,6 +179,8 @@ async def start(db,lab_id,request,*,idempotency_key):
     token=try_acquire_unsafe_diagnostic(TARGET)
     if token is None:
         raise single.AcquisitionBusy('已有测试或诊断占用仪器')
+    active = None
+    ident = None
     try:
         plan=build_batch_plan(db,lab_id,request,get_hal_service())
         ident=uuid4()
@@ -172,17 +198,23 @@ async def start(db,lab_id,request,*,idempotency_key):
         for item in plan.items:
             single.resolve_configuration(db,lab_id,item.request,get_hal_service(),
                 batch_item_context=BatchItemContext(ident,item.item_id))
-        db.commit()
         active=RunningBatch()
-        _running[ident]=active
+        # 验证/flush已完成；注册至commit无await，任务不会在提交前开始运行。
         active.task=asyncio.create_task(_execute(ident,token,active))
-        return record(db,row)
+        _running[ident]=active
+        db.commit()
     except BaseException:
+        if active is not None and active.task is not None:
+            active.task.cancel()
+            if _running.get(ident) is active:
+                _running.pop(ident)
         try:
             db.rollback()
         finally:
             release_unsafe_diagnostic(token)
         raise
+    # 提交后由后台任务负责最终持久化与释放；序列化失败不释放占位。
+    return record(db,row)
 
 
 def _commit_progress(ident,value,result=None):

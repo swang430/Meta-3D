@@ -35,7 +35,9 @@ def _row(db,lab_id,job_id):
 def _record(db,row):
     """序列化缺损历史只显示unknown，不重建计划或释放证明。"""
     try:
-        return BatchJobRecord.model_validate(jobs.record(db,row))
+        return BatchJobRecord.model_validate(jobs.read_record(db,row))
+    except LookupError as exc:
+        raise HTTPException(404,str(exc)) from exc
     except ValidationError:
         return BatchJobRecord(job_id=row.id,lab_id=row.lab_profile_id,status='incomplete',
             finalization_committed=False,f64_control_released=None,items=[],error='批审计记录缺损，需现场核验')
