@@ -598,10 +598,7 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
           插入线缆：添加并核对A/B → 拖两条新边 → 探头属性按CE→探头重声明完整路径 → 删除旧边 → 保存后重新选择服务器路径。
           旧边校准值不自动复制；改端口名请先加新端口、建替代边、重声明、删旧边，再删旧端口。
         </Text>
-        <Select aria-label="含旧PA标称的连线" placeholder="含旧PA标称的连线（含隐藏及非当前模式）" searchable value={null}
-          disabled={editingBlocked} onChange={id=>id&&openConnection(id)}
-          data={draft.connections.filter(c=>c.pa_gain_db!==null&&c.pa_gain_db!==undefined).map(c=>({value:c.id,
-            label:`${c.id} · ${draft.nodes.find(n=>n.id===c.source)?.label??c.source}:${c.source_pin??'?'} → ${draft.nodes.find(n=>n.id===c.target)?.label??c.target}:${c.target_pin??'?'} · 模式：${draft.operating_modes.filter(m=>getDraftModeConnectionIds(draft,m.id).includes(c.id)).map(m=>m.name).join('、')||'未纳入模式'}`}))}/></div>
+        </div>
         <Group justify="space-between">
           <Group>
             <Text fw={600}>{topology.name}</Text>
@@ -905,7 +902,7 @@ const TopologyFlow = ({ onOpenResources,focused,onFocusChange,topology, labProfi
             <NominalPropertyFields key={`pa-${selectedEdge.id}`} fields={edgeNominalFields} values={selectedEdge as unknown as Record<string,unknown>}
               metadata={selectedEdge.nominal_metadata} disabled={editingBlocked} onValidityChange={setEdgeNominalValid}
               onChange={(key,value,metadata)=>{if(!isWriteBlocked())setSelectedEdge(current=>current?setEdgeNominal(current,key,value,metadata):null)}}/>
-            <Text size="xs" c="dimmed">旧PA按精确边ID定位，不自动创建PA器件或切换模式。标称净值仅供显示，非实测；保存标称不等于采用校准，数值修改可能触发原通路一致性复核。</Text>
+            <Text size="xs" c="dimmed">请先选择连线适用的操作模式，再在普通画布点击连线；未纳入任何模式的历史连线不会自动分配模式。标称净值仅供显示，非实测；保存标称不等于采用校准，数值修改可能触发原通路一致性复核。</Text>
             <SimulationModelFields quantity="loss_db" value={selectedEdge.simulation_model} disabled={editingBlocked}
               onChange={value=>{if(isWriteBlocked())return;setSelectedEdge(current=>{if(!current)return null;const next={...current};
                 if(value===undefined)delete next.simulation_model;else next.simulation_model=value;return next})}}/>

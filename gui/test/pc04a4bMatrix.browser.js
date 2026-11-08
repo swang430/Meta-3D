@@ -1,5 +1,35 @@
 // 本片隔离真实HTTP综合验证；不route/mock响应，不接硬件。
 async page=>{
+  // 只通过现有模式/显示控件与真实画布点击；未归属模式的历史边不得补归属。
+  function connectionModes(graph,id){
+    return graph.operating_modes.filter(m=>(m.active_connections?.length?m.active_connections:graph.connections.filter(c=>c.modes?.includes(m.id)).map(c=>c.id)).includes(id));
+  }
+  async function showAuxiliary(){
+    const expand=page.getByRole('button',{name:'展开辅助区',exact:true});
+    if(await expand.isVisible())await expand.click();
+  }
+  async function openCanvasConnection(graph,id){
+    await page.locator('.mantine-Drawer-overlay').waitFor({state:'hidden'});
+    const modes=connectionModes(graph,id);
+    if(!modes.length)throw new Error(`连线${id}未纳入任何模式；只能核对原值保形，不能自动补归属`);
+    await showAuxiliary();
+    const select=page.getByRole('textbox',{name:'操作模式',exact:true});
+    const currentMode=await select.inputValue(),mode=modes.find(m=>m.name===currentMode)||modes[0];
+    if(await select.inputValue()!==mode.name){await select.click();await page.getByRole('option',{name:mode.name,exact:true}).click()}
+    await page.getByRole('button',{name:'定位全图',exact:true}).click();
+    const point=await(await page.waitForFunction(id=>{
+      const group=Array.from(document.querySelectorAll('.react-flow__edge,.topology-readonly-edge')).find(e=>e.getAttribute('data-id')===id);
+      const path=group?.querySelector('.react-flow__edge-interaction')??group?.querySelector('path');
+      const matrix=path?.getScreenCTM();if(!matrix)return null;
+      for(const f of [.2,.3,.4,.6,.7,.8]){const p=path.getPointAtLength(path.getTotalLength()*f),x=matrix.a*p.x+matrix.c*p.y+matrix.e,y=matrix.b*p.x+matrix.d*p.y+matrix.f;
+        if(document.elementFromPoint(x,y)?.closest('.react-flow__edge,.topology-readonly-edge')===group)return{x,y}}
+      return null;
+    },id)).jsonValue();
+    await page.mouse.click(point.x,point.y);
+    await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).getByText(id,{exact:true}).waitFor();
+    return mode;
+  }
+
   const origin=new URL(page.url()).origin,api=`${origin}/api/v1`,stage=new URL(page.url()).searchParams.get('matrix')||'B01';
   page.setDefaultTimeout(15000);await page.setViewportSize({width:1800,height:1200});
   const exchanges=[],checks=[],eq=(a,b,m)=>{if(JSON.stringify(a)!==JSON.stringify(b))throw Error(`${m}: ${JSON.stringify(a)}`)};
@@ -19,7 +49,7 @@ async page=>{
   const endpoint=`/switch-topologies/${graph.id}?lab_profile_id=${lab.id}`;
   const paths=()=>read(`/lab-profiles/${lab.id}/route-calibration-paths?topology_id=${graph.id}&operating_mode=mimo_ota`);
   const enter=async(labId=lab.id)=>{await page.goto(origin);await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),labId);await page.reload();
-    await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();await page.locator('.react-flow').first().waitFor()};
+    await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();await page.locator('.react-flow').first().waitFor();await showAuxiliary()};
   const drawer=()=>page.getByRole('dialog',{name:'器件属性',exact:true});
   const close=async()=>{await drawer().getByRole('banner').getByRole('button').click();await drawer().waitFor({state:'hidden'});await page.locator('.mantine-Drawer-overlay').waitFor({state:'hidden'})};
   const choose=async id=>{const input=page.getByRole('textbox',{name:'器件列表',exact:true});await input.fill(id);await page.getByRole('listbox',{name:'器件列表',exact:true}).getByRole('option').filter({hasText:id}).first().click();await drawer().waitFor()};
@@ -74,7 +104,7 @@ async page=>{
     await choose(old.id);eq(await page.getByRole('textbox',{name:'声明端口',exact:true}).inputValue(),defaults,'显示建议漂移');await page.getByRole('button',{name:'应用端口声明',exact:true}).click();await page.getByRole('button',{name:'应用器件修改',exact:true}).click();await page.getByText(/端口仍有连线|未列入显式声明/).last().waitFor();eq(await read(url),saved,'旧图声明拒绝污染服务器');await shot('caict-missing-ports-rejected');await close();
     const declared=caict.nodes.find(n=>Array.isArray(n.params.ports));await choose(declared.id);await apply();
     const p=page.waitForResponse(r=>r.request().method()==='PATCH'&&r.url().includes(`/switch-topologies/${caict.id}`));await page.getByRole('button',{name:'保存拓扑',exact:true}).click();const r=await p;exchanges.push({request:r.request().postDataJSON(),response:await r.json()});eq(r.status(),200,'已有合法ports未改应用');saved=await read(url);eq(saved.nodes.find(n=>n.id===declared.id).params,declared.params,'已有声明被改写');
-    const nodesBeforePA=copy(saved.nodes),edge=saved.connections.find(e=>e.pa_gain_db===20);if(!edge)throw Error('CAICT缺旧PA20边');const list=page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true});await list.fill(edge.id);await page.getByRole('option').filter({hasText:edge.id}).click();await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('Task3仅补来源，非实测');await page.getByRole('button',{name:'应用修改',exact:true}).click();await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor({state:'hidden'});
+    const nodesBeforePA=copy(saved.nodes),edge=saved.connections.find(e=>e.pa_gain_db===20);if(!edge)throw Error('CAICT缺旧PA20边');await openCanvasConnection(saved,edge.id);await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('Task3仅补来源，非实测');await page.getByRole('button',{name:'应用修改',exact:true}).click();await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor({state:'hidden'});
     const pendingPA=page.waitForResponse(r=>r.request().method()==='PATCH'&&r.url().includes(`/switch-topologies/${caict.id}`));await page.getByRole('button',{name:'保存拓扑',exact:true}).click();const pa=await pendingPA;eq(pa.status(),200,'旧PA来源保存');exchanges.push({request:pa.request().postDataJSON(),response:await pa.json()});saved=await read(url);eq(saved.nodes,nodesBeforePA,'PA来源改节点');for(const prior of caict.connections){const now=saved.connections.find(e=>e.id===prior.id);if(prior.id===edge.id){eq(now.pa_gain_db,prior.pa_gain_db,'PA来源改数值')}else eq(now,prior,'PA来源改别边')}
     await enter(other.id);await choose(old.id);await shot('caict-rename-reload');await close();checks.push({old,declared,defaults,saved});
   }else if(stage==='legacy-position'){

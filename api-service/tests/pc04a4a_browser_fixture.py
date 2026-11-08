@@ -73,17 +73,27 @@ def seed():
                         position={'x':700+index*220,'y':300},params={'ports':['in','out'],
                             'connection_scope':'calibration','visible_modes':['calibration']}))
                 next(n for n in nodes if n['id']=='ref')['params']['ports']=['in','out']
+                # 独立可见的历史同形样本；不替原 unassigned 边补模式或端口。
+                for index, kind in enumerate(('cable', 'combiner')):
+                    nodes.append(dict(id=f'visible-sample-{kind}', type=kind,
+                        label=f'可见旧值样本-{kind}', position={'x':260+index*400,'y':1200},
+                        params={'ports':['in','out'],
+                            'port_directions':{'in':'input','out':'output'},
+                            'internal_paths':[{'from_port':'in','to_port':'out'}],
+                            'connection_scope':'calibration','visible_modes':['calibration']}))
                 edges = [dict(id=f'fixed-{pol}',source=f'ce{i}',source_pin='out',target=f'probe{i}',target_pin='in',cable_loss_db=0) for i,pol in ((1,'v'),(2,'h'))]
                 # 缺默认字段参考边，专门验证无关保存不注入默认键。
                 edges += [dict(id='reference-sparse',source='probe1',source_pin='out',target='air',target_pin='in'),
                     *[dict(id=f'reference-{i}',source=a,source_pin='out',target=b,target_pin='in')
                       for i,(a,b) in enumerate((('air','ref'),('ref','rx'),('rx','sa')))],
                     dict(id='legacy-bad-pa',source='matrix-cable',source_pin='out',
-                         target='matrix-combiner',target_pin='in',pa_gain_db='12')]
+                         target='matrix-combiner',target_pin='in',pa_gain_db='12'),
+                    dict(id='legacy-bad-pa-visible-sample',source='visible-sample-cable',source_pin='out',
+                         target='visible-sample-combiner',target_pin='in',pa_gain_db='12',modes=['calibration'])]
                 topology = SwitchTopology(switch_category_id=switch.id,chamber_id=chamber.id,name='PC04A4a显式两链',
                     is_active=True,is_default=True,nodes=nodes,connections=edges,operating_modes=[
                         dict(id='mimo_ota',name='MIMO OTA 测试',active_connections=['fixed-v','fixed-h']),
-                        dict(id='calibration',name='校准接线',active_connections=[e['id'] for e in edges if e['id'].startswith('reference-')])])
+                        dict(id='calibration',name='校准接线',active_connections=[e['id'] for e in edges if e['id'].startswith('reference-') or e['id']=='legacy-bad-pa-visible-sample'])])
                 topology.update_statistics();db.add(topology);db.flush()
                 manifest['labs'][-1]['topology_id'] = str(topology.id)
         db.commit()

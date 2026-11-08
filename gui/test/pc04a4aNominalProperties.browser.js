@@ -1,5 +1,35 @@
 // 独立临时SQLite、全HAL Mock、真实HTTP；同一缺功能RED由原边抽屉产生。
 async page=>{
+  // 只通过现有模式/显示控件与真实画布点击；未归属模式的历史边不得补归属。
+  function connectionModes(graph,id){
+    return graph.operating_modes.filter(m=>(m.active_connections?.length?m.active_connections:graph.connections.filter(c=>c.modes?.includes(m.id)).map(c=>c.id)).includes(id));
+  }
+  async function showAuxiliary(){
+    const expand=page.getByRole('button',{name:'展开辅助区',exact:true});
+    if(await expand.isVisible())await expand.click();
+  }
+  async function openCanvasConnection(graph,id){
+    await page.locator('.mantine-Drawer-overlay').waitFor({state:'hidden'});
+    const modes=connectionModes(graph,id);
+    if(!modes.length)throw new Error(`连线${id}未纳入任何模式；只能核对原值保形，不能自动补归属`);
+    await showAuxiliary();
+    const select=page.getByRole('textbox',{name:'操作模式',exact:true});
+    const currentMode=await select.inputValue(),mode=modes.find(m=>m.name===currentMode)||modes[0];
+    if(await select.inputValue()!==mode.name){await select.click();await page.getByRole('option',{name:mode.name,exact:true}).click()}
+    await page.getByRole('button',{name:'定位全图',exact:true}).click();
+    const point=await(await page.waitForFunction(id=>{
+      const group=Array.from(document.querySelectorAll('.react-flow__edge,.topology-readonly-edge')).find(e=>e.getAttribute('data-id')===id);
+      const path=group?.querySelector('.react-flow__edge-interaction')??group?.querySelector('path');
+      const matrix=path?.getScreenCTM();if(!matrix)return null;
+      for(const f of [.2,.3,.4,.6,.7,.8]){const p=path.getPointAtLength(path.getTotalLength()*f),x=matrix.a*p.x+matrix.c*p.y+matrix.e,y=matrix.b*p.x+matrix.d*p.y+matrix.f;
+        if(document.elementFromPoint(x,y)?.closest('.react-flow__edge,.topology-readonly-edge')===group)return{x,y}}
+      return null;
+    },id)).jsonValue();
+    await page.mouse.click(point.x,point.y);
+    await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).getByText(id,{exact:true}).waitFor();
+    return mode;
+  }
+
   const origin=new URL(page.url()).origin,api=`${origin}/api/v1`;
   const stage=new URL(page.url()).searchParams.get('nominalStage');
   if(stage)return await nominalMatrix(page,stage,origin,api);
@@ -18,14 +48,9 @@ async page=>{
   await page.reload();
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click();
   await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
-  await page.locator('.react-flow').first().waitFor();
-  await page.getByRole('button',{name:'Fit View',exact:true}).click();
-  await page.locator(`.react-flow__edge[data-id="${edge.id}"]`).click({force:true});
-  await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).waitFor();
-  // 模板边重叠时实点可能选中相邻边；按抽屉精确ID验证它确实来自真实旧PA图。
-  const drawerText=await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).innerText();
-  const opened=graph.connections.find(e=>drawerText.split('\n').includes(e.id));
-  if(!opened||opened.pa_gain_db===null||opened.pa_gain_db===undefined)throw new Error('实际打开的边不是旧PA');
+  await page.locator('.react-flow').first().waitFor();await showAuxiliary();
+  await openCanvasConnection(graph,edge.id);
+  const opened=edge;
   await page.evaluate(result=>{window.__pc04a4aBaseline=result},{labId:lab.id,topologyId:topology.id,edge:opened,graph});
   const hasControl=await page.getByLabel('旧PA标称增益 (dB)',{exact:true}).count();
   await page.screenshot({path:`output/playwright/pc04a4a-task3/${hasControl?'implemented':'original'}-edge-drawer.png`,fullPage:true,animations:'disabled'});
@@ -41,11 +66,7 @@ async page=>{
     await page.getByTestId('topology-save-stage').filter({hasText:'拓扑已保存到服务器'}).waitFor();
   };
   const apply=()=>page.getByRole('button',{name:'应用修改',exact:true}).click();
-  const locate=async id=>{
-    const list=page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true});await list.fill(id);
-    await page.getByRole('option').filter({hasText:id}).click();
-    await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).getByText(id,{exact:true}).waitFor();
-  };
+  const locate=async id=>openCanvasConnection(graph,id);
   const gain=page.getByLabel('旧PA标称增益 (dB)',{exact:true});
   await gain.fill('0');
   await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill(' 操作员按铭牌录入，未校准 ');
@@ -72,11 +93,11 @@ async page=>{
   const hiddenMode=graph.operating_modes.find(m=>!(m.active_connections??[]).includes(opened.id));
   if(hiddenMode){
     await page.getByRole('textbox',{name:'操作模式',exact:true}).click();await page.getByRole('option',{name:hiddenMode.name,exact:true}).click();
-    await locate(opened.id);
-    equal(await page.getByRole('textbox',{name:'操作模式',exact:true}).inputValue(),hiddenMode.name,'定位擅自切换模式');
+    const applicable=await locate(opened.id);
+    equal(await page.getByRole('textbox',{name:'操作模式',exact:true}).inputValue(),applicable.name,'未切回原有适用模式');
     await page.locator(`.react-flow__edge[data-id="${opened.id}"].selected`).waitFor();
-    await page.getByText('当前模式隐藏连线（未切换模式）',{exact:false}).waitFor();
-    checks.push('PA清单含0；非当前模式按精确边ID打开并高亮，不切换模式');
+    await page.getByText('当前模式连线',{exact:false}).waitFor();
+    checks.push('PA=0仍可从画布打开；从不适用模式明确切回已有适用模式，按精确边ID核对并高亮');
   }else await locate(opened.id);
   await gain.fill('');await apply();await save(topology.id);
   stored=await read(endpoint);equal(stored.connections.find(e=>e.id===opened.id).pa_gain_db,null,'清空未保存null');
@@ -86,7 +107,7 @@ async page=>{
   const normalEndpoint=`/switch-topologies/${normalGraph.id}?lab_profile_id=${normal.id}`;
   await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),normal.id);await page.reload();
   await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();
-  const chooseNode=async()=>{await page.getByRole('textbox',{name:'器件列表',exact:true}).fill('独立PA');await page.getByRole('option').filter({hasText:'独立PA'}).click();await page.getByRole('dialog',{name:'器件属性',exact:true}).waitFor()};
+  const chooseNode=async()=>{await showAuxiliary();await page.getByRole('textbox',{name:'器件列表',exact:true}).fill('独立PA');await page.getByRole('option').filter({hasText:'独立PA'}).click();await page.getByRole('dialog',{name:'器件属性',exact:true}).waitFor()};
   await chooseNode();const nodeGain=page.getByLabel('PA标称增益 (dB)',{exact:true});
   equal(await nodeGain.inputValue(),'','新标称空值被填默认数');
   await nodeGain.fill('-');
@@ -116,7 +137,7 @@ async page=>{
     const labs=await read('/lab-profiles'),lab=labs.find(l=>l.name==='PC04A4a标称甲'),other=labs.find(l=>l.name==='PC04A4a标称乙');
     const graph=(await read(`/switch-topologies?lab_profile_id=${lab.id}`)).items[0];
     const endpoint=`/switch-topologies/${graph.id}?lab_profile_id=${lab.id}`;
-    const enter=async()=>{await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();await page.locator('.react-flow').first().waitFor()};
+    const enter=async()=>{await page.getByRole('tab',{name:'实验室配置',exact:true}).click();await page.getByRole('tab',{name:'射频拓扑',exact:true}).click();await page.locator('.react-flow').first().waitFor();await showAuxiliary()};
     const referenceState=stage==='references'?await page.evaluate(()=>window.__pc04a4aReferences):null;
     if(!referenceState){await page.goto(`${origin}/?nominalStage=${stage}`);await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),lab.id);await page.reload();await enter();}
     const nodeDialog=()=>page.getByRole('dialog',{name:'器件属性',exact:true});
@@ -169,7 +190,9 @@ async page=>{
         if(!(await zero.innerText()).includes('输入 0 / 输出 0，未核实'))throw new Error('0数量被回退');
       }
       const bad=graph.connections.find(e=>e.id==='legacy-bad-pa');eq(bad.pa_gain_db,'12','旧坏PAfixture错误');
-      await page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true}).fill('legacy-bad-pa');await page.getByRole('option').filter({hasText:'legacy-bad-pa'}).click();
+      eq(connectionModes(graph,bad.id),[],'原历史边不应有模式归属');
+      const sampleId='legacy-bad-pa-visible-sample',sample=graph.connections.find(e=>e.id===sampleId);if(!sample||sample.pa_gain_db!=='12')throw new Error('缺少已归属模式的同形合成样本');
+      await openCanvasConnection(graph,sampleId);
       await page.getByText('旧值格式未核实（原值只读）："12"；未主动编辑时保留原值。',{exact:true}).waitFor();
       await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('仅改来源');
       if(!await page.getByRole('button',{name:'应用修改',exact:true}).isEnabled())throw new Error('metadata-only不应要求重写旧数值');
@@ -182,7 +205,7 @@ async page=>{
       const saved=await save(),current=saved.nodes.find(n=>n.id==='matrix-cable');if(JSON.stringify(current.position)===JSON.stringify(before.nodes.find(n=>n.id==='matrix-cable').position))throw new Error('真实拖动没保存');
       eq(current.params,before.nodes.find(n=>n.id==='matrix-cable').params,'拖动注入标称键');eq(saved.connections,before.connections,'改名拖动改了边');eq(saved.operating_modes,before.operating_modes,'改名拖动改了模式');
       await reload();await choose('matrix-cable');eq(await page.getByLabel('器件名称',{exact:true}).inputValue(),'线缆仅改名','改名未恢复');await shot('drag-reload');await closeNode();
-      evidence.push({before,saved,afterReload:await read(endpoint)});checks.push('CE/EMCenter缺值与0不推断能力；旧坏PA读取/取消/改名拖动保形；线缆无第二损耗');
+      evidence.push({before,saved,afterReload:await read(endpoint)});eq(saved.connections.find(e=>e.id===bad.id),bad,'未归属原件的原值/缺键改变');eq((await read(endpoint)).connections.find(e=>e.id===bad.id),bad,'重载改变未归属原件');checks.push('CE/EMCenter缺值与0不推断能力；已归属样本读取/取消、未归属原件无关改名拖动/保存重载保形；线缆无第二损耗');
       // 同一新库的真实模板旧值，不批量补来源、不写chamber。
       const caict=(await read(`/switch-topologies?lab_profile_id=${other.id}`)).items[0],chamberBefore=await read(`/chambers/${other.chamber_config_id}`);
       await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),other.id);await page.reload();await enter();
@@ -203,10 +226,10 @@ async page=>{
       const choosePath=async()=>{const input=panel.getByRole('textbox',{name:'完整校准通路',exact:true});await input.click();await page.getByRole('option').filter({hasText:'fixed-v'}).click()};await choosePath();
       for(const [label,value] of [['采集频率','2595'],['允许的单音设置功率','-30'],['参考天线身份','Task3软件验证参考件'],['接收线缆损耗','2'],['接收线缆记录来源','Task3声明']])await panel.getByLabel(label,{exact:false}).fill(value);
       const start=async()=>{await panel.getByRole('checkbox',{name:'我已核对所选链',exact:false}).check();await panel.getByRole('checkbox',{name:'我已确认专用校准仿真',exact:false}).check();const response=page.waitForResponse(r=>r.url().endsWith('/fixed-route-acquisitions')&&r.request().method()==='POST');await panel.getByRole('button',{name:'开始自动采集',exact:true}).click();return response};
-      const pending=start();await page.waitForFunction(()=>document.querySelector('input[aria-label="含旧PA标称的连线"]')?.disabled===true);
-      const locked=await page.evaluate(()=>({inputs:['含旧PA标称的连线','器件列表','新增器件类型','操作模式'].every(label=>document.querySelector(`input[aria-label="${label}"]`)?.disabled),save:Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='保存拓扑')?.disabled,draggable:document.querySelectorAll('.react-flow__node.draggable').length,dialogs:document.querySelectorAll('[role="dialog"]').length}));
-      if(!locked.inputs||!locked.save||locked.draggable||locked.dialogs)throw new Error(`真实pending锁失效${JSON.stringify(locked)}`);await shot('pending');const r=await pending;if(r.status()!==202)throw new Error(await r.text());const first=await r.json();
-      await panel.getByText('模拟流程完成（无真实测量）',{exact:true}).first().waitFor();if(!await page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true}).isEnabled())throw new Error('完成后锁未恢复');
+      const pending=start();await page.waitForFunction(()=>document.querySelector('input[aria-label="器件列表"]')?.disabled===true);
+      const locked=await page.evaluate(()=>({inputs:['器件列表','新增器件类型','操作模式'].every(label=>document.querySelector(`input[aria-label="${label}"]`)?.disabled),save:Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='保存拓扑')?.disabled,layout:Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='自动排版')?.disabled,draggable:document.querySelectorAll('.react-flow__node.draggable').length,dialogs:document.querySelectorAll('[role="dialog"]').length}));
+      if(!locked.inputs||!locked.save||!locked.layout||locked.draggable||locked.dialogs)throw new Error(`真实pending锁失效${JSON.stringify(locked)}`);await shot('pending');const r=await pending;if(r.status()!==202)throw new Error(await r.text());const first=await r.json();
+      await panel.getByText('模拟流程完成（无真实测量）',{exact:true}).first().waitFor();if(!await page.getByRole('textbox',{name:'器件列表',exact:true}).isEnabled())throw new Error('完成后锁未恢复');
       if(await panel.getByRole('button',{name:'确认采用此实测记录',exact:true}).isEnabled())throw new Error('Mock可采用');
       const record=await read(`${history}/${first.run_id}`);if(record.status!=='simulated'||record.result.net_loss_db!==null||record.result.samples.length||record.formal_eligible!==false)throw new Error('模拟混正式');
       const rejected=await page.request.post(`${api}/lab-profiles/${lab.id}/route-calibration-applications`,{data:{acquisition_run_id:first.run_id,route_digest:first.result.request.route_digest,expected_current_application_id:null,idempotency_key:crypto.randomUUID(),confirmed:true,adoption_valid_until:'2099-01-01T00:00:00Z'}});eq(rejected.status(),422,'Mock服务器可采用');
@@ -218,7 +241,7 @@ async page=>{
       const edge=caict.connections.find(e=>e.pa_gain_db===20);if(!edge)throw new Error('缺少原典型20dB边');
       await page.evaluate(id=>localStorage.setItem('mimo.operationalLabProfileId',id),other.id);await page.reload();await enter();
       for(const value of [0,-1,null]){
-        const list=page.getByRole('textbox',{name:'含旧PA标称的连线',exact:true});await list.click();await list.fill(edge.id);await page.locator(`[role="option"][value="${edge.id}"]`).click();
+        await openCanvasConnection(caict,edge.id);
         await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).getByText(edge.id,{exact:true}).waitFor();await page.getByLabel('旧PA标称增益 (dB)',{exact:true}).fill(value===null?'':String(value));await page.getByLabel('旧PA标称增益来源说明',{exact:true}).fill('   ');await shot(`${value}-input`);await page.getByRole('button',{name:'应用修改',exact:true}).click();
         const pending=page.waitForResponse(r=>r.request().method()==='PATCH'&&r.url().includes(`/switch-topologies/${caict.id}`));await page.getByRole('button',{name:'保存拓扑',exact:true}).click();const response=await pending;exchanges.push({status:response.status(),request:response.request().postDataJSON(),response:await response.json()});if(!response.ok())throw new Error(JSON.stringify(exchanges.at(-1)));
         const saved=await read(url);eq(saved.connections.find(e=>e.id===edge.id).pa_gain_db,value,'旧PA值未落库');eq(saved.nodes,caict.nodes,'旧PA编辑新增/修改节点');eq(saved.operating_modes,caict.operating_modes,'旧PA改变模式');eq(await read(`/chambers/${other.chamber_config_id}`),chamberBefore,'旧PA污染chamber');
@@ -231,7 +254,7 @@ async page=>{
       const point=await pointHandle.jsonValue();await page.mouse.click(point.x,point.y);await page.getByRole('dialog',{name:'连线参数编辑',exact:true}).getByText('reference-sparse',{exact:true}).waitFor();
       await page.getByLabel('标称电缆损耗来源说明',{exact:true}).fill('  Task3线缆来源，非实测  ');await shot('input');await page.getByRole('button',{name:'应用修改',exact:true}).click();await page.getByRole('dialog').waitFor({state:'hidden'});
       // 只观察真实DOM提交窗口，不延迟/拦截请求，也不把结束后的状态冒充保存中。
-      await page.evaluate(()=>{window.__nominalSavingSamples=[];window.__nominalSavingObserver=new MutationObserver(()=>{const save=Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='保存拓扑');if(save?.disabled)window.__nominalSavingSamples.push({save:true,locate:document.querySelector('input[aria-label="含旧PA标称的连线"]')?.disabled,nodes:document.querySelector('input[aria-label="器件列表"]')?.disabled})});window.__nominalSavingObserver.observe(document.body,{subtree:true,attributes:true,childList:true})});
+      await page.evaluate(()=>{window.__nominalSavingSamples=[];window.__nominalSavingObserver=new MutationObserver(()=>{const save=Array.from(document.querySelectorAll('button')).find(b=>b.textContent.trim()==='保存拓扑');if(save?.disabled)window.__nominalSavingSamples.push({save:true,locate:document.querySelector('input[aria-label="操作模式"]')?.disabled,nodes:document.querySelector('input[aria-label="器件列表"]')?.disabled})});window.__nominalSavingObserver.observe(document.body,{subtree:true,attributes:true,childList:true})});
       const stored=await save();const savingSamples=await page.evaluate(()=>{window.__nominalSavingObserver.disconnect();return window.__nominalSavingSamples});if(!savingSamples.some(s=>s.save&&s.locate&&s.nodes))throw new Error('未观察到真实保存锁');
       const edge=stored.connections.find(e=>e.id==='reference-sparse'),prior=graph.connections.find(e=>e.id==='reference-sparse');
       eq(edge,{...prior,nominal_metadata:{cable_loss_db:{unit:'dB',source_note:'Task3线缆来源，非实测',frequency_range_mhz:null}}},'来源编辑新增第二损耗或改变缺键');
