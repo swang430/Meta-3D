@@ -652,11 +652,27 @@ steps:
         )
         assert response.status_code == 200
 
-    def test_api_health_check(self, client):
+    def test_api_health_check(self, client, monkeypatch):
         """
         E2E API Test: Health Check
         """
+        import httpx
+
+        def transport(request):
+            assert request.method == "GET"
+            assert request.url.path == "/api/v1/health"
+            return httpx.Response(200, json={
+                "status": "healthy", "channel_engine_available": True,
+            })
+
+        mock = httpx.MockTransport(transport)
+        monkeypatch.setattr(
+            httpx.HTTPTransport, "handle_request",
+            lambda self, request: mock.handle_request(request),
+        )
         response = client.get("/api/v1/health")
         assert response.status_code == 200
         data = response.json()
         assert data["status"] == "healthy"
+        assert data["database_connected"] is True
+        assert data["channel_engine_available"] is True

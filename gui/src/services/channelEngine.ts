@@ -97,7 +97,7 @@ export class ChannelEngineClient {
   async isAvailable(): Promise<boolean> {
     try {
       const health = await this.healthCheck()
-      return health.status === 'healthy' && health.channel_engine_available
+      return health.channel_engine_available === true
     } catch {
       return false
     }
