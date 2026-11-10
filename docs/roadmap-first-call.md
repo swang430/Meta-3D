@@ -66,6 +66,17 @@ S5a/b/c是原P2-16 S5的子项，不另建重复父功能；开工仍需设计�
 
 **源码定位（本轮本机版本，非最新远程或部署证明）**：Lauraycs 805feea0的web/src/utils/asc-timing.ts、web/src/assembly/asc.ts、webService/app/services/channel_analysis/asc_export.py、HyperRT/PyHyperRT/HyperRT/MiRT/MiRT.py；ChannelEgine 9190f92的mimo_ota_simulator/geometric_native_fit.py、spatiotemporal_tracking.py、phase_continuous.py、exporters.py；Meta-3D api-service/app/services/mimo_ota/channel_asset_resolver.py与channel-engine-service/app/api/endpoints/b2_cluster.py、hardware_pipeline.py。职责是Lauraycs供传播数据，ChannelEgine做信道合成/设备适配，Meta-3D管理配置校准及执行；不宣称等价替代厂商GCM工具。
 
+### 2026-11-10 CTIA验证结果与工具能力核查
+
+- [ ] **沿RT24-002/C01（P0，外部方法前置）冻结适用范围**：由项目/计量负责人及适用实验室确认CTIA文件和版本、LTE/NR、频段、方法、设备形态与测试区域。公开CTIA 01.40 V6.0.1仅作多探头暗室方法参考，不宣称是当前认证最新适用版，不直接外推整车、全部NR或任意RT轨迹。
+- [ ] **沿RT24-020/C02（P0，方法预验证）建立“条款—实测结果—已有能力—缺口”对照表**：分别核校准记录、功率—时延分布、多普勒谱/时间相关性、空间相关性、极化特性、设备吞吐率结果、测量不确定度及原始证据。每项记录适用条款、方法、参考数据/限值出处、配置、校准、原始文件与未验边界；条目及限值以冻结版本为准，不将本列表当完整标准。
+- [ ] **C02同步输出产品缺口清单，不预设新功能号**：核Meta-3D是否能组织所需测量、关联配置/校准/版本、保存原始数据、计算规定指标并导出可复算结果；仅证实缺少的通用能力另立开发切片，复用现有比较与审计。范围冻结可并行准备，不改变DEL-01及S5既定开发顺序，也不直接启动仪器。
+- [ ] **沿C03～C06完成实测对照、差异复测与独立签认**：逐路功率校准不替代多路共同作用的测试环境验证；算法/ASC检查不替代空气中实测；系统环境合格不等于被测设备合格。Mock、缺测与正式结果分开，不把软件生成的通过当CTIA认证。
+
+Meta-3D提供通用测量与追溯工具；外部负责适用性、有效参考资料、独立对照、计量审核和正式签认。CTIA官方OTA流程由授权实验室开展测试并提交结果。上述是待核能力与交付结构，不代表现有系统已完整实现或通过验证；现场B/HOLD不变。
+
+依据：[CTIA官方测试计划入口](https://ctiacertification.org/test-plans-form/)、[OTA流程](https://ctiacertification.org/program/over-the-air-performance-testing/)、[公开CTIA 01.40 V6.0.1第4节](https://ctiacertification.org/wp-content/uploads/2021/02/CTIA-01.40-Test-Methodology-MIMO-Multi-Probe-Anechoic-Chamber-V6_0_1.pdf)。公开版本用于定位环境验证项目，不替代适用版本的授权获取与确认。
+
 ### 2026-11-08 新增待办：完整链路与同源控制事务 Mock 校准
 
 - [x] **PC-04A-13（P1，软件实现与隔离验证完成，交付见本片PR；未部署）**：完整执行 `F64输出→线缆→PA→线缆→Probe→空间传播→SGH→接收线缆→FSVA3000` 的32路Mock校准。Mock只替代底层通信/仪器响应与测量数据，不省略真实控制事务，不以命令预览或直接复制样本代替仪器调用。

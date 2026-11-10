@@ -92,4 +92,3 @@ RT 是场景确定性多径，TR 38.901 是统计模型。只对相同频段、�
 - MIMO-First 当前代码与 `docs/roadmap-first-call.md`；`docs/design/RT-MPDB-CDL-F64-channel-injection-design_V1.0.md`。
 - CTIA MIMO OTA Test Plan（公开文档；具体适用版本在 C01 冻结）：https://api.ctia.org/wp-content/uploads/2018/05/ctia_mimo_ota_tp_v1_2.pdf 。
 - ETSI TR 138 901 / 3GPP TR 38.901（具体适用版本在 R01 冻结）：https://www.etsi.org/deliver/etsi_tr/138900_138999/138901/16.01.00_60/tr_138901v160100p.pdf 。
-
