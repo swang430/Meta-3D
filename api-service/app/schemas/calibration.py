@@ -233,7 +233,7 @@ class HealthResponse(BaseModel):
     version: str
     database_connected: bool
     mock_instruments: bool
-    channel_engine_available: bool = True  # ChannelEngine is always available when API is running
+    channel_engine_available: bool = False  # 未检查时不能确认计算服务可用
 
 
 # ==================== Quiet Zone Calibration Schemas ====================
