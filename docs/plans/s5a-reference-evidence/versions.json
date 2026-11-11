@@ -1,0 +1,22 @@
+{
+  "ChannelEgine": {
+    "commit": "9190f920ef7c9fb288ac8b9ed2f99c5a82b04489",
+    "sources_sha256": {
+      "mimo_ota_simulator/exporters.py": "224ebf7f838fdd9330e2d89b30946707594109aadfe0df76ea40d57b644fa330",
+      "mimo_ota_simulator/spatiotemporal_tracking.py": "0d86883c544e9a9562fdbb37ec8a85a067f3362f9cfe185e332b79864b6c6ec4",
+      "mimo_ota_simulator/doppler_native_mapping.py": "84ab22405111e36e119a5c66b4e5ae39a85c265fc603d0574e2350ab520ee045"
+    }
+  },
+  "Lauraycs": {
+    "commit": "53ea4cf97842d8e9c18d97e07d081b2b98fbc316",
+    "sources_sha256": {
+      "web/src/assembly/asc.ts": "a25a3659bfea7dda3e8f445c756bda6f256d35bcb5743994761261741ad4d259",
+      "web/src/utils/asc-timing.ts": "21c62067d828a12de7975673c5c3ae45f96a71442f84a722042ba86cebc9e4f7",
+      "web/src/utils/asc-export.ts": "631c4e1b7ca8e248374494401e2975e18f2b2789e9d0ca82ad363b17d3fee657"
+    }
+  },
+  "probes_sha256": {
+    "scripts/s5_reference/ce_probe.py": "348f8aa38a02b7d15dde0ca27fe9517b0ab4373e85407be929598d49f31613ce",
+    "scripts/s5_reference/lr_probe.mjs": "2a48844d72e1a1e24dfb1903f4898897c9eba238769958f69825f3dd04dd960d"
+  }
+}
