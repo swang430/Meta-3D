@@ -1,0 +1,96 @@
+{
+  "0": {
+    "samples": 101,
+    "max_analytic_error": 0.0,
+    "observed_frequency_hz": 0.0,
+    "last_time_s": 0.1
+  },
+  "40": {
+    "samples": 101,
+    "max_analytic_error": 3.58724037616909e-15,
+    "observed_frequency_hz": 40.00000000000001,
+    "last_time_s": 0.1
+  },
+  "-40": {
+    "samples": 101,
+    "max_analytic_error": 3.58724037616909e-15,
+    "observed_frequency_hz": -40.00000000000001,
+    "last_time_s": 0.1
+  },
+  "600": {
+    "samples": 101,
+    "max_analytic_error": 5.691731341873513e-14,
+    "observed_frequency_hz": -400.0,
+    "last_time_s": 0.1
+  },
+  "R2_header": {
+    "requested_rate": 1000.04,
+    "header": [
+      "***** Header *****",
+      "101 CIRs",
+      "1 Taps/CIR",
+      "1000.0 CIR_Update_Rate",
+      "2400000000.0 Carrier_Frequency",
+      "***** Tap data *****",
+      "1.000000000e-07\t1.000000e+00\t0.000000e+00",
+      "1.000000000e-07\t9.685857e-01\t2.486802e-01",
+      "1.000000000e-07\t8.763164e-01\t4.817361e-01",
+      "1.000000000e-07\t7.289893e-01\t6.845251e-01",
+      "1.000000000e-07\t5.358607e-01\t8.443064e-01",
+      "1.000000000e-07\t3.090648e-01\t9.510410e-01"
+    ],
+    "configured_duration": 0.1017,
+    "count": 101,
+    "last_sample_time": 0.0999960001599936
+  },
+  "R3_crossing": {
+    "expected": {
+      "0": 10,
+      "1": 11
+    },
+    "actual": {
+      "0": 11,
+      "1": 10
+    }
+  },
+  "R3_power_exchange": {
+    "0": 11,
+    "1": 10
+  },
+  "R3_replacement_same_geometry": {
+    "expected": "old dies, new born; indistinguishable geometry",
+    "actual": {
+      "0": 10
+    }
+  },
+  "geometry_sign": {
+    "actual": [
+      40.0,
+      2.4492935982947065e-15,
+      -40.0
+    ],
+    "analytic_using_exact_c": [
+      40.02769142377824,
+      0,
+      -40.02769142377824
+    ]
+  },
+  "S5a_two_ray": {
+    "maxComplexSumError": 3.298334152353269e-14,
+    "samples": 1000,
+    "lastTime": 0.999
+  },
+  "S5a_known_track": {
+    "snapshots": 38,
+    "maxDopplerErrorHz_exactC": 0.027523675007060433,
+    "maxDopplerErrorHz_modelC": 1.4210854715202004e-14,
+    "maxDelayErrorS": 0.0,
+    "frequencyFirstLast": [
+      2.4492935982947065e-15,
+      -39.75768848502789
+    ],
+    "representedLastTimeS": 37.0,
+    "referenceLastTimeS": 36.17493937675094,
+    "limitation": "native_fit_trajectory accepts uniform skeleton_rate_hz, no per-snapshot timestamps; native profile contains spectra not reconstructed complex trajectory. Exporter fixed rays cannot express changing delays/directions."
+  }
+}

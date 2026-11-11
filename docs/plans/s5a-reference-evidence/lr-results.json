@@ -1,0 +1,159 @@
+{
+  "R1": {
+    "rate": 160.11076569511297,
+    "nyquist": 80.05538284755649,
+    "stationary": {
+      "count": 161,
+      "maxComplexError": 0
+    },
+    "positive": {
+      "count": 161,
+      "maxComplexError": 5.684393554855758e-14
+    },
+    "negative": {
+      "count": 161,
+      "maxComplexError": 5.684393554855758e-14
+    },
+    "simple": {
+      "count": 161,
+      "maxComplexError": 5.684393554855758e-14
+    },
+    "endpointResidual": {
+      "duration": 0.01,
+      "residualRad": 2.827433388230814,
+      "analyticPeakHz": 107.5,
+      "denseMeasuredPeakHz": 107.49991000000576,
+      "autoNyquistHz": 80.05538284755649,
+      "autoCount": 2,
+      "scope": "synthetic short interval; not supplied 38-frame sample"
+    },
+    "simpleResidual": {
+      "analyticAdjustedHz": 85,
+      "measuredHz": 85.00000000000001,
+      "autoNyquistHz": 80.05538284755649,
+      "scope": "10 ms synthetic inconsistent residual; not supplied sample"
+    }
+  },
+  "R2": {
+    "duration": 36.17493937675094,
+    "resampledCount": 5792,
+    "resampledLastTime": 36.16871092245834,
+    "truncatedTail": 0.006228454292603658,
+    "noResampleCount": 38,
+    "noResampleLastTime": 0.23109001970833334,
+    "noResampleNoverRate": 0.23733569591666667
+  },
+  "R3": {
+    "crossing": {
+      "actualMid": [
+        102,
+        -1.2135254915624203,
+        -0.8816778784387107,
+        108,
+        -1.2135254915624203,
+        0.8816778784387107
+      ],
+      "expectedMidDelays": [
+        103,
+        107
+      ],
+      "expectedAmplitudes": [
+        1,
+        2
+      ]
+    },
+    "powerExchange": [
+      100,
+      1.5,
+      0,
+      110,
+      1.5,
+      0
+    ],
+    "replacement": [
+      105,
+      1.5,
+      0,
+      0,
+      0,
+      0
+    ],
+    "currentSimpleCrossing": {
+      "actualMid": [
+        102,
+        0.46352549156242373,
+        1.4265847744427296,
+        108,
+        0.46352549156242373,
+        -1.4265847744427296
+      ],
+      "expectedMidDelays": [
+        103,
+        107
+      ],
+      "expectedAmplitudes": [
+        1,
+        2
+      ]
+    }
+  },
+  "R4_matched_missing": {
+    "maxComplexError": 1.820901148403467e-15,
+    "quarter": [
+      100.25,
+      -0.8090169943749472,
+      0.5877852522924734
+    ]
+  },
+  "R4_matched_zero": {
+    "maxComplexError": 1.999969898641135,
+    "quarter": [
+      100.25,
+      0.9238795325112867,
+      -0.3826834323650897
+    ]
+  },
+  "R4_simple_missing": {
+    "maxComplexError": 3.6163288974272086e-15,
+    "quarter": [
+      100.25,
+      -0.8090169943749472,
+      0.5877852522924734
+    ]
+  },
+  "R4_simple_zero": {
+    "maxComplexError": 2,
+    "quarter": [
+      100.25,
+      0.8090169943749475,
+      -0.587785252292473
+    ]
+  },
+  "S5a_two_ray": {
+    "maxComplexSumError": 2.927543596949436e-14,
+    "count": 161,
+    "lastTime": 0.9993081933333334
+  },
+  "S5a_known_track_matched": {
+    "sourceFrames": 38,
+    "outputFrames": 5792,
+    "maxComplexError": 0.026777469306760098,
+    "rmsComplexError": 0.003333500095098069,
+    "maxWrappedPhaseErrorRad": 0.02677826938486216,
+    "maxDelayErrorNs": 0.5060961357530971,
+    "maxFrequencyErrorHz": 0.01332006660838303,
+    "lastTime": 36.16871092245834,
+    "scope": "synthetic geometry on supplied derived timeline; not actual MPDB ray reconstruction"
+  },
+  "S5a_known_track_simple": {
+    "sourceFrames": 38,
+    "outputFrames": 5792,
+    "maxComplexError": 1.9999999421252763,
+    "rmsComplexError": 0.6007421779079123,
+    "maxWrappedPhaseErrorRad": 3.1411115102688383,
+    "maxDelayErrorNs": 0.5060961357530971,
+    "maxFrequencyErrorHz": 4.889894443998398,
+    "lastTime": 36.16871092245834,
+    "scope": "synthetic geometry on supplied derived timeline; not actual MPDB ray reconstruction"
+  }
+}
