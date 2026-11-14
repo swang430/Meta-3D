@@ -54,6 +54,7 @@ python scripts/s5_evaluation/cluster_import.py /absolute/path/to/new-result.json
 完整服务响应与规范化结果同时保留；未知多普勒为null，空帧与失败不同。
 `complete`仅指清单里的请求都得到可识别结果，不证明覆盖完整任务，也不证明服务器源文件在逐次调用间未变。
 失败帧不删除，整体incomplete且退出2。输出文件必须尚不存在。
+HTTP错误正文及分块响应中断时取得的部分正文保存在`responses`的`bodyBase64`中（Base64编码原始字节，上限16MiB）；`bodyIncomplete`表示读取中断，`bodyTruncated`表示超过保存上限。HTTP错误另保留`httpStatus`；即使错误正文含`code:200`，该帧仍失败，不进入有效聚簇结果。
 任务、载频、阵子、时间、源版本和坐标系声明不升级成服务回读证据；两种状态都`hardwareEligible=false`。
 完整源元数据可放在`sourceMetadata`，原样保留。
 

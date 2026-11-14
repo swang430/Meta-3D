@@ -2,18 +2,22 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import copy
+from http.client import IncompleteRead
 import json
 import os
 from pathlib import Path
 import sys
 from urllib.parse import urlsplit
+from urllib.error import HTTPError
 from urllib.request import Request, HTTPRedirectHandler, build_opener
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from cluster_import import validate_trajectory
 
 ENDPOINT = '/api/task/channel-analysis/clustering/kmeans/analyze'
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 
 
 def require(condition, message):
@@ -98,9 +102,12 @@ def collect(manifest, request):
             one['timing']['timesSeconds'] = [frame['timeSeconds']]
             validate_trajectory(one)
             output['responses'].append(response)
-        except (ValueError, KeyError, TypeError, OSError) as exc:
+        except (ValueError, KeyError, TypeError, OSError, IncompleteRead) as exc:
             frame.update(status='failed', clustering=None, error=f'{type(exc).__name__}: {exc}')
             output['collectionStatus'] = 'incomplete'
+            if isinstance(exc, IncompleteRead):
+                response = dict(bodyBase64=base64.b64encode(exc.partial[:MAX_RESPONSE_BYTES]).decode('ascii'),
+                                bodyIncomplete=True, bodyTruncated=len(exc.partial) > MAX_RESPONSE_BYTES)
             try:
                 json.dumps(response, allow_nan=False)
                 output['responses'].append(response)
@@ -130,9 +137,21 @@ def http_request(base_url, authorization=None):
             headers['Authorization'] = authorization
         req = Request(base_url.rstrip('/') + ENDPOINT,
                       data=json.dumps(body, allow_nan=False).encode(), headers=headers, method='POST')
-        with opener.open(req, timeout=60) as response:
-            raw = response.read(16 * 1024 * 1024 + 1)
-        require(len(raw) <= 16 * 1024 * 1024, '单帧响应超过读取限制')
+        try:
+            with opener.open(req, timeout=60) as response:
+                raw = response.read(MAX_RESPONSE_BYTES + 1)
+        except HTTPError as exc:
+            with exc:
+                incomplete = False
+                try:
+                    raw = exc.read(MAX_RESPONSE_BYTES + 1)
+                except IncompleteRead as interrupted:
+                    raw, incomplete = interrupted.partial, True
+            # 错误正文只作为证据封装，绝不按其中的code/data判断成功。
+            return dict(httpStatus=exc.code,
+                        bodyBase64=base64.b64encode(raw[:MAX_RESPONSE_BYTES]).decode('ascii'),
+                        bodyIncomplete=incomplete, bodyTruncated=len(raw) > MAX_RESPONSE_BYTES)
+        require(len(raw) <= MAX_RESPONSE_BYTES, '单帧响应超过读取限制')
         return json.loads(raw)
     return post
 

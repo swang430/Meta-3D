@@ -130,3 +130,71 @@ def test_http_to_ce_uses_original_endpoint_and_preserves_response():
         finally:
             server.shutdown()
             thread.join()
+
+
+@pytest.mark.parametrize('failure', ['interrupted', 'http_500'])
+def test_http_failure_retains_evidence_and_writes_remaining_frames(failure, tmp_path, monkeypatch):
+    import base64
+    import json
+    import sys
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+
+    calls = []
+    error_body = json.dumps(reply({'mpdbPath': manifest()['source']['mpdbPath'],
+                                 'internalLinkId': 11, 'frameId': 1})).encode()
+    partial = b'{"code":200,'
+
+    class Handler(BaseHTTPRequestHandler):
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            calls.append(body['internalLinkId'])
+            if body['internalLinkId'] == 11:
+                if failure == 'interrupted':
+                    self.send_response(200)
+                    self.send_header('Transfer-Encoding', 'chunked')
+                    self.end_headers()
+                    self.wfile.write(f'{len(partial):x}\r\n'.encode() + partial + b'\r\n')
+                    # 完整发出一块后断开，不发送结束块，真实触发IncompleteRead。
+                    self.close_connection = True
+                else:
+                    self.send_response(500)
+                    self.send_header('Content-Length', str(len(error_body)))
+                    self.end_headers()
+                    self.wfile.write(error_body)
+                return
+            payload = json.dumps(reply(body)).encode()
+            self.send_response(200)
+            self.send_header('Content-Length', str(len(payload)))
+            self.end_headers()
+            self.wfile.write(payload)
+
+        def log_message(self, *args):
+            pass
+
+    source, target = tmp_path / 'manifest.json', tmp_path / 'result.json'
+    source.write_text(json.dumps(manifest()), encoding='utf-8')
+    with ThreadingHTTPServer(('127.0.0.1', 0), Handler) as server:
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            monkeypatch.setattr(sys, 'argv', ['collect', '--manifest', str(source),
+                '--output', str(target), '--base-url', f'http://127.0.0.1:{server.server_port}'])
+            assert collector().main() == 2
+        finally:
+            server.shutdown()
+            thread.join()
+
+    value = json.loads(target.read_text(encoding='utf-8'))
+    assert calls == [10, 11, 12]
+    assert [f['status'] for f in value['frames']] == ['clustered', 'failed', 'clustered']
+    assert value['frames'][1]['clustering'] is None
+    assert value['collectionStatus'] == 'incomplete'
+    assert value['hardwareEligible'] is False
+    assert len(value['responses']) == 3
+    evidence = value['responses'][1]
+    assert base64.b64decode(evidence['bodyBase64']) == (partial if failure == 'interrupted' else error_body)
+    if failure == 'http_500':
+        assert evidence['httpStatus'] == 500
+    else:
+        assert evidence['bodyIncomplete'] is True
