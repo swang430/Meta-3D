@@ -23,7 +23,7 @@ def document():
                            timeSeconds=time, inputPathCount=4, status='clustered',
                            clustering=dict(rawPaths=4, filteredPaths=3, nCluster=1,
                                            paths=[copy.deepcopy(path)])))
-    return dict(schemaVersion='lauraycs-cluster-trajectory/1',
+    return dict(schemaVersion='meta3d-cluster-trajectory/1',
                 source=dict(taskId='synthetic-test', mpdbPath='s3://test/R0B0S0D.mpdb',
                             contentVersion=None, softwareVersion=None, additionalLoss=None),
                 carrierHz=2.4e9, txAnt=0, rxAnt=0, angleCoordinateSystem='LCS',

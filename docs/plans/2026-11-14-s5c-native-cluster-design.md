@@ -1,101 +1,54 @@
-# P2-16 S5c：由Lauraycs交付聚簇结果
+# P2-16 S5c：调用Lauraycs现有接口，接收已有聚簇结果
 
-2026-11-14用户授权按本次发现重新设计并实施。本设计替代此前“必须分别运行两套聚簇后才能选择正式来源”的未来路线；此前离线失败记录保留，不改成成功。
+状态：2026-11-14用户要求恢复Lauraycs，只修改Meta-3D与ChannelEgine并推送GitHub外审。本设计按该范围替代此前修改Lauraycs导出端的方案。
 
-## 职责与可观察问题
+## 范围与职责
 
-Lauraycs在计算时持有天线、坐标、时间和传播结果。现有整轨迹ASC准备流程已经调用内置聚簇，但随后裁剪掉角度、聚簇预算及来源。接收端再从原始MPDB重新聚簇，既重复工作，也要求重新取得生成时的上下文。
+Lauraycs工作区已恢复修改前的main `53ea4cf9`，无源码差异；`e094cfe7`只保留为未采用的本地备份，不部署、不再推送GitLab。
+Meta-3D调用原版已有接口，ChannelEgine校验并计算采样时刻的复响应。全链不在接收端重复聚簇，不加载HyperRT。
 
-新的路线是：Lauraycs内置聚簇 → 完整聚簇轨迹文件 → Meta-3D校验并保留 → ChannelEgine合成和设备适配。ChannelEgine的独立聚簇保留为可选研究，不再作为导入前置。原始MPDB不覆盖、不重写，聚簇结果另存并关联来源。
+原版接口为`POST /api/task/channel-analysis/clustering/kmeans/analyze`，接受源MPDB位置、内部链路ID、帧ID、可选接收端ID和请求簇数；返回单帧`algorithms`完整聚簇结果、身份、原始/有效路径计数，以及无路径或全部过滤的明确状态。接口已在源码核实，尚未对可运行部署作原样本验证。
 
-本地`HyperRT/CG.py`的`AbstractCameraF`错误属于包初始化依赖，不能解释为聚簇需要相机，也不能据此判定Lauraycs部署环境的内置聚簇不能运行。不修改HyperRT或绕过许可。
+## 验收关系
 
-## 已核入口与验收关系
-
-| 生产入口 | 权威判据 | 消费者 | 可观察断言 |
+| 入口 | 权威读取与边界 | 消费者 | 可观察断言 |
 |---|---|---|---|
-| Lauraycs聚簇轨迹导出任务 | 同次MPDB的LINK身份、载频与已保存任务时间 | 现有分析Worker | 全帧、同阵子对，取消和异常不变成空结果 |
-| `prepare_asc_sequence`的聚簇调用位置 | 同次`CLUSTER_CDL`完整输出 | 新的JSON导出；旧ASC保持原行为 | 复数H、时延、四角和预算不因裁剪丢失 |
-| Meta-3D文件读取 | 版本、单位、时间、来源与逐帧结构 | 保留聚簇语义的接收结构 | 不改成原始rays，不再次调用聚簇，不补未知值 |
-| ChannelEgine合成入口 | 明确的时间模型、角度参考、天线及极化语义 | 后续轨迹合成 | 不只取首帧，不以排序号冒充物理身份 |
+| 采集清单 | 操作方明确提供样本身份与非均匀时间；不假装服务验证了清单外的全部样本 | Meta-3D逐帧HTTP调用 | 清单先完整校验，再发请求；不用FRAME_ID猜秒数 |
+| 原版聚簇响应 | 回显MPDB位置、内部LINK与帧身份；输入/有效计数与算法结果一致 | Meta-3D交换文件 | 错身份、超预算、失败留为失败帧，不丢分母 |
+| 完整交换文件 | 固定版本、单位、复H与时间契约 | ChannelEgine读取器 | 不改成原始rays，不再次聚簇，未知多普勒保持null |
+| CE逐帧响应计算 | `Σ H exp(-j 2π Δf τ)`，时延ns转s | 离线核对命令 | 保留所有采样时刻，无路径/全部过滤保持不可评价 |
 
-## 文件约定
+## 交换格式与来源
 
-采用版本化JSON，记录：生成软件与算法版本、MPDB内容身份、任务和阵子对、载频、角度坐标系、损耗处理、时间及其来源；逐帧保留原样本身份、真实时刻、输入与有效路径数量、请求与实际簇数、按类型分配预算以及完整聚簇结果。文件格式的具体字段以生产端与接收端共同验证的契约为准。
+请求清单版本为`meta3d-lauraycs-request/1`；结果版本为`meta3d-cluster-trajectory/1`。这是Meta-3D整理的交换文件，不宣称是Lauraycs原生导出格式。
 
-首版`schemaVersion=lauraycs-cluster-trajectory/1`，共同字段如下：
+- `source`保留taskId、mpdbPath、contentVersion、softwareVersion、additionalLoss。版本未知显式null；原接口不接收附加损耗选择，非null选择拒绝。
+- `carrierHz`、`txAnt`、`rxAnt`、`angleCoordinateSystem`、`sourceMetadata`按清单保留，但标明是清单声明，不升级为服务回读证据。
+- `timing.source`和`timing.timesSeconds`必须明确、非负、严格递增；与samples一一对应。请求清单只保证所列样本完整，不声称覆盖整个Lauraycs任务。
+- `frames`保留每帧身份、时刻、状态与完整聚簇结果；`responses`另存未经字段裁剪的服务响应。算法输出缺多普勒时，仅在规范化副本中补null。
+- `collectionStatus=complete`仅表示清单中所有请求成功得到可识别状态；含失败帧则incomplete，CLI退出2。二者均`hardwareEligible=false`。
+- `clusterIdentity=frame-local-only`，不把帧内编号当跨帧物理身份。
+- 单位固定：s、ns、deg、Hz及复数实部/虚部。空帧、全过滤和执行失败分别表示。
 
-| 字段 | 含义 |
-|---|---|
-| `source` | 任务、MPDB位置、内容版本、软件版本、附加损耗选择；取不到的版本显式null，不编造校验值 |
-| `carrierHz`、`txAnt`、`rxAnt` | 同一轨迹的载频与收发阵子身份 |
-| `angleCoordinateSystem`、`units` | 源角度坐标系及固定单位声明 |
-| `timing.source`、`timing.timesSeconds` | 时间依据与原始逐帧物理时刻 |
-| `requestedClusterCount` | 本次请求预算，不能解释成仪器能力 |
-| `clusterIdentity` | 固定为`frame-local-only`，不声称物理跟踪 |
-| `frames` | 完整样本序列，含身份、时刻、输入数量、状态与原生完整`clustering`结果 |
+接口不返回源文件内容版本，也不保证多次请求期间文件不变；清单中的版本字段不能证明服务器读取一致性。因此本片保持离线研究用途，不启用正式执行。
+源H可能已包含天线与极化响应：MiRT的WANT_H分支优先取channel.H，否则调用包含收发Jones向量的channelCoefficients。不得直接再乘一遍天线模型。
 
-源内容版本、软件版本缺失的文件可离线读取，但不是已验证来源；接收端不把“结构通过”升级为正式资格。
+## 实现清单
 
-时延单位明确为ns，载频与多普勒为Hz，角度为度，H为复数实部和虚部。缺多普勒为null；帧内簇号不是跨帧身份。空传播帧、全部路径被过滤、算法失败分别表示。时间严格递增，不能把FRAME_ID、排序或默认1秒当物理时间。没有时间来源时拒绝时间轨迹导出。
+Meta-3D：
+- `scripts/s5_evaluation/lauraycs_collect.py`：原接口采集、请求前校验、逐帧失败留存、原始响应留存、HTTPS与明确授权头、禁止重定向。
+- `scripts/s5_evaluation/cluster_import.py`：命令行包装，直接调用CE公共模块；不保留校验或计算副本。
+- 对应测试、README及原roadmap同源状态。
 
-首版仅声明单链路、单阵子对、当前H通道，不凭单极化复系数重建完整极化矩阵。源角度为局部坐标时保留该声明，不能直接按暗室全局角度播放。
+ChannelEgine：
+- `mimo_ota_simulator/imported_cluster_trajectory.py`：严格读取、结构校验、逐帧模型频响；不修改既有聚簇、合成与ASC输出路径。
+- 对应测试及模块使用文档。
 
-已核`HyperRT/.../MiRT.py`的`WANT_H`记录分支：优先保存`channel.H`，否则调用
-`channelCoefficients(channel, antennaGainTX.JonesVector, antennaGainRX.JonesVector, mergeMultiPath=False)`。
-因此不能一概把导出的H当作不含天线影响的传播矩阵；须保留来源语义，核明分支与天线定义后才映射到OTA探头。
-CE现有子径合成还会应用发射阵列及探头权重，直接换字段存在重复施加天线响应的风险。
+原始MPDB、Lauraycs、仪器驱动与正式多快照拒绝门均不改。不新增SCPI，本片仪器手册查询不适用。
 
-## 实施边界
+## 验证与完成边界
 
-1. Lauraycs复用现有分析任务、完整轨迹校验和聚簇函数，增加独立聚簇JSON下载；不借ASC格式承载额外字段。
-2. Meta-3D严格读取该版本，保留所有帧和来源；不把聚簇结果塞入旧的“原始射线”字段。
-3. 核实CE已有合成能力后接最小可达消费者。当前`bake_b1_annotated`只烘单快照，`native_fit_trajectory`使用均匀时刻且再次聚簇，二者均不能直接宣称支持本次完整轨迹。
-4. 软件文件贯通、原样本原生计算、轨迹物理精度、设备播放分别验收。未解决的角度参考、相位演化或极化信息不能以默认值补齐；未满足正式合成条件前不解除执行拒绝。
+先红测试再实现：真实HTTP封套、错误身份、请求失败、超预算、无路径、全过滤、非均匀时间、复H、未知值、CE真实函数消费。同一条本地HTTP测试链只替换外部Lauraycs服务，必须明确标记合成，不冒充38帧原样本原生计算。
+关键逆变异覆盖偷换时间、丢虚部、错身份被接受或失败帧消失。独立内审后推送各自GitHub分支，显式触发外审。
 
-本片不新增仪器命令，仪器手册查询不适用；ASC秒/纳秒与设备加载仍按S6核验。
-
-## 验证与完成标准
-
-先红测试再实现，覆盖非均匀时间、复H相消、空帧、未知多普勒、不同阵子、非法单位、来源缺失、超预算、取消和失败。导出到接收端的同一份文件逐字段对账；逆变异至少让时间均匀化、丢虚部、丢失败帧产生失败。
-
-合成样本仅证明软件语义，不作为用户原MPDB的聚簇结果。原始样本需在可运行的Lauraycs正常环境产生输出并保留运行证据。当前本机未发现Lauraycs服务或分析Worker，远端尚未验证；这一点不是通过补造结果解决的。
-
-S5c完整关闭仍要求：来源导出、接收、合成链实际贯通，保留全部时刻和真实字段，并明确用途和误差依据。只完成文件导出或解析时不得标记整项完成。
-
-## 当前实施记录
-
-Meta-3D新增`scripts/s5_evaluation/cluster_import.py`及对应测试：严格读取完整聚簇文件；
-可在指定频率偏移网格按`Σ H exp(-j 2π Δf τ)`重建每个已有时刻的响应。
-这项计算不需要跨帧身份，时延由文件声明的ns换成s；缺路径帧保留不可评价，
-不当作已测零响应。结果只用于离线接收核对，不自动保存为可执行资产。
-
-2026-11-14本工作区执行记录：
-
-- `python -m pytest scripts/s5_evaluation/tests/test_cluster_import.py -q --color=no`：新增读取器前14项失败；实现后14项通过。增加频响用例时2项失败、14项通过；补实现后16项通过。
-- `/Users/Simon/Tools/ChannelEgine/.venv/bin/python -m pytest scripts/s5_evaluation/tests -q --color=no`：126 passed, 4 skipped。跳过来自原有Lauraycs原生入口依赖，不当作原生聚簇通过。
-- 内存逆变异：返回前把末帧时间改为2秒、把首簇虚部改为0、删除空帧，三项均被行为断言捕获；磁盘源码未修改。
-- 独立审查读取器第一版未发现实质缺陷；生成端契约一致性需以双方交接测试为准，不能据各自单测推断。
-
-没有启动仪器，没有部署服务，没有以合成样本替代用户的38帧原始数据。
-
-### 生产端交接
-
-Lauraycs分支`codex/s5c-cluster-trajectory-export`复用整轨迹循环，增加完整JSON导出、分析Worker分派、鉴权任务与结果读取、界面独立下载。
-新增23项测试通过；相关后端71通过、3失败、2跳过。以未修改HEAD的ASC模块复跑为48通过、同名3失败、2跳过；三项失败均止于原生依赖导入，不能说已执行或验证了内核多普勒行为。
-
-生产端生成的明确合成样本，实际经接收端读取并在0/1MHz/5MHz偏移网格重建响应：三帧时刻0、0.13、0.91秒保留；无路径与全部过滤帧保持不可评价。
-本机证据位于`/Users/Simon/.codex/artifacts/2026-11-14-s5c-native/`的`producer-output.json`、`consumer-result.json`及两份后端回归日志；合成输出不是原始38帧原生运行结果。
-
-独立内审发现并修复静止Tx时间轴误选问题，随后未发现新的实质缺陷。前端完整构建结果另记，不能据模板编译通过宣称全部通过。
-
-前端依赖最初缺少AssemblyScript，直接测试无法加载生成物。随后在`Lauraycs-source/web/src`按锁文件执行`npm ci --ignore-scripts --no-audit --no-fund`补齐依赖，未改锁文件；`npm run test:asc`完成构建并得到23 passed、0 failed。该结果覆盖已有ASC回归，不等于真实浏览器操作或原生聚簇通过。
-
-完整前端构建首次在默认约2GB堆上限内存耗尽；随后执行`NODE_OPTIONS=--max-old-space-size=4096 npm run build`，退出0，`built in 45.57s`，日志为`frontend-build-4gb.log`。生产端把物理时间换成样本序号的内存变异被既有测试捕获，磁盘源码校验值未变。
-
-### 交付状态与剩余阻塞
-
-- Meta-3D草稿PR：[#584](https://github.com/swang430/Meta-3D/pull/584)，未合并、未部署。
-- Lauraycs本地提交`e094cfe7`，已过独立内审。推送同名分支时GitLab返回`You are not allowed to push code to this project.`，未创建远端合并请求；补丁保存在本机证据目录的`lauraycs-producer.patch`。
-- 原样本仍没有正常运行环境产生的聚簇轨迹，不能用上述合成文件替代。
-- 完整非均匀OTA轨迹合成、H天线/极化语义与坐标适配、正式资产执行仍未完成。文件导出与离线接收完成不等于整项S5c完成，原拒绝条件不解除。
+本片交付的是既有接口采集和CE直接接收，不是完整S5c关闭。完整非均匀OTA轨迹合成、源H/天线/极化与坐标适配、正式资产执行及设备验收仍须另有真实证据。

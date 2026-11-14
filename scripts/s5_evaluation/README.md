@@ -1,30 +1,70 @@
-# S5c逐帧离线评估
+# S5c：采集原版Lauraycs聚簇结果并交给CE
 
-仅用于研究，不连接仪器、不调用正式执行、不生成通过判词。设计见
-[实施设计](../../docs/plans/2026-11-14-s5c-evaluation-design.md)。
+当前路线见[设计](../../docs/plans/2026-11-14-s5c-native-cluster-design.md)。
+Lauraycs保持原版；不加载HyperRT、不在Meta-3D或CE重复聚簇。下面的采集只用于离线研究，不解除正式执行限制。
 
-2026-11-14后续路线改为Lauraycs内置聚簇结果导出，再由接收端读取；CE独立聚簇不再是接入前置。
-见[新设计](../../docs/plans/2026-11-14-s5c-native-cluster-design.md)。下方旧双算法工具继续保留为研究工具。
+## 使用现有服务
 
-## 读取Lauraycs聚簇轨迹
+准备一个`meta3d-lauraycs-request/1`清单，样本身份来自现有Lauraycs任务，时间来自该任务保存的物理时间或明确声明的推导依据。不要用FRAME_ID当秒数。
+下例仅展示结构，`synthetic-example`与S3路径必须替换，不能直接拿来当真实结果：
 
-```sh
-python scripts/s5_evaluation/cluster_import.py /absolute/path/to/cluster-trajectory.json
+```json
+{
+  "schemaVersion": "meta3d-lauraycs-request/1",
+  "source": {
+    "taskId": "synthetic-example",
+    "mpdbPath": "s3://example/R0B0S0D.mpdb",
+    "contentVersion": null,
+    "softwareVersion": null,
+    "additionalLoss": null
+  },
+  "carrierHz": 2400000000,
+  "txAnt": 0,
+  "rxAnt": 0,
+  "angleCoordinateSystem": "LCS",
+  "units": {"time":"s","delay":"ns","angles":"deg","doppler":"Hz","carrier":"Hz","response":"complex_scalar"},
+  "clusterIdentity": "frame-local-only",
+  "requestedClusterCount": 8,
+  "timing": {"source":"synthetic-example","timesSeconds":[0,0.13,0.91]},
+  "samples": [
+    {"sampleIndex":0,"frameId":0,"internalLinkId":10},
+    {"sampleIndex":1,"frameId":1,"internalLinkId":11},
+    {"sampleIndex":2,"frameId":2,"internalLinkId":12}
+  ]
+}
 ```
 
-读取`lauraycs-cluster-trajectory/1`，校验完整时间轴、复H、单位、预算和来源字段，
-保留空帧与未知多普勒，不调用HyperRT或CE聚簇。成功只表示文件结构有效，
-输出明确`hardwareEligible=false`；不将聚簇结果改装成原始射线。
-原样本原生计算、资产保存、完整非均匀OTA轨迹合成和设备播放尚不能由此命令证明。
+```sh
+python scripts/s5_evaluation/lauraycs_collect.py \
+  --manifest /absolute/path/to/request.json \
+  --base-url https://your-lauraycs-host \
+  --ce-repo /absolute/path/to/ChannelEgine \
+  --output /absolute/path/to/new-result.json
 
-可加`--frequency-offsets-hz 0 1000000 5000000`，按明确的频率偏移网格重建每个原始时刻的模型频响。
-计算使用复H与ns换算后的时延，不在帧间插值、不要求跨帧簇身份，也不重新聚簇。
-无路径和全部过滤帧保持不可评价，不把缺失变成测得零响应；计算结果不代表实测宽带真值。
+python scripts/s5_evaluation/cluster_import.py /absolute/path/to/new-result.json \
+  --ce-repo /absolute/path/to/ChannelEgine \
+  --frequency-offsets-hz 0 1000000 5000000
+```
 
-输入必须是S5a输出的`s5-raw-paths/1`和相同原ZIP。两个方向全部帧分别评价8/16/24个簇上限，保留原始非均匀时刻。
-`--candidate-units`显式采用候选秒、度、Hz，仅作条件性研究，不把单位来源变成已验证。
-频率偏移网格必须显式填写；它是单频射线模型的数学诊断，不是实测宽带准确性证明。
+基地址填写服务根地址，程序调用原版`/api/task/channel-analysis/clustering/kmeans/analyze`。
+如需授权，通过`LAURAYCS_AUTHORIZATION`环境变量提供完整Authorization头；不要写进清单或命令参数。
+非本机服务要求HTTPS，禁止重定向，不自动重试计算请求。单帧请求超时60秒，响应上限16MiB。
 
+输出`meta3d-cluster-trajectory/1`由Meta-3D组织，不是Lauraycs原生文件。
+完整服务响应与规范化结果同时保留；未知多普勒为null，空帧与失败不同。
+`complete`仅指清单里的请求都得到可识别结果，不证明覆盖完整任务，也不证明服务器源文件在逐次调用间未变。
+失败帧不删除，整体incomplete且退出2。输出文件必须尚不存在。
+任务、载频、阵子、时间、源版本和坐标系声明不升级成服务回读证据；两种状态都`hardwareEligible=false`。
+完整源元数据可放在`sourceMetadata`，原样保留。
+
+CE库`mimo_ota_simulator.imported_cluster_trajectory`是校验与计算的唯一实现，Meta只包装调用。
+支持该模块的CE版本必须已安装，或通过`--ce-repo`指定含本片实现的仓库。
+频响计算只在已有时刻使用复H和时延，不进行帧间插值，不证明真实宽带或OTA设备适用性。
+无路径及全部过滤帧保持不可评价，不补成已测零响应。
+
+## 原有双算法研究工具
+
+以下工具保留供可选研究，不是正式来源选择的必跑前置。
 ## 调用
 
 使用装有各自原算法依赖的Python，两个算法分别在独立进程运行。下面路径须替换为实际位置，输出目录必须尚不存在。
