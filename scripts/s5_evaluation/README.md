@@ -3,6 +3,24 @@
 仅用于研究，不连接仪器、不调用正式执行、不生成通过判词。设计见
 [实施设计](../../docs/plans/2026-11-14-s5c-evaluation-design.md)。
 
+2026-11-14后续路线改为Lauraycs内置聚簇结果导出，再由接收端读取；CE独立聚簇不再是接入前置。
+见[新设计](../../docs/plans/2026-11-14-s5c-native-cluster-design.md)。下方旧双算法工具继续保留为研究工具。
+
+## 读取Lauraycs聚簇轨迹
+
+```sh
+python scripts/s5_evaluation/cluster_import.py /absolute/path/to/cluster-trajectory.json
+```
+
+读取`lauraycs-cluster-trajectory/1`，校验完整时间轴、复H、单位、预算和来源字段，
+保留空帧与未知多普勒，不调用HyperRT或CE聚簇。成功只表示文件结构有效，
+输出明确`hardwareEligible=false`；不将聚簇结果改装成原始射线。
+原样本原生计算、资产保存、完整非均匀OTA轨迹合成和设备播放尚不能由此命令证明。
+
+可加`--frequency-offsets-hz 0 1000000 5000000`，按明确的频率偏移网格重建每个原始时刻的模型频响。
+计算使用复H与ns换算后的时延，不在帧间插值、不要求跨帧簇身份，也不重新聚簇。
+无路径和全部过滤帧保持不可评价，不把缺失变成测得零响应；计算结果不代表实测宽带真值。
+
 输入必须是S5a输出的`s5-raw-paths/1`和相同原ZIP。两个方向全部帧分别评价8/16/24个簇上限，保留原始非均匀时刻。
 `--candidate-units`显式采用候选秒、度、Hz，仅作条件性研究，不把单位来源变成已验证。
 频率偏移网格必须显式填写；它是单频射线模型的数学诊断，不是实测宽带准确性证明。
