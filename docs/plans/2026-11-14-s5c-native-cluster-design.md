@@ -78,3 +78,24 @@ Meta-3D新增`scripts/s5_evaluation/cluster_import.py`及对应测试：严格�
 - 独立审查读取器第一版未发现实质缺陷；生成端契约一致性需以双方交接测试为准，不能据各自单测推断。
 
 没有启动仪器，没有部署服务，没有以合成样本替代用户的38帧原始数据。
+
+### 生产端交接
+
+Lauraycs分支`codex/s5c-cluster-trajectory-export`复用整轨迹循环，增加完整JSON导出、分析Worker分派、鉴权任务与结果读取、界面独立下载。
+新增23项测试通过；相关后端71通过、3失败、2跳过。以未修改HEAD的ASC模块复跑为48通过、同名3失败、2跳过；三项失败均止于原生依赖导入，不能说已执行或验证了内核多普勒行为。
+
+生产端生成的明确合成样本，实际经接收端读取并在0/1MHz/5MHz偏移网格重建响应：三帧时刻0、0.13、0.91秒保留；无路径与全部过滤帧保持不可评价。
+本机证据位于`/Users/Simon/.codex/artifacts/2026-11-14-s5c-native/`的`producer-output.json`、`consumer-result.json`及两份后端回归日志；合成输出不是原始38帧原生运行结果。
+
+独立内审发现并修复静止Tx时间轴误选问题，随后未发现新的实质缺陷。前端完整构建结果另记，不能据模板编译通过宣称全部通过。
+
+前端依赖最初缺少AssemblyScript，直接测试无法加载生成物。随后在`Lauraycs-source/web/src`按锁文件执行`npm ci --ignore-scripts --no-audit --no-fund`补齐依赖，未改锁文件；`npm run test:asc`完成构建并得到23 passed、0 failed。该结果覆盖已有ASC回归，不等于真实浏览器操作或原生聚簇通过。
+
+完整前端构建首次在默认约2GB堆上限内存耗尽；随后执行`NODE_OPTIONS=--max-old-space-size=4096 npm run build`，退出0，`built in 45.57s`，日志为`frontend-build-4gb.log`。生产端把物理时间换成样本序号的内存变异被既有测试捕获，磁盘源码校验值未变。
+
+### 交付状态与剩余阻塞
+
+- Meta-3D草稿PR：[#584](https://github.com/swang430/Meta-3D/pull/584)，未合并、未部署。
+- Lauraycs本地提交`e094cfe7`，已过独立内审。推送同名分支时GitLab返回`You are not allowed to push code to this project.`，未创建远端合并请求；补丁保存在本机证据目录的`lauraycs-producer.patch`。
+- 原样本仍没有正常运行环境产生的聚簇轨迹，不能用上述合成文件替代。
+- 完整非均匀OTA轨迹合成、H天线/极化语义与坐标适配、正式资产执行仍未完成。文件导出与离线接收完成不等于整项S5c完成，原拒绝条件不解除。
