@@ -14,7 +14,8 @@ pydantic-settings>=2.0.0
 tzdata>=2025.2
 
 # Database
-sqlalchemy>=2.0.0
+# 当前支持2.0系列；2.1改变默认PostgreSQL驱动，升级须重新验证完整数据库链。
+sqlalchemy>=2.0.0,<2.1.0
 psycopg2-binary>=2.9.0
 alembic>=1.13.0
 

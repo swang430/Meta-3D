@@ -1,7 +1,7 @@
 """Application configuration"""
 import logging
 
-from pydantic import model_validator
+from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
 from typing import Any, ClassVar, Optional
 
@@ -37,7 +37,15 @@ class Settings(BaseSettings):
     debug: bool = True
 
     # Database
-    database_url: str = "postgresql://meta3d:meta3d_password@localhost:5432/meta3d_ota"
+    database_url: str = "postgresql+psycopg2://meta3d:meta3d_password@localhost:5432/meta3d_ota"
+
+    @field_validator("database_url")
+    @classmethod
+    def _select_declared_postgres_driver(cls, value: str) -> str:
+        """旧配置未指定驱动时沿用已声明的psycopg2；显式选择不改写。"""
+        if value.startswith("postgresql://"):
+            return "postgresql+psycopg2://" + value[len("postgresql://"):]
+        return value
 
     # For SQLite (development fallback)
     # database_url: str = "sqlite:///./meta3d_ota.db"
