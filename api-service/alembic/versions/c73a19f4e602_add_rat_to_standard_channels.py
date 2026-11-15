@@ -25,11 +25,41 @@ depends_on: Union[str, Sequence[str], None] = None
 
 _TABLE = "standard_channel_definitions"
 _CHECK = "ck_scd_rat_channel_identity"
+_CHECK_SQL = (
+    "(radio_technology = 'nr5g' AND channel_kind = 'nr_arfcn' "
+    "AND arfcn IS NOT NULL AND lte_dl_earfcn IS NULL) OR "
+    "(radio_technology = 'lte' AND channel_kind = 'lte_dl_earfcn' "
+    "AND arfcn IS NULL AND lte_dl_earfcn IS NOT NULL)"
+)
+# PostgreSQL 14.20 临时表实测的 SQLAlchemy 反射文本。
+# 只接受这个已核对的形式；不去括号、不推断任意 SQL 的语义等价性。
+_CHECK_SQL_POSTGRESQL = (
+    "radio_technology::text = 'nr5g'::text AND channel_kind::text = 'nr_arfcn'::text "
+    "AND arfcn IS NOT NULL AND lte_dl_earfcn IS NULL OR "
+    "radio_technology::text = 'lte'::text AND channel_kind::text = 'lte_dl_earfcn'::text "
+    "AND arfcn IS NULL AND lte_dl_earfcn IS NOT NULL"
+)
 
 
 def upgrade() -> None:
     if not table_exists(_TABLE):
         return
+    bind = op.get_bind()
+    existing_check = next(
+        (check for check in sa.inspect(bind).get_check_constraints(_TABLE)
+         if check["name"] == _CHECK),
+        None,
+    )
+    if existing_check is not None:
+        expected = (
+            _CHECK_SQL_POSTGRESQL if bind.dialect.name == "postgresql" else _CHECK_SQL
+        )
+        if existing_check["sqltext"] != expected:
+            raise RuntimeError(
+                f"{_CHECK} 的现有定义与迁移要求不一致，已停止迁移；"
+                "请核对约束定义后再继续。"
+            )
+
     if not column_exists(_TABLE, "radio_technology"):
         op.add_column(
             _TABLE,
@@ -70,13 +100,8 @@ def upgrade() -> None:
             "channel_kind", existing_type=sa.String(32),
             nullable=False, server_default=None,
         )
-        batch.create_check_constraint(
-            _CHECK,
-            "(radio_technology = 'nr5g' AND channel_kind = 'nr_arfcn' "
-            "AND arfcn IS NOT NULL AND lte_dl_earfcn IS NULL) OR "
-            "(radio_technology = 'lte' AND channel_kind = 'lte_dl_earfcn' "
-            "AND arfcn IS NULL AND lte_dl_earfcn IS NOT NULL)",
-        )
+        if existing_check is None:
+            batch.create_check_constraint(_CHECK, _CHECK_SQL)
 
 
 def downgrade() -> None:
