@@ -51,7 +51,7 @@ APP_NAME=Meta-3D OTA API
 DEBUG=true
 
 # Database
-DATABASE_URL=postgresql://meta3d:meta3d_password@localhost:5432/meta3d_ota
+DATABASE_URL=postgresql+psycopg2://meta3d:meta3d_password@localhost:5432/meta3d_ota
 
 # For SQLite (development)
 # DATABASE_URL=sqlite:///./meta3d_ota.db
@@ -414,7 +414,7 @@ docker build -t meta3d-api .
 #    不挂就落在容器可写层, 换镜像/重建容器时全丢。
 #    (这两条挂载原先由 compose 的 api 服务提供, 该服务 2026-08-05 已拆除。)
 docker run -d -p 8000:8000 \
-  -e DATABASE_URL=postgresql://user:pass@host:5432/db \
+  -e DATABASE_URL=postgresql+psycopg2://user:pass@host:5432/db \
   -v "$PWD/calibration_data:/app/calibration_data" \
   -v "$PWD/certificates:/app/certificates" \
   meta3d-api

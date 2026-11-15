@@ -434,7 +434,7 @@ GUI 遵循 **API优先架构**，包含以下层次：
 
 ### 数据库（⭐ 重要）
 - **生产环境一律使用 PostgreSQL**，绝不依赖 SQLite
-  - 真实配置：`.env` 的 `DATABASE_URL=postgresql://...`
+  - 真实配置：`.env` 的 `DATABASE_URL=postgresql+psycopg2://...`
   - `app/config.py` 中的 SQLite URL 是**注释掉的备份**，不应在生产路径中启用
   - 新增 SQLAlchemy 模型应使用 PG 兼容类型（`postgresql.UUID`、`JSONB` 等）
 - **测试可以使用 SQLite**（隔离与速度优先）

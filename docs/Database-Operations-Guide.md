@@ -26,7 +26,7 @@ Meta-3D OTA 系统的后端服务强依赖关系型数据库来存储仪器配�
 ### 2.1 推荐配置 (PostgreSQL in Docker)
 ```env
 # api-service/.env
-DATABASE_URL=postgresql://meta3d:meta3d_password@localhost:5432/meta3d_ota
+DATABASE_URL=postgresql+psycopg2://meta3d:meta3d_password@localhost:5432/meta3d_ota
 ```
 此配置对应于 `api-service/docker-compose.yml` 中定义的 `postgres` 容器。
 
