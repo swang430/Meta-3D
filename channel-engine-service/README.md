@@ -11,85 +11,74 @@
 
 ## 安装
 
-### 1. 克隆并安装 ChannelEngine
+以下命令用于 macOS / Linux 本地开发，不是生产部署方案。从 `MIMO-First` 仓库根目录开始执行。完整系统还需要 API、前端和数据库，见[根目录安装说明](../README.md#-快速开始)。
+
+### 1. 克隆外部引擎并导出路径
 
 ```bash
-# 克隆 ChannelEngine 仓库
-git clone https://github.com/swang430/ChannelEgine.git
-cd ChannelEgine
-
-# 创建虚拟环境并安装依赖
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
-pip install -e ./mimo_ota_simulator
+# 当前目录：MIMO-First 根目录；已有同级克隆时跳过 git clone
+git clone https://github.com/swang430/ChannelEgine.git ../ChannelEgine
+export CHANNEL_ENGINE_PATH="$(cd ../ChannelEgine && pwd)"
 ```
 
-### 2. 配置环境变量
+`CHANNEL_ENGINE_PATH` 是外部引擎克隆目录的绝对路径。请在启动服务的终端中导出，换终端后重新设置。服务通过该路径导入源码，不要求执行 `pip install -e`。
+
+### 2. 安装服务和引擎依赖
 
 ```bash
-# 设置 ChannelEngine 路径（必需）
-export CHANNEL_ENGINE_PATH=/path/to/your/ChannelEgine
-
-# 或者创建 .env 文件
-cp .env.example .env
-# 编辑 .env 文件设置 CHANNEL_ENGINE_PATH
+# 仍在 MIMO-First 根目录，两个 requirements 使用同一个解释器安装
+python3 -m venv channel-engine-service/.venv
+channel-engine-service/.venv/bin/python -m pip install \
+  -r channel-engine-service/requirements.txt \
+  -r "$CHANNEL_ENGINE_PATH/requirements.txt"
 ```
 
-### 3. 安装服务依赖
+虚拟环境必须位于 `channel-engine-service/.venv`，根目录的 `npm run dev:channel-engine` 使用的就是这个解释器。若已按根目录安装说明完成这一步，无需重复安装。
 
-```bash
-cd ../channel-engine-service
-# 使用与ChannelEgine相同的虚拟环境
-source ../ChannelEgine/.venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 4. 扩展支持第三方射线跟踪 (Ray Tracing) 自定义 CDL
+### 3. 扩展支持第三方射线跟踪 (Ray Tracing) 自定义 CDL
 如果你希望引擎能够接受来自外部射线跟踪工具输出的任意 CDL 路况模型（非 3GPP 标准局限的簇参数），请遵循以下扩展步骤：
 
-1. **引擎算法层扩展**：修改你本地克隆的 `ChannelEgine` 仓库中的模拟器代码（如追加 `CustomChannelSimulator`），直接对接接收形如 `[Delay, Power, AoA, ZoA, AoD, ZoD, XPR]` 阵列字典的底层实例化。修改完毕后，在 `ChannelEgine` 目录下运行 `pip install -e .` 让软链接动态生效。
+1. **引擎算法层扩展**：修改你本地克隆的 `ChannelEgine` 仓库中的模拟器代码（如追加 `CustomChannelSimulator`），直接对接接收形如 `[Delay, Power, AoA, ZoA, AoD, ZoD, XPR]` 阵列字典的底层实例化。修改完毕后，保持 `CHANNEL_ENGINE_PATH` 指向该克隆目录，并重启服务以重新加载源码。
 2. **API 接口扩展**：在本仓库的 `app/models/ota_models.py` 中，为 `ScenarioConfig` 补充字典/列表类型，用以直接接收 JSON 格式的自定义射线矩阵数据；并在 `app/services/channel_engine.py` 内实现分支判断处理，如果是 `dict` 结构，则透传给原厂改写后的自定义算法计算器，完成自定义环境到探头的映射 (Spatial Mapping)。
 
 ## 配置
 
-| 环境变量 | 必需 | 说明 | 示例 |
-|---------|-----|------|------|
-| `CHANNEL_ENGINE_PATH` | 是 | ChannelEngine 仓库路径 | `/home/user/ChannelEgine` |
-| `HOST` | 否 | 服务监听地址 | `0.0.0.0` |
-| `PORT` | 否 | 服务监听端口 | `8001` |
+| 配置项 | 设置方式 | 说明 |
+|---------|-----|------|
+| `CHANNEL_ENGINE_PATH` | 在终端中 `export` | 外部 `ChannelEgine` 仓库的绝对路径 |
+| 监听地址 | `uvicorn --host` | 下例使用 `127.0.0.1` |
+| 监听端口 | `uvicorn --port` | 信道引擎服务标准端口为 `8001` |
+
+当前服务入口未加载 `.env` 文件，也未读取 `HOST`、`PORT` 环境变量来设置监听地址。仅复制 `.env.example` 或设置这两个变量不会自动改变监听配置；请使用下面的显式启动参数。
 
 ## 运行
 
-### 开发模式（自动重载）
+### 单独启动开发服务（自动重载）
+
+在已导出 `CHANNEL_ENGINE_PATH` 的终端、`MIMO-First` 根目录执行：
 
 ```bash
-# 确保设置了环境变量
-export CHANNEL_ENGINE_PATH=/path/to/your/ChannelEgine
-
-source ../ChannelEgine/.venv/bin/activate
-python -m app.main
+(cd channel-engine-service && .venv/bin/python -m uvicorn app.main:app \
+  --reload --host 127.0.0.1 --port 8001)
 ```
 
-或使用 uvicorn:
+也可在根目录安装 npm 依赖后运行 `npm run dev:channel-engine`。该命令继承终端中的引擎路径，使用服务自己的虚拟环境；当前模块入口固定监听 `0.0.0.0:8001`，并开启自动重载。
+
+同时启动完整开发系统，请先完成[根目录安装说明](../README.md#-快速开始)，然后在同一终端的根目录执行：
 
 ```bash
-CHANNEL_ENGINE_PATH=/path/to/ChannelEgine uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+export USE_MOCK_INSTRUMENTS=true
+npm run dev:all
 ```
 
-### 生产模式
-
-```bash
-CHANNEL_ENGINE_PATH=/path/to/ChannelEgine uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 4
-```
+完整开发系统使用 API `8000`、信道引擎服务 `8001`、前端 `5173`。这组命令用于开发，不是生产部署入口。
 
 ## API 文档
 
 启动服务后访问:
 
-- **Swagger UI**: http://localhost:8000/api/docs
-- **ReDoc**: http://localhost:8000/api/redoc
+- **Swagger UI**: http://localhost:8001/api/docs
+- **ReDoc**: http://localhost:8001/api/redoc
 
 ## API 端点
 
@@ -218,7 +207,7 @@ pytest
 
 ```typescript
 // gui/src/services/channelEngine.ts
-const response = await fetch('http://localhost:8000/api/v1/ota/generate-probe-weights', {
+const response = await fetch('http://localhost:8001/api/v1/ota/generate-probe-weights', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify(requestData)
