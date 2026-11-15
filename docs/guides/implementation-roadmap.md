@@ -514,7 +514,7 @@ curl -X POST http://localhost:8000/api/v1/test/generate-channel \
 
 ### 开发环境就绪检查
 - [ ] Python 3.10+ 已安装
-- [ ] Node.js 18+ 已安装
+- [ ] 已安装符合[根目录快速开始](../../README.md#环境要求)要求的 Node.js
 - [ ] Git 已配置
 - [ ] ChannelEngine 仓库可访问
 - [ ] Meta-3D 仓库已克隆

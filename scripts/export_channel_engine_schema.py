@@ -1,42 +1,24 @@
-import sys
-import os
+"""从计算服务生成接口定义；路径相对项目定位，失败按非零退出码返回。"""
 import json
-from unittest.mock import MagicMock
+from pathlib import Path
+import sys
 
-# 1. Mock the missing dependency 'channel_model_38901'
-# This allows importing the app without the actual ChannelEngine library
-sys.modules['channel_model_38901'] = MagicMock()
-sys.modules['channel_model_38901.simulator'] = MagicMock()
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(PROJECT_ROOT / "channel-engine-service"))
 
-# 2. Set environment variable to bypass check
-# We point to an existing directory so os.path.exists passes
-os.environ['CHANNEL_ENGINE_PATH'] = os.getcwd()
-
-# 3. Add service path
-sys.path.insert(0, os.path.abspath("channel-engine-service"))
-
-# 4. Import the app
-try:
+def main():
+    # 只读取路由定义，不启动服务、不运行计算，也不伪装计算库或覆盖其配置。
     from app.main import app
     from fastapi.openapi.utils import get_openapi
-    
-    # 5. Generate OpenAPI Schema
-    openapi_schema = get_openapi(
-        title=app.title,
-        version=app.version,
-        openapi_version=app.openapi_version,
-        description=app.description,
+
+    schema = get_openapi(
+        title=app.title, version=app.version,
+        openapi_version=app.openapi_version, description=app.description,
         routes=app.routes,
     )
-    
-    # 6. Save to file
-    output_path = "gui/src/types/channel-engine-schema.json"
-    with open(output_path, "w") as f:
-        json.dump(openapi_schema, f, indent=2)
-        
-    print(f"✅ Successfully generated OpenAPI schema at {output_path}")
+    output = PROJECT_ROOT / "gui/src/types/channel-engine-schema.json"
+    output.write_text(json.dumps(schema, indent=2), encoding="utf-8")
+    print(f"接口定义已生成：{output}")
 
-except Exception as e:
-    print(f"❌ Failed to generate schema: {e}")
-    import traceback
-    traceback.print_exc()
+if __name__ == "__main__":
+    main()
