@@ -46,6 +46,8 @@ def create_access_token(
     Returns:
         Encoded JWT token string
     """
+    if not auth_config.SECRET_KEY:
+        raise ValueError("签发令牌前须配置本站的 JWT_SECRET_KEY")
     to_encode = data.copy()
     now = datetime.now(timezone.utc)
 
@@ -78,6 +80,8 @@ def verify_token(token: str) -> Optional[TokenData]:
     Returns:
         TokenData if valid, None otherwise
     """
+    if not auth_config.SECRET_KEY:
+        return None
     try:
         payload = jwt.decode(
             token,

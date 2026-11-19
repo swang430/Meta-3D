@@ -51,7 +51,7 @@ APP_NAME=Meta-3D OTA API
 DEBUG=true
 
 # Database
-DATABASE_URL=postgresql+psycopg2://meta3d:meta3d_password@localhost:5432/meta3d_ota
+DATABASE_URL=postgresql+psycopg2://meta3d@localhost:5432/meta3d_ota
 
 # For SQLite (development)
 # DATABASE_URL=sqlite:///./meta3d_ota.db
@@ -117,7 +117,7 @@ DATABASE_URL=sqlite:///./meta3d_ota.db
 python -m app.main
 
 # Or using uvicorn directly
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
 ### 6. Access API Documentation
@@ -371,7 +371,7 @@ pip install gunicorn
 gunicorn app.main:app \
   --workers 1 \
   --worker-class uvicorn.workers.UvicornWorker \
-  --bind 0.0.0.0:8000
+  --bind 127.0.0.1:8000
 ```
 
 > ⚠️ **单 worker 是当前的部署契约，不是随手写的示例值。**
@@ -413,7 +413,7 @@ docker build -t meta3d-api .
 # ⚠️ 那两条 -v 不是可选的: calibration_data 存校准数据、certificates 存证书,
 #    不挂就落在容器可写层, 换镜像/重建容器时全丢。
 #    (这两条挂载原先由 compose 的 api 服务提供, 该服务 2026-08-05 已拆除。)
-docker run -d -p 8000:8000 \
+docker run -d -p 127.0.0.1:8000:8000 \
   -e DATABASE_URL=postgresql+psycopg2://user:pass@host:5432/db \
   -v "$PWD/calibration_data:/app/calibration_data" \
   -v "$PWD/certificates:/app/certificates" \

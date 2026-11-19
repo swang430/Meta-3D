@@ -338,7 +338,7 @@ if __name__ == "__main__":
 
     uvicorn.run(
         "app.main:app",
-        host="0.0.0.0",
+        host="127.0.0.1",
         port=8000,  # API Service 使用 8000 端口
         reload=settings.debug,
         log_level="info" if settings.debug else "warning"

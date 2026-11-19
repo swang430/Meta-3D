@@ -7,10 +7,7 @@ class AuthConfig(BaseModel):
     """Authentication configuration settings"""
 
     # JWT Settings
-    SECRET_KEY: str = os.getenv(
-        "JWT_SECRET_KEY",
-        "dev-secret-key-change-in-production"  # Default for development
-    )
+    SECRET_KEY: str | None = os.getenv("JWT_SECRET_KEY")
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = int(os.getenv("JWT_EXPIRE_MINUTES", "30"))
 
