@@ -406,7 +406,7 @@ async def _observe_cell_ready_power(
     from app.hal.propsim_f64 import RealPropsimF64Driver
     frozen = getattr(context.test_execution, "config", None)
     policy = frozen.get(EXECUTION_QUALIFICATION_KEY) if isinstance(frozen, dict) else None
-    rejection = {} if (
+    diagnostic_latest = (
         validate_frozen_execution_qualification(policy) is None
         and policy.get("policy_mode") == policy.get("classification") == "diagnostic"
         and isinstance(base_station, RealCmw500Driver)
@@ -415,17 +415,13 @@ async def _observe_cell_ready_power(
         and manual_reference.get("mode") == "manual"
         and manual_reference.get("application_succeeded") is True
         and sorted(manual_reference.get("input_ports") or []) == [1, 2]
-    ) else None
+    )
 
     async def _measure_input(port: int):
-        kwargs = {}
-        if rejection is not None:
-            rejection.pop(port, None)
-            kwargs["rejection"] = rejection
         return await _observe_channel_emulator_operation(
             operation_recorder, phase="adjust", operation="measure_input",
             requested={"measurement": {"input_port": port, "measurement_time_s": 1.0}},
-            invoke=lambda: channel_emulator.measure_input(port, 1.0, **kwargs),
+            invoke=lambda: channel_emulator.measure_input(port, 1.0),
         )
 
     observation = await run_attach_power_observation(
@@ -436,7 +432,7 @@ async def _observe_cell_ready_power(
         execution_id=str(context.test_execution.id),
         is_cancelled=_observation_cancelled,
         measure_input=_measure_input,
-        diagnostic_rejections=rejection,
+        diagnostic_latest=diagnostic_latest,
     )
     holder["result"] = observation
     measurements = dict(context.test_execution.measurements or {})

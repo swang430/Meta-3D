@@ -65,25 +65,24 @@ def _metrics(*, input_1=-17.2, input_2=-17.4, output_1=-50.5):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("ports,state,allowed", [
-    ([1, 2], "RUNNING", True), ([1], "RUNNING", False),
-    ([], "RUNNING", False), ([1, 2], "STOPPED", False),
+@pytest.mark.parametrize("latest,errors,accepted", [
+    (-29.1, [], True), (None, [], True), (-29.1, ["output_1: timeout"], False),
 ])
-async def test_p295_unknown_is_never_a_power_measurement(ports, state, allowed):
-    metrics = _metrics()
-    metrics["metrics"]["simulation_state"] = state
-    evidence = {}
-    async def measure(port):
-        if port in ports:
-            evidence[port] = '-200,"Execution error;Wrong device state for command"'
-        return None
+async def test_running_diagnostic_records_latest_without_active_query(latest, errors, accepted):
+    snap = _metrics(input_1=latest)
+    snap["metrics"]["query_errors"] = errors
+    async def forbidden(port):
+        pytest.fail("RUNNING 诊断不得主动测量")
     result = await run_attach_power_observation(
-        base_station=_BaseStation(), channel_emulator=_ChannelEmulator([metrics]),
-        observation_s=0, strict_input_level=True, execution_id="test",
-        measure_input=measure, diagnostic_rejections=evidence)
-    assert result["accepted"] is allowed
-    assert result["status"] == ("warning" if allowed else "rejected")
-    assert all(row["value_dbm"] is None for row in result["samples"][0]["input_powers_dbm"])
+        base_station=_BaseStation(), channel_emulator=_ChannelEmulator([snap]),
+        observation_s=0, strict_input_level=True, execution_id="diag",
+        diagnostic_latest=True, measure_input=forbidden)
+    assert result["accepted"] is accepted
+    sample = result["samples"][0]
+    assert sample["latest_input_powers_dbm"][0]["value_dbm"] == latest
+    assert sample["input_sample_time_confirmed"] is False
+    assert sample["input_measurement_confirmed"] is False
+    assert all(r["value_dbm"] is None for r in sample["input_powers_dbm"])
 
 
 def test_attach_power_observation_window_has_bounded_explicit_contract():

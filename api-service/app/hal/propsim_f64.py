@@ -4970,7 +4970,7 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
             return None
 
     async def measure_input(
-        self, input_num: int, measurement_time_s: float = 1.0, *, rejection=None
+        self, input_num: int, measurement_time_s: float = 1.0
     ) -> Optional[Tuple[float, float]]:
         """测量 (不设) 输入的平均电平 + crest factor。
 
@@ -4999,13 +4999,6 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
                 )).strip()
                 error = await self._query("SYST:ERR?", note_success=False)
                 if int(error.strip().split(",", 1)[0]) != 0:
-                    # P2-95: only the exact observed rejection, isolated in this
-                    # locked transaction. Mixed or unclosed error queues do not qualify.
-                    if (rejection is not None and not resp and
-                            error.strip() == '-200,"Execution error;Wrong device state for command"'):
-                        tail = await self._query("SYST:ERR?", note_success=False)
-                        if int(tail.strip().split(",", 1)[0]) == 0:
-                            rejection[input_num] = error.strip()
                     self._last_error = f"measure_input({input_num}) unconfirmed: {error}"
                     logger.warning("[F64] measure_input(%s) unconfirmed: %s", input_num, error)
                     return None
