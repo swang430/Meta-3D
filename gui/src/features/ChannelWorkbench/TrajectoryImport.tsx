@@ -39,7 +39,7 @@ export function TrajectoryImport({ onImport }: { onImport: (file: File) => void 
   return <fieldset disabled={busy}><legend>从原始文件导入轨迹</legend><Stack>
     <Select label="计算方向" value={direction} allowDeselect={false} onChange={value => value && setDirection(value)}
       data={[{ value: 'downlink', label: '下行' }, { value: 'uplink', label: '上行' }]} />
-    {Object.entries({ archive: '包含上下行 MPDB 的原始 ZIP 包', clusters: '该方向的聚簇 CSV', quality: '该方向的质量 CSV' }).map(([key, label]) =>
+    {Object.entries({ archive: '包含上下行 MPDB 的原始 ZIP 包', clusters: '该方向的聚簇 CSV', quality: '该方向的质量 CSV', manifest: '新批次的配套清单 JSON（已评估的原交付可省略）' }).map(([key, label]) =>
       <FileInput key={key} label={label} value={files[key] ?? null} onChange={file => setFiles(old => ({ ...old, [key]: file }))} />)}
     <Group><NumberInput label="轨迹恒速（米/秒）" value={speed} onChange={setSpeed} />
       <Checkbox label="按米解释轨迹坐标，以距离和恒速推算时刻" checked={metres} onChange={e => setMetres(e.currentTarget.checked)} /></Group>

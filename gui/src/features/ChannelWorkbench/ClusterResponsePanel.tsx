@@ -12,6 +12,7 @@ interface Frame {
 }
 interface Result {
   direction: 'downlink' | 'uplink'
+  source: { evaluation?: string }
   offsetsHz: number[]
   frames: Frame[]
 }
@@ -54,6 +55,9 @@ export function ClusterResponsePanel() {
     {result && <>
       <Button onClick={() => downloadFile(result.direction + '-response.json', new Blob([JSON.stringify(result)], { type: 'application/json' }))}>下载逐帧计算结果</Button>
       <Text>{result.direction === 'uplink' ? '上行' : '下行'}共 {result.frames.length} 帧。数值为模型计算结果，设备播放尚未验证。</Text>
+      <Text>{result.source.evaluation === 'reference_24_conditional'
+        ? '此批文件和时间推导条件与已评估的 24 簇交付一致。'
+        : '此批次的物理适用性未知。'}</Text>
       <ScrollArea.Autosize mah={350}><Table><Table.Thead><Table.Tr>
         <Table.Th>帧编号</Table.Th><Table.Th>时刻（秒）</Table.Th>
         {result.offsetsHz.map(hz => <Table.Th key={hz}>{hz / 1e6} MHz 偏移（实部，虚部）</Table.Th>)}

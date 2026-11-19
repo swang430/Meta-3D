@@ -237,10 +237,11 @@ def import_cluster_trajectory(
     archive: UploadFile, clusters: UploadFile, quality: UploadFile,
     direction: Literal["downlink", "uplink"] = Form(...),
     speed_m_s: float = Form(..., gt=0), coordinate_units: Literal["metres"] = Form(...),
+    manifest: Optional[UploadFile] = None,
 ):
     """用操作员确认的恒速、米制位置及上下行原始文件还原单个方向的时间轴。"""
     from app.services.channel_generation import mpdb_input as mpdb
-    from app.services.channel_generation.cluster_exchange import convert
+    from app.trajectory.cluster_exchange import convert
 
     with TemporaryDirectory() as temporary:
         folder = Path(temporary)
@@ -260,8 +261,14 @@ def import_cluster_trajectory(
             stem = Path(source["source_document"]["meta"]["lauraycsPlatform"]["name"]).stem
             if (clusters.filename, quality.filename) != (f"{stem}_cluster_cdl.csv", f"{stem}_cluster_quality.csv"):
                 raise ValueError("所选方向与聚簇文件、质量文件的名称不匹配")
-            hashes = {item["path"]: item["sha256"] for item in document["source_files"]}
-            hashes.update({u.filename: mpdb.digest((folder / u.filename).read_bytes()) for u in (clusters, quality)})
-            return convert(document, source, folder, hashes)
+            declared = None
+            if manifest is not None:
+                data = manifest.file.read(65537)
+                if len(data) > 65536:
+                    raise ValueError("配套清单超过 64 KiB")
+                declared = mpdb._json(data)
+                if not isinstance(declared, dict):
+                    raise ValueError("配套清单须为 JSON 对象")
+            return convert(document, source, folder, declared)
         except (ValueError, KeyError, OverflowError, FileExistsError) as exc:
             raise HTTPException(422, f"无法导入轨迹：{exc}") from exc

@@ -1,4 +1,6 @@
 """在聚簇轨迹的原始采样时刻计算模型频响。"""
+import os
+import sys
 from typing import Literal
 
 from fastapi import APIRouter, HTTPException
@@ -17,6 +19,11 @@ class TrajectoryRequest(BaseModel):
 def calculate_cluster_response(request: TrajectoryRequest):
     if request.trajectory.get("direction") != request.direction:
         raise HTTPException(422, "计算方向与交换文件声明不一致")
+    engine_path = os.environ.get("CHANNEL_ENGINE_PATH", "").strip()
+    if not os.path.isdir(engine_path):
+        raise HTTPException(503, "计算服务尚未配置可用的 ChannelEgine 安装目录")
+    if engine_path not in sys.path:
+        sys.path.insert(0, engine_path)
     try:
         from mimo_ota_simulator.imported_cluster_trajectory import synthesize_sampled_trajectory
     except ImportError as exc:
