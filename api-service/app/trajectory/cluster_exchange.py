@@ -52,7 +52,8 @@ def convert(document, direction, directory, manifest=None):
     same_files = archive["sha256"] == REFERENCE_HASHES["original.zip"] and all(
         actual[f"{stem}_cluster_{suffix}.csv"] == REFERENCE_HASHES.get(f"{stem}_cluster_{suffix}.csv")
         for suffix in ("cdl", "quality"))
-    evaluated = same_files and document["parameters"]["speed_m_s"] == 5 and document["parameters"]["coordinate_units"] == "metres"
+    evaluated = (manifest is None and same_files and document["parameters"]["speed_m_s"] == 5
+                 and document["parameters"]["coordinate_units"] == "metres")
     table = direction["raw_tables"]["LINK"]
     links = {f["link_id"] for f in direction["frames"]}
     if links != set(clusters) or links != set(quality) or len(links) != len(direction["frames"]):

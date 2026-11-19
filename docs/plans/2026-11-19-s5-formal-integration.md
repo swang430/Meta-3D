@@ -14,6 +14,8 @@
 {"schemaVersion":"meta3d-cluster-delivery/1","direction":"downlink","requestedClusterCount":null,"inputSha256":{"original.zip":"…","R0B0S0D_cluster_cdl.csv":"…","R0B0S0D_cluster_quality.csv":"…"}}
 ```
 
+命令行同样可以使用新批次清单。先用仓库的 inspect_mpdb.py 从 ZIP 适配，再将适配 JSON 文件名及其实际 SHA256 加入 inputSha256，运行 python -m scripts.s5_evaluation.export_trajectory，依次传入适配 JSON、CSV 目录、清单和输出目录。转换器用本次读取的 CSV 字节计算摘要并解析，再写出该方向的交换文件。
+
 ## 浏览器实跑记录
 
 2026-11-19 在 Chrome 从工作台上传实际 ZIP 及上下行两套 CSV，分别下载交换文件、计算结果。逐行比对下载文件与 ChannelEgine 独立命令输出，上下行各 38 帧，末帧编号及链路编号均为 37，时刻 36.17493937675094 秒。对端以原始 CSV 独立复算各方向 190 个复数，最大绝对差分别为 1.718×10⁻²⁰、1.531×10⁻²⁰。该验证覆盖界面、文件转换、计算及下载。
