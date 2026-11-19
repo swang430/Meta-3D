@@ -21,12 +21,13 @@ interface Result {
 
 export function ClusterResponsePanel() {
   const [file, setFile] = useState<File | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [operation, setOperation] = useState<'import' | 'calculate' | null>(null)
+  const busy = operation !== null
   const [error, setError] = useState('')
   const [result, setResult] = useState<Result | null>(null)
   async function calculate() {
     if (!file) return
-    setBusy(true)
+    setOperation('calculate')
     setError('')
     setResult(null)
     try {
@@ -44,15 +45,16 @@ export function ClusterResponsePanel() {
     } catch (err) {
       setError(err instanceof Error ? err.message : '读取轨迹或计算失败')
     } finally {
-      setBusy(false)
+      setOperation(null)
     }
   }
   return <Paper withBorder p="md"><Stack>
-    <TrajectoryImport onImport={value => { setFile(value); setResult(null); setError('') }} />
+    <TrajectoryImport disabled={busy} importing={operation === 'import'}
+      onBusyChange={value => setOperation(value ? 'import' : null)} onImport={value => { setFile(value); setResult(null); setError('') }} />
     <FileInput label="聚簇轨迹文件" accept=".json" disabled={busy} value={file}
       onChange={value => { setFile(value); setResult(null); setError('') }} />
     {file && <Button variant="light" onClick={() => downloadFile(file.name, file)}>下载交换文件</Button>}
-    <Button disabled={!file} loading={busy} onClick={calculate}>计算逐帧模型频响</Button>
+    <Button disabled={!file || busy} loading={operation === 'calculate'} onClick={calculate}>计算逐帧模型频响</Button>
     {error && <Alert color="red">{error}</Alert>}
     {result && <>
       <Button onClick={() => downloadFile(result.direction + '-response.json', new Blob([JSON.stringify(result)], { type: 'application/json' }))}>下载逐帧计算结果</Button>
