@@ -1907,8 +1907,8 @@ class MeasureExecutor(IStepExecutor):
             EXECUTION_QUALIFICATION_KEY, validate_frozen_execution_qualification,
         )
         qualification = execution_config.get(EXECUTION_QUALIFICATION_KEY)
-        from app.hal.cmw500_base_station import RealCmw500Driver
-        repeated_cmw = (isinstance(base_station, RealCmw500Driver)
+        measurement = getattr(getattr(base_station, "adapter_manifest", None), "measurement", None)
+        repeated_cmw = (getattr(measurement, "cardinality", None) == "single"
                         and not is_mock_driver(base_station)
                         and isinstance(qualification, dict)
                         and validate_frozen_execution_qualification(qualification) is None
