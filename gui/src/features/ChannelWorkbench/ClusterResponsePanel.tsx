@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { Alert, Button, FileInput, Paper, ScrollArea, Stack, Table, Text } from '@mantine/core'
 
 interface Frame {
+  actualClusterCount: number | null
   sampleIndex: number
   frameId: number | null
   timeSeconds: number
@@ -13,6 +14,7 @@ interface Frame {
 interface Result {
   direction: 'downlink' | 'uplink'
   source: { evaluation?: string }
+  requestedClusterCount: number | null
   offsetsHz: number[]
   frames: Frame[]
 }
@@ -54,15 +56,15 @@ export function ClusterResponsePanel() {
     {error && <Alert color="red">{error}</Alert>}
     {result && <>
       <Button onClick={() => downloadFile(result.direction + '-response.json', new Blob([JSON.stringify(result)], { type: 'application/json' }))}>下载逐帧计算结果</Button>
-      <Text>{result.direction === 'uplink' ? '上行' : '下行'}共 {result.frames.length} 帧。数值为模型计算结果，设备播放尚未验证。</Text>
+      <Text>{result.direction === 'uplink' ? '上行' : '下行'}共 {result.frames.length} 帧。数值为模型计算结果，设备播放尚未验证。请求簇数：{result.requestedClusterCount ?? '未知'}。</Text>
       <Text>{result.source.evaluation === 'reference_24_conditional'
-        ? '此批文件和时间推导条件与已评估的 24 簇交付一致。'
+        ? '交换文件来源记录：已评估的 24 簇交付及对应时间条件。'
         : '此批次的物理适用性未知。'}</Text>
       <ScrollArea.Autosize mah={350}><Table><Table.Thead><Table.Tr>
-        <Table.Th>帧编号</Table.Th><Table.Th>时刻（秒）</Table.Th>
+        <Table.Th>帧编号</Table.Th><Table.Th>实有簇数</Table.Th><Table.Th>时刻（秒）</Table.Th>
         {result.offsetsHz.map(hz => <Table.Th key={hz}>{hz / 1e6} MHz 偏移（实部，虚部）</Table.Th>)}
       </Table.Tr></Table.Thead><Table.Tbody>{result.frames.map(frame => <Table.Tr key={frame.sampleIndex}>
-        <Table.Td>{frame.frameId ?? '未知'}</Table.Td><Table.Td>{frame.timeSeconds}</Table.Td>
+        <Table.Td>{frame.frameId ?? '未知'}</Table.Td><Table.Td>{frame.actualClusterCount ?? '未知'}</Table.Td><Table.Td>{frame.timeSeconds}</Table.Td>
         {result.offsetsHz.map((hz, i) => <Table.Td key={hz}>{frame.real && frame.imag
           ? [frame.real[i], frame.imag[i]].map(x => x.toPrecision(6)).join('，')
           : frame.reason ?? '缺测'}</Table.Td>)}

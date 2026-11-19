@@ -41,4 +41,7 @@ def calculate_cluster_response(request: TrajectoryRequest):
     for frame, row in zip(frames, rows):
         if any(row[key] != frame[key] for key in ("sampleIndex", "timeSeconds", "frameId", "internalLinkId")):
             raise HTTPException(502, "计算结果与输入帧的次序或时刻不一致")
-    return {**result, "hardware_verified": False}
+        row["actualClusterCount"] = (frame["clustering"]["nCluster"]
+                                     if frame["clustering"] is not None else None)
+    return {**result, "requestedClusterCount": request.trajectory["requestedClusterCount"],
+            "timing": request.trajectory["timing"], "hardware_verified": False}
