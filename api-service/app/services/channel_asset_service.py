@@ -162,6 +162,8 @@ def _validate_rt_dynamic_payload(payload: dict) -> None:
     for si, snap in enumerate(snapshots):
         if not isinstance(snap, dict):
             raise ChannelAssetError(f"rt_dynamic payload.snapshots[{si}] 须对象")
+        if "clusters" in snap:
+            raise ChannelAssetError("射线快照含有已有聚簇结果，不能作为原始射线再次聚簇。")
         rays = snap.get("rays")
         if not isinstance(rays, list) or len(rays) == 0:
             raise ChannelAssetError(f"rt_dynamic payload.snapshots[{si}].rays 须非空列表 (≥1 射线)")
@@ -345,6 +347,18 @@ def _validate_payload(source_type: str, payload: Any) -> None:
     if not isinstance(payload, dict):
         raise ChannelAssetError(f"payload 须对象 (得 {type(payload).__name__})")
     _PAYLOAD_VALIDATORS[source_type](payload)
+
+
+def validate_execution_snapshots(asset: ChannelAsset) -> None:
+    """读取已保存资产时核对帧数与内容，防止旧记录绕开创建校验。"""
+    if asset.source_type not in ("custom_static", "rt_dynamic"):
+        return
+    snapshots = asset.payload.get("snapshots") if isinstance(asset.payload, dict) else None
+    if isinstance(snapshots, list) and len(snapshots) > 1:
+        raise ChannelAssetError(
+            f"资产含 {len(snapshots)} 个快照。当前正式执行仅支持单快照，不能执行多快照轨迹。"
+        )
+    _validate_payload(asset.source_type, asset.payload)
 
 
 def _validate_top_physical(fields: dict) -> None:

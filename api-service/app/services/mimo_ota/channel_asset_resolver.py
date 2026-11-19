@@ -18,6 +18,8 @@ from sqlalchemy.orm import Session
 
 from app.services.channel_asset_service import (
     ChannelAssetNotFound,
+    ChannelAssetError,
+    validate_execution_snapshots,
     _has_verified_smu_project_truth,
     get_channel_asset,
     normalize_vendor_scd_config,
@@ -52,6 +54,10 @@ def engine_mode_for_channel_asset(asset: Any) -> str:
     Commissioning uses the same lookup before persisting a session so the
     operator's requested engine cannot be silently replaced later in measure.
     """
+    try:
+        validate_execution_snapshots(asset)
+    except ChannelAssetError as exc:
+        raise ChannelAssetResolveError(str(exc)) from exc
     return engine_mode_for_channel_asset_source_type(asset.source_type)
 
 
@@ -96,8 +102,7 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
     engine = engine_mode_for_channel_asset(asset)
 
     if st == "custom_static":
-        snapshots = (asset.payload or {}).get("snapshots") or [{}]
-        clusters = snapshots[0].get("clusters") if isinstance(snapshots[0], dict) else None
+        clusters = asset.payload["snapshots"][0]["clusters"]
         return ResolvedChannelAsset(engine_mode=engine, asset=asset, clusters_payload=clusters)
     if st == "standard_3gpp":
         # 顶层声明频率 → 频率一致性网 (Codex 0ea6cca P2: 否则标准资产存一个 band 被别频率
@@ -153,15 +158,7 @@ def resolve_channel_asset(db: Session, config: Any) -> Optional[ResolvedChannelA
     # rt_dynamic: 透传单快照 rays 到 B2 (对称 custom clusters 透传; 多快照轨迹/ACP 装配是 S3)。
     # Codex #174 复查 P2: 否则 rt_dynamic 资产路由到 B2 但 rays 没接, B2 误用 legacy rt_rays。
     snapshots = (asset.payload or {}).get("snapshots") or []
-    # 多快照 = 轨迹 RT; 执行装配 (时空跟踪 → 逐快照 B2/B1) 是 P2-16 S5, resolver 当前只透传单
-    # 快照 rays。多快照若静默取 snapshots[0] → 用户 (S4-4 编辑器) 建轨迹信道却只按首快照测量
-    # (Codex #184 P1)。fail-loud 而非静默截断, 待 S5 轨迹执行路接通 (GUI 编辑器同步 Alert 警示)。
-    if len(snapshots) > 1:
-        raise ChannelAssetResolveError(
-            f"rt_dynamic 资产 '{asset.name}' 含 {len(snapshots)} 个快照 (多快照轨迹); 多快照"
-            f"轨迹执行 (时空跟踪装配) 尚未接线 (P2-16 S5)。当前仅支持单快照 rt_dynamic 执行 — "
-            f"请用单快照资产, 或等 S5 轨迹执行路接通。")
-    rays = snapshots[0].get("rays") if snapshots and isinstance(snapshots[0], dict) else None
+    rays = snapshots[0]["rays"]
     # 顶层声明 center_frequency_hz/bandwidth_mhz → 频率一致性网 (Codex #174 复查 P2: 复用为别
     # band 抓的 RT 射线会在错误载频聚类, 频率门无资产源可比对; 对称 vendor scd_freq_identity)。
     freq_id = None

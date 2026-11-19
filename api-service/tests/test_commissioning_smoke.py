@@ -245,6 +245,19 @@ def _channel_asset(db, *, source_type: str, allowed_targets: list[str],
     return asset
 
 
+def test_session_rejects_multiframe_static_asset(lab, db):
+    asset = _channel_asset(db, source_type="custom_static", allowed_targets=["asc_baked"])
+    asset.payload = {"snapshots": [{"clusters": []}, {"clusters": []}]}
+    db.commit()
+    response = client.post(
+        "/api/v1/commissioning/sessions",
+        json={"lab_profile_id": str(lab.id), "engine_mode": "mimo_first_asc",
+              "channel_asset_id": str(asset.id)},
+    )
+    assert response.status_code == 422
+    assert "多快照" in response.json()["detail"]
+
+
 def test_gcm_session_rejects_asset_for_a_different_engine(lab, db):
     asset = _channel_asset(
         db,

@@ -11,40 +11,7 @@ from .metrics import compare_paths
 from .run import decode_frames, sha, summarize
 
 OFFSETS = [-5000000, -2500000, 0, 2500000, 5000000]
-CLUSTER = 'LINK_ID CHANNEL_TYPE DELAY PL PHASE_DEG AOA ZOA AOD ZOD DOPPLER'.split()
-QUALITY = 'LINK_ID N_RAYS N_CLUSTERS OVERALL FORWARD BACKWARD'.split()
-
-
-def read_groups(path, columns):
-    groups = defaultdict(list)
-    with path.open(encoding='utf-8-sig', newline='') as source:
-        reader = csv.DictReader(source)
-        if sorted(reader.fieldnames or []) != sorted(columns):
-            raise ValueError(f'{path.name} 列名不匹配')
-        for row in reader:
-            try:
-                if None in row:
-                    raise ValueError('多余列')
-                values = {k: (int(v) if k in ('LINK_ID', 'CHANNEL_TYPE', 'N_RAYS', 'N_CLUSTERS')
-                              else float(v)) for k, v in row.items()}
-                # H2PL(0) = +∞；仅这一列的正无穷有明确的零幅度逆像。
-                if any(not math.isfinite(v) and not (k == 'PL' and v == math.inf)
-                       for k, v in values.items()):
-                    raise ValueError('存在非有限数值')
-            except (TypeError, ValueError) as exc:
-                raise ValueError(f'{path.name} 第 {reader.line_num} 行数据无效') from exc
-            groups[values['LINK_ID']].append(values)
-    return groups
-
-
-def cluster_path(row):
-    if row['DELAY'] < 0 or any(not 0 <= row[k] <= 180 for k in ('ZOA', 'ZOD')):
-        raise ValueError('时延或天顶角超出范围')
-    amplitude = 10 ** (-row['PL'] / 20)
-    h = cmath.rect(amplitude, math.radians(row['PHASE_DEG']))
-    return dict(delay_s=row['DELAY'], aoa_deg=row['AOA'], aod_deg=row['AOD'],
-                zoa_deg=row['ZOA'], zod_deg=row['ZOD'], h_real=h.real,
-                h_imag=h.imag, power_linear=amplitude ** 2)
+from .export_trajectory import CLUSTER, QUALITY, cluster_path, read_groups
 
 
 def compare_group(link, raw, rows, quality):

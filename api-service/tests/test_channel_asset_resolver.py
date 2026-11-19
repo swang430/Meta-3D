@@ -229,6 +229,14 @@ class TestResolver:
         with pytest.raises(ChannelAssetResolveError, match="多快照"):
             resolve_channel_asset(db, _cfg(channel_asset_id=str(a.id)))
 
+    def test_saved_clusters_cannot_enter_raw_ray_clustering(self, db):
+        asset = create_channel_asset(db, name="mixed", source_type="rt_dynamic",
+                                     payload={"snapshots": [{"rays": [_RAY]}]})
+        asset.payload = {"snapshots": [{"rays": [_RAY], "clusters": [_CLUSTER]}]}
+        db.commit()
+        with pytest.raises(ChannelAssetResolveError, match="再次聚簇"):
+            resolve_channel_asset(db, _cfg(channel_asset_id=str(asset.id)))
+
     def test_invalid_id_fails_loud(self, db):
         with pytest.raises(ChannelAssetResolveError, match="无效/不存在"):
             resolve_channel_asset(db, _cfg(channel_asset_id=str(uuid.uuid4())))

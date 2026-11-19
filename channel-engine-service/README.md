@@ -23,6 +23,8 @@ export CHANNEL_ENGINE_PATH="$(cd ../ChannelEgine && pwd)"
 
 `CHANNEL_ENGINE_PATH` 是外部引擎克隆目录的绝对路径。请在启动服务的终端中导出，换终端后重新设置。服务通过该路径导入源码，不要求执行 `pip install -e`。
 
+S5 逐帧标量频响已验证的 ChannelEgine 提交为 `add050344a37e9759cc784e3b90904450a1c98ce`，该版本支持来源任务编号与请求预算显式未知。
+
 ### 2. 安装服务和引擎依赖
 
 ```bash

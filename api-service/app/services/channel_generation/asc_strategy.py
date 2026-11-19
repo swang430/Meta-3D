@@ -82,7 +82,7 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                 # ChannelAsset 副本双向 stale」根因 (S4-3 工作台编辑 + legacy 编辑并存)。未迁移的
                 # legacy-only profile (无对应 ChannelAsset) 仍读旧表 custom_cdl_profiles (向后兼容)。
                 from uuid import UUID as _UUID
-                from app.services.channel_asset_service import find_custom_static_asset
+                from app.services.channel_asset_service import find_custom_static_asset, validate_execution_snapshots
                 asset = None
                 try:
                     asset = find_custom_static_asset(self.ce_client.db, _UUID(str(cdl_profile_id)))
@@ -94,7 +94,8 @@ class ExternalWaveformStrategy(BaseChannelGenerator):
                             f"ChannelAsset {getattr(asset, 'id', cdl_profile_id)} "
                             "已退役，不能用于新的 ASC 合成"
                         )
-                    clusters = ((asset.payload or {}).get("snapshots") or [{}])[0].get("clusters")
+                    validate_execution_snapshots(asset)
+                    clusters = asset.payload["snapshots"][0]["clusters"]
                     pipeline_result = await self._synthesize_from_clusters(
                         clusters, asset, simulation_rules, session_id,
                     )
