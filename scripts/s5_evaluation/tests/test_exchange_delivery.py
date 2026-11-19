@@ -54,3 +54,19 @@ def test_new_delivery_uses_own_manifest_and_counts(tmp_path, count, budget):
     clusters.write_text(clusters.read_text().replace(",50,", ",55,"))
     with pytest.raises(ValueError, match="CSV 当前内容"):
         convert(document, direction, tmp_path, manifest)
+
+
+@pytest.mark.parametrize("fault", ["none", "direction", "mixed", "count"])
+def test_original_budget_filenames_bound_to_manifest(fault):
+    from app.trajectory.cluster_exchange import delivery_names
+    stem = "R0B0S0D"
+    pair = (stem+"_cluster_cdl_n8.csv", stem+"_cluster_quality_n8.csv")
+    hashes = dict.fromkeys(pair, "digest")
+    if fault == "mixed":
+        hashes = {pair[0]: "digest", stem+"_cluster_quality_n16.csv": "digest"}
+    manifest = dict(inputSha256=hashes, requestedClusterCount=16 if fault == "count" else 8)
+    if fault == "none":
+        assert delivery_names(stem, manifest) == pair
+    else:
+        with pytest.raises(ValueError):
+            delivery_names("R0B0S0U" if fault == "direction" else stem, manifest)
