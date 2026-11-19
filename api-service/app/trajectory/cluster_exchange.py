@@ -14,6 +14,26 @@ REFERENCE_HASHES = {
 }
 
 
+def delivery_names(stem, manifest):
+    """按清单选择同方向、同簇数的一对原始文件名。"""
+    base = (f"{stem}_cluster_cdl.csv", f"{stem}_cluster_quality.csv")
+    if manifest is None:
+        return base
+    hashes = manifest.get("inputSha256")
+    if not isinstance(hashes, dict):
+        raise ValueError("清单缺少文件校验值")
+    names = {name for name in hashes if name.startswith((f"{stem}_cluster_cdl", f"{stem}_cluster_quality"))
+             and name.endswith(".csv")}
+    if names == set(base):
+        return base
+    budget = manifest.get("requestedClusterCount")
+    if type(budget) is int and budget in (8, 16):
+        pair = tuple(name.removesuffix(".csv") + f"_n{budget}.csv" for name in base)
+        if names == set(pair):
+            return pair
+    raise ValueError("清单中的聚簇表与质量表须对应所选方向及请求簇数")
+
+
 def convert(document, direction, directory, manifest=None):
     name = direction["direction"]
     platform = direction["source_document"]["meta"]["lauraycsPlatform"]
@@ -40,8 +60,9 @@ def convert(document, direction, directory, manifest=None):
         raise ValueError("原始 MPDB 包与配套清单不匹配，新批次请提供自身清单")
     actual = {item["path"]: item["sha256"] for item in document["source_files"]}
     groups = []
-    for suffix, columns in (("cdl", CLUSTER), ("quality", QUALITY)):
-        file = directory / f"{stem}_cluster_{suffix}.csv"
+    names = delivery_names(stem, manifest)
+    for filename, columns in zip(names, (CLUSTER, QUALITY)):
+        file = directory / filename
         data = file.read_bytes()
         current = hashlib.sha256(data).hexdigest()
         if expected.get(file.name) != current:
@@ -50,8 +71,7 @@ def convert(document, direction, directory, manifest=None):
         groups.append(decode_groups(file.name, data, columns))
     clusters, quality = groups
     same_files = archive["sha256"] == REFERENCE_HASHES["original.zip"] and all(
-        actual[f"{stem}_cluster_{suffix}.csv"] == REFERENCE_HASHES.get(f"{stem}_cluster_{suffix}.csv")
-        for suffix in ("cdl", "quality"))
+        actual[filename] == REFERENCE_HASHES.get(filename) for filename in names)
     evaluated = (manifest is None and same_files and document["parameters"]["speed_m_s"] == 5
                  and document["parameters"]["coordinate_units"] == "metres")
     table = direction["raw_tables"]["LINK"]

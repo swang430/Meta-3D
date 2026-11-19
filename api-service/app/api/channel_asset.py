@@ -241,7 +241,7 @@ def import_cluster_trajectory(
 ):
     """用操作员确认的恒速、米制位置及上下行原始文件还原单个方向的时间轴。"""
     from app.services.channel_generation import mpdb_input as mpdb
-    from app.trajectory.cluster_exchange import convert
+    from app.trajectory.cluster_exchange import convert, delivery_names
 
     with TemporaryDirectory() as temporary:
         folder = Path(temporary)
@@ -259,8 +259,6 @@ def import_cluster_trajectory(
                                          coordinate_units=coordinate_units, speed_source="user_confirmed")
             source = next(d for d in document["directions"] if d["direction"] == direction)
             stem = Path(source["source_document"]["meta"]["lauraycsPlatform"]["name"]).stem
-            if (clusters.filename, quality.filename) != (f"{stem}_cluster_cdl.csv", f"{stem}_cluster_quality.csv"):
-                raise ValueError("所选方向与聚簇文件、质量文件的名称不匹配")
             declared = None
             if manifest is not None:
                 data = manifest.file.read(65537)
@@ -269,6 +267,8 @@ def import_cluster_trajectory(
                 declared = mpdb._json(data)
                 if not isinstance(declared, dict):
                     raise ValueError("配套清单须为 JSON 对象")
+            if (clusters.filename, quality.filename) != delivery_names(stem, declared):
+                raise ValueError("所选方向、簇数与聚簇文件、质量文件的名称不匹配")
             return convert(document, source, folder, declared)
         except (ValueError, KeyError, OverflowError, FileExistsError) as exc:
             raise HTTPException(422, f"无法导入轨迹：{exc}") from exc

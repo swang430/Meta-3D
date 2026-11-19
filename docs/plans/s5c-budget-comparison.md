@@ -38,3 +38,24 @@ api-service/.venv/bin/python -m scripts.s5_evaluation.csv_export \
   /tmp/s5c-budget-frames.json --compare-budgets
 cmp /tmp/s5c-budget-frames.json docs/plans/s5c-budget-frames.json
 ```
+
+## 工作台和命令行导入
+
+在信道工作台选择方向、原始 ZIP、同方向同簇数的簇表及质量表。8 簇和 16 簇同时选择同目录下的配套 JSON，例如下行 8 簇使用 R0B0S0D_delivery_n8.json。保留附件文件名，恒速填 5 米/秒，勾选米制坐标后生成交换文件，再点击“计算逐帧模型频响”。原有 24 簇文件按已有交付记录核验，可省略清单。
+
+命令行示例使用同一份清单和原始文件。其他三组更换方向字母及簇数；每组使用独立输出目录。
+
+```sh
+data=./基站仿真项目_2026-11-11_20_35_46_CDL聚簇
+api-service/.venv/bin/python -m scripts.s5_evaluation.export_trajectory \
+  ~/.codex/artifacts/2026-11-11-s5a/p2-final/adapted-final.json \
+  "$data" "$data/R0B0S0D_delivery_n8.json" /tmp/s5c-downlink-8
+```
+
+已在 Chrome 工作台按附件原名导入六组文件，生成交换文件并下载逐帧计算结果。与 ChannelEgine（add0503）命令行逐项比较，228 帧的帧号、链路编号、时刻及五个频率偏移的 1,140 个复数一致。方向错误、混配簇表与质量表、选错簇数清单、CSV 内容改变及带后缀文件缺清单均被导入接口拒绝。可用以下命令计算前述下行 8 簇示例，其中 CHANNEL_ENGINE_PATH 指向包含 mimo_ota_simulator 的 ChannelEgine 源码目录。
+
+```sh
+PYTHONPATH="$CHANNEL_ENGINE_PATH" api-service/.venv/bin/python \
+  -m mimo_ota_simulator.sampled_trajectory /tmp/s5c-downlink-8/downlink.json \
+  --direction downlink --offsets-hz -5000000 -2500000 0 2500000 5000000
+```

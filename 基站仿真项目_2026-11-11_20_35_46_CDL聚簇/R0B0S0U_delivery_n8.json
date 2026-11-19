@@ -1,0 +1,11 @@
+{
+  "schemaVersion": "meta3d-cluster-delivery/1",
+  "direction": "uplink",
+  "requestedClusterCount": 8,
+  "inputSha256": {
+    "original.zip": "6cada6a493b04bbf05725ffdeaac61956e382a18897fad5c3efce94113a0037d",
+    "adapted-final.json": "bba63f0ca0b4450070c8e904bb14b04b88cb2ac932492690c80853403d61a919",
+    "R0B0S0U_cluster_cdl_n8.csv": "aea80793dae9156aa90b293bdb4260730da8947d8d7321c845135712af23cb18",
+    "R0B0S0U_cluster_quality_n8.csv": "1e0b9b7df925047c68984a4ac524b0ef7c1b91e230470715af3859b13dd780dc"
+  }
+}
