@@ -85,7 +85,7 @@ channel-engine-service/.venv/bin/python -m pip install \
 cp api-service/.env.example api-service/.env
 ```
 
-已有 `.env` 时直接编辑，不要覆盖。按示例将 `DATABASE_URL` 配置为实际可连接的 PostgreSQL 数据库，使用 `postgresql+psycopg2://` 驱动格式，并填写实际账号、密码、主机、端口和数据库名。数据库与账号需提前准备好。
+已有 `.env` 时直接编辑，不要覆盖。按示例将 `DATABASE_URL` 配置为实际可连接的 PostgreSQL 数据库，使用 `postgresql+psycopg2://` 驱动格式，并填写实际账号、密码、主机、端口和数据库名。数据库与账号需提前准备好。使用随附 Compose 初始化新库时，先在启动终端设置独立随机的 `META3D_POSTGRES_PASSWORD`，并在 API 的连接地址或 PostgreSQL 密码文件配置同一凭据。已有数据卷沿用其已设置的角色密码，变更初始化变量不会轮换已有角色密码。主机服务默认仅监听本机回环地址；客户远程访问需要认证网关并隔离后端端口。
 
 ```bash
 # 开发期间使用模拟仪器；此变量也会传给后续启动的 API 服务

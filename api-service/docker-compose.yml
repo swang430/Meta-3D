@@ -16,12 +16,10 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: meta3d
-      POSTGRES_PASSWORD: meta3d_password
+      POSTGRES_PASSWORD: ${META3D_POSTGRES_PASSWORD:?请配置本实例的数据库密码}
       POSTGRES_DB: meta3d_ota
     ports:
-      # ⚠️ 仍绑所有接口 (0.0.0.0) — 信息安全加固 (改 127.0.0.1 / 强密码) 是
-      # 单独一轮工作, 本次只动 durability。见 docs/guides/database-backup-restore.md。
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:

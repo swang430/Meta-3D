@@ -1,7 +1,6 @@
 # 数据库备份与恢复 / 持久化 runbook
 
-> 2026-05-29 durability 改进。**本文只覆盖"数据不丢"(durability),不覆盖信息安全
-> (端口暴露 / 弱密码)—— 后者是单独一轮工作,见文末「已知 deferred」。**
+> 本文说明数据库持久化、备份、恢复及本机访问范围。
 
 ## 为什么需要这套机制
 
@@ -50,27 +49,21 @@ tail db-backups/backup.log               # 看结果
 
 ## 恢复
 
-### 从 dump 恢复到现有库(覆盖)
+### 升级前留存和恢复到独立实例
 
-```bash
-# ⚠️ 会覆盖现有数据 — 恢复前先备份当前状态 (sh scripts/backup_db.sh)
-DUMP=db-backups/meta3d_ota_<时间戳>.dump
-cat "$DUMP" | docker exec -i meta3d_db pg_restore -U meta3d -d meta3d_ota --clean --if-exists
+1. 停止本实例写入，记录正在运行的 API、计算服务、界面版本及数据库迁移号。保留旧可执行包或镜像，记录连接配置、实际挂载路径、属主和权限。
+2. 用本实例的 META3D_PG_CONTAINER、META3D_PG_DB、META3D_PG_USER 和独立的 META3D_BACKUP_DIR 运行 sh scripts/backup_db.sh。确认退出成功。按数据库记录及实际配置另存外部附件、报告、证书、校准数据、站点配置及所需密钥。以相同的停写窗口生成文件清单和校验值，限制备份权限。
+3. 在独立网络和新卷初始化目标数据库，为恢复使用新的空库。显式确认容器名、数据库名、目标卷及应用连接地址；默认 Compose 文件里的容器名和卷名是固定的。只改项目名仍会引用原资源。
+4. 在目标实例执行以下命令。确认库名空闲后创建，任一命令失败即停止。所有恢复对象在同一事务内提交。
+
+```sh
+docker exec "$RESTORE_CONTAINER" createdb -U "$RESTORE_USER" "$RESTORE_DB" &&
+docker exec -i "$RESTORE_CONTAINER" pg_restore --single-transaction --exit-on-error \
+  -U "$RESTORE_USER" -d "$RESTORE_DB" < "$DUMP"
 ```
 
-### 恢复到全新库(灾难恢复,volume 已丢)
-
-```bash
-# 1. 起空 postgres (volume 已丢也没关系: 非 external, compose 会自动建空 volume)
-docker compose up -d postgres
-# 2. 建库 (POSTGRES_DB 已自动建 meta3d_ota; 若没有:)
-docker exec meta3d_db createdb -U meta3d meta3d_ota 2>/dev/null || true
-# 3. 灌数据
-cat db-backups/meta3d_ota_<时间戳>.dump | docker exec -i meta3d_db pg_restore -U meta3d -d meta3d_ota --clean --if-exists
-# 4. 验证表数
-docker exec meta3d_db psql -U meta3d -d meta3d_ota -c \
-  "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"
-```
+5. 把外部文件解包到全新目录。核对配置、权限、文件摘要，以及数据库记录引用的具体文件。权限、凭据及目标地址单独核实后，将旧应用指向恢复库和恢复目录，核对健康接口和关键业务对象。
+6. 在独立副本重试新版本并核对迁移号、数据与文件。只有验证完成后才安排站点切换。迁移发生部分提交、初始化失败或版本无法识别时，使用经过核实的升级前备份与旧应用恢复；直接降低版本号不能恢复旧表结构或文件。
 
 ## 从「手动 run」切到「compose 管理」(一次性演练)
 
@@ -99,5 +92,5 @@ docker exec meta3d_db psql -U meta3d -d meta3d_ota -c \
 
 ## 已知 deferred(本轮不做)
 
-- **信息安全**:Postgres 5432 + API 8000 仍绑 `0.0.0.0`(所有接口);明文弱密码 `meta3d_password` 在 git 追踪的 compose + `config.py:15` 默认值里;macOS 防火墙关闭。这些是**网络安全**问题,与本文的 durability 正交,留单独一轮(用户 2026-05-29 明确「安全性以后再说」)。
+- **访问范围**：随附 Compose 将数据库端口发布在 127.0.0.1。新建数据库须提供 META3D_POSTGRES_PASSWORD，已有卷使用原角色凭据。主机启动的 API 与计算服务默认监听回环地址。API 容器内部监听所有接口，发布时显式指定 127.0.0.1 并隔离容器网络。同主机进程以及同一容器网络的成员仍可访问后端。远程接入依赖部署侧认证网关、端口隔离与实际访问测试。
 - **废弃 volume 清理**:`api-service_postgres_data`(旧数据)确认无用后 `docker volume rm`,先留存。

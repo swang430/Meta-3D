@@ -3,7 +3,7 @@ import logging
 
 from pydantic import field_validator, model_validator
 from pydantic_settings import BaseSettings
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +36,18 @@ class Settings(BaseSettings):
         return data
     debug: bool = True
 
+    # The application currently has no service-wide authentication gate.
+    auth_mode: Literal["optional", "disabled"] = "optional"
+
+    @field_validator("auth_mode", mode="before")
+    @classmethod
+    def _require_external_access_control(cls, value):
+        if value == "required":
+            raise ValueError("当前业务接口未实施统一身份认证。需要对外开放时，请使用有身份认证的网关并隔离后端端口")
+        return value
+
     # Database
-    database_url: str = "postgresql+psycopg2://meta3d:meta3d_password@localhost:5432/meta3d_ota"
+    database_url: str = "postgresql+psycopg2://meta3d@localhost:5432/meta3d_ota"
 
     @field_validator("database_url")
     @classmethod
