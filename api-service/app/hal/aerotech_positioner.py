@@ -61,7 +61,9 @@ class AeroBasicCmd:
     # CAICT Socket2 site-verified 2026-08-27, matching the checked-in
     # Aerotech ASCII/TCP integration guide §§5–7.
     MOVE_ABS = "MOVEABS {axis} {position} {axis}F{feed}"
-    MOVE_INC = "MOVEINC {axes} {distances}"   # 增量运动
+    # Ensemble.chm /Commands/MOVEINC_Command.html: ASCII incremental distance,
+    # per-axis feed in user units/s; Ensemble sample Motion.ab: MOVEINC X distance XF speed.
+    MOVE_INC = "MOVEINC {axis} {position} {axis}F{feed}"
     ABORT = "ABORT {axes}"                     # 紧急停止
     # Checked-in Ensemble ASCII/TCP integration guide §6 literal.
     WAIT_IN_POSITION = "WAIT INPOS {axis}"
@@ -366,7 +368,7 @@ class RealAerotechDriver(PositionerDriver):
     def _response_timeout_s(self, cmd: str) -> float:
         """Use the sourced motion-completion budget for blocking commands."""
         token = cmd.strip().upper()
-        if token.startswith(("MOVEABS ", "HOME ", "WAIT INPOS ")):
+        if token.startswith(("MOVEABS ", "MOVEINC ", "HOME ", "WAIT INPOS ")):
             return self.settle_timeout_s
         return self.timeout_s
 
@@ -1223,12 +1225,58 @@ class RealAerotechDriver(PositionerDriver):
     # PositionerDriver 专有接口
     # ==================================================================
 
+    async def diagnostic_stationary_angle(self, *, expected_operator_stop_generation=None):
+        """Fresh encoder position bracketed by stop checks; no motion command."""
+        from app.services.instrument_test_lease import positioner_operation_guard
+        kwargs = {"expected_operator_stop_generation": expected_operator_stop_generation}
+        async with positioner_operation_guard("aerotech-positioner:diagnostic-read"):
+            low, high, _ = self._require_supported_single_axis_motion()
+            await self._require_axes_stopped(**kwargs)
+            angle, _ = await self._read_motion_feedback(**kwargs)
+            await self._require_axes_stopped(**kwargs)
+            if not low <= angle <= high:
+                raise AerotechError("编码器角度超出已核定行程")
+            return angle
+
+    async def diagnostic_relative_plan(self, offsets, **kwargs):
+        origin = await self.diagnostic_stationary_angle(**kwargs)
+        low, high, _ = self._require_supported_single_axis_motion()
+        targets = [origin + delta for delta in offsets]
+        if not offsets or offsets[0] != 0 or not all(low <= t <= high for t in targets):
+            raise AerotechError("相对方位首点须为 0，且全部目标须位于已核定行程内")
+        return origin, targets
+
+    async def refresh_encoder_status(self):
+        """调用者持有转台操作锁；仅使用只读连接、轴发现及反馈查询。"""
+        temporary = self._writer is None
+        if temporary and not await self.connect():
+            raise AerotechError(f"只读连接或轴识别失败：{self.last_error or '控制器未确认连接'}")
+        try:
+            if self.az_axis != "X" or self._axes_present != ["X"]:
+                raise AerotechError(f"未确认单 X 轴，实际识别：{self._axes_present}")
+            self._verified_degree_motion_config()
+            stage = "速度反馈"
+            try:
+                before = await self._axes_are_stopped()
+                stage = "编码器位置"
+                az, el = await self.get_position()
+                stage = "速度反馈"
+                after = await self._axes_are_stopped()
+            except Exception as exc:
+                raise AerotechError(f"{stage}读取失败：{exc}") from exc
+            return az, el, before and after
+        finally:
+            if temporary and not await self.disconnect():
+                raise AerotechError("临时只读会话未确认关闭，请检查连接")
+
     async def move_to(
         self,
         azimuth: float,
         elevation: float,
         *,
         expected_operator_stop_generation: Optional[int] = None,
+        diagnostic_wait: bool = False,
+        check_before_segment=None,
     ) -> bool:
         """
         命令转台移动到绝对位置。
@@ -1241,7 +1289,9 @@ class RealAerotechDriver(PositionerDriver):
 
         try:
             safe_min, safe_max, feed = self._require_supported_single_axis_motion()
-            coordinate_offset = self._verified_program_feedback_offset()
+            # Diagnostic waypoints stay in encoder coordinates; incremental
+            # distances need no absolute program origin.
+            coordinate_offset = 0.0 if diagnostic_wait else self._verified_program_feedback_offset()
             target_azimuth = self._finite_motion_target(azimuth, name="azimuth")
             target_elevation = self._finite_motion_target(
                 elevation, name="elevation"
@@ -1287,6 +1337,9 @@ class RealAerotechDriver(PositionerDriver):
                 )
                 self._sync_cached_feedback(before)
 
+                if diagnostic_wait and not safe_min <= before[0] <= safe_max:
+                    raise AerotechError("诊断移动起点超出已核定行程")
+
                 await self._send(
                     AeroBasicCmd.ENABLE.format(axes=self.az_axis),
                     expected_operator_stop_generation=operator_stop_generation,
@@ -1313,11 +1366,20 @@ class RealAerotechDriver(PositionerDriver):
                         self.blocking_command_budget_s,
                     )
                 segment_before = before
+                previous_waypoint = before[0]
                 for segment_program in segment_targets:
+                    if check_before_segment is not None:
+                        check_before_segment()
                     self._require_operator_stop_generation(operator_stop_generation)
-                    cmd_str = AeroBasicCmd.MOVE_ABS.format(
+                    distance_or_position = segment_program
+                    if diagnostic_wait:
+                        distance_or_position = segment_program - previous_waypoint
+                        if not safe_min <= segment_before[0] + distance_or_position <= safe_max:
+                            raise AerotechError("诊断增量终点超出已核定行程")
+                        previous_waypoint = segment_program
+                    cmd_str = (AeroBasicCmd.MOVE_INC if diagnostic_wait else AeroBasicCmd.MOVE_ABS).format(
                         axis=self.az_axis,
-                        position=f"{segment_program:.4f}",
+                        position=f"{distance_or_position:.4f}",
                         feed=f"{feed:.4f}",
                     )
                     command_accepted = True
@@ -1345,6 +1407,26 @@ class RealAerotechDriver(PositionerDriver):
                         segment_program + coordinate_offset,
                         0.0 if self.is_single_axis else target_elevation,
                     )
+                    if diagnostic_wait:
+                        # Only observe the existing move. Never resend MOVEABS.
+                        clock = asyncio.get_running_loop().time
+                        deadline = clock() + min(self.settle_timeout_s,
+                            abs(target[0] - segment_before[0]) / feed + 2.0)
+                        kwargs = {"expected_operator_stop_generation": operator_stop_generation}
+                        while True:
+                            if not safe_min <= after[0] <= safe_max:
+                                raise AerotechError("诊断转动反馈超出已核定行程")
+                            if not (min(segment_before[0], target[0])-self.position_tolerance_deg
+                                    <= after[0] <= max(segment_before[0], target[0])+self.position_tolerance_deg):
+                                raise AerotechError("诊断转动方向或反馈位置异常")
+                            if (abs(after[0]-target[0]) <= self.position_tolerance_deg
+                                    and await self._axes_are_stopped(**kwargs)):
+                                break
+                            if clock() >= deadline:
+                                raise AerotechError("诊断等待编码器到位并静止超时")
+                            await asyncio.sleep(min(0.1, max(0.01, self.poll_interval_s)))
+                            after = await self._read_motion_feedback(**kwargs)
+                        self._sync_cached_feedback(after)
                     self._verify_motion_feedback(
                         before=segment_before, after=after, target=target
                     )

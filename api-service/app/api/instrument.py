@@ -5254,6 +5254,7 @@ class PositionerSweepRequest(BaseModel):
 
 class PositionerResult(BaseModel):
     ok: bool
+    stopped: Optional[bool] = None
     azimuth: Optional[float] = None
     elevation: Optional[float] = None
     reason: Optional[str] = None
@@ -5363,15 +5364,26 @@ async def positioner_move(request: PositionerMoveRequest) -> PositionerResult:
 @router.get("/instruments/positioner/position", response_model=PositionerResult)
 async def positioner_position() -> PositionerResult:
     """读转台当前位置反馈 (PFBK)。"""
-    driver, reason = _resolve_positioner()
-    if driver is None:
-        return PositionerResult(ok=False, reason=reason,
-                                message=_POSITIONER_REASON_MSG.get(reason))
-    (az, el), pos_err = await _positioner_position(driver)
-    if pos_err:
-        return PositionerResult(ok=False, azimuth=az, elevation=el, reason="position_read_failed",
-                                message=_POSITIONER_REASON_MSG["position_read_failed"])
-    return PositionerResult(ok=True, azimuth=az, elevation=el)
+    from app.services.instrument_test_lease import positioner_operation_guard, positioner_refresh_busy
+    from app.hal.aerotech_positioner import RealAerotechDriver
+    if positioner_refresh_busy():
+        return PositionerResult(ok=False, reason="busy", message="仪器正在被测试或其他操作占用，未读取位置")
+    async with positioner_operation_guard("panel-read-position"):
+        driver, reason = _resolve_positioner()
+        if driver is None:
+            return PositionerResult(ok=False, reason=reason, message=_POSITIONER_REASON_MSG.get(reason))
+        try:
+            if isinstance(driver, RealAerotechDriver):
+                az, el, stopped = await driver.refresh_encoder_status()
+                return PositionerResult(ok=True, azimuth=az, elevation=el, stopped=stopped)
+            from app.services.instrument_hal_service import is_mock_driver
+            if is_mock_driver(driver):
+                return PositionerResult(ok=False, reason="simulated", message="模拟驱动不能读取现场编码器")
+            az, el = await driver.get_position()
+            return PositionerResult(ok=True, azimuth=az, elevation=el)
+        except Exception as exc:
+            logger.warning("[Positioner] 刷新失败: %s", exc)
+            return PositionerResult(ok=False, reason="position_read_failed", message=f"当前位置未知：{exc}")
 
 
 @router.post("/instruments/positioner/stop", response_model=PositionerResult)

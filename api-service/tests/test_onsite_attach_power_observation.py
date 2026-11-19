@@ -83,6 +83,16 @@ async def test_running_diagnostic_records_latest_without_active_query(latest, er
     assert sample["input_sample_time_confirmed"] is False
     assert sample["input_measurement_confirmed"] is False
     assert all(r["value_dbm"] is None for r in sample["input_powers_dbm"])
+    from app.services.mimo_ota.executors.measure import _finalize_manual_input_reference
+    level = _finalize_manual_input_reference(
+        {"mode": "manual", "application_succeeded": True, "input_ports": [1, 2]}, result)
+    assert level["success"] is False
+    assert level["readback"] == []
+    if accepted and latest is not None:
+        assert level["verification_status"] == "diagnostic_latest_sample_time_unknown"
+        assert level["latest_input_powers_dbm"] == sample["latest_input_powers_dbm"]
+    else:
+        assert level["verification_status"] == "failed"
 
 
 def test_attach_power_observation_window_has_bounded_explicit_contract():

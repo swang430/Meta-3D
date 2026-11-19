@@ -793,6 +793,11 @@ def is_test_lease_active() -> bool:
     return _LEASE.is_active
 
 
+def positioner_refresh_busy() -> bool:
+    """刷新不排队：避免测试结束后执行过期的面板读请求。"""
+    return _LEASE.is_active or _LEASE._get_lock().locked()
+
+
 def active_test_lease_purpose() -> Optional[str]:
     return _LEASE.active_purpose
 

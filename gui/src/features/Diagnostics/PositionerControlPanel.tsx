@@ -5,7 +5,7 @@
  * 完整 cal 流程 (2026-05-27 现场无 standalone 路径 → U-5 "无结论")。
  * 后端 /instruments/positioner/* (app/api/instrument.py)。
  */
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   Alert,
   Badge,
@@ -38,20 +38,27 @@ import {
 export function PositionerControlPanel() {
   const [az, setAz] = useState<number>(0)
   const [el, setEl] = useState<number>(0)
-  const [pos, setPos] = useState<{ az: number; el: number } | null>(null)
+  const [pos, setPos] = useState<{ az: number; el: number; stopped?: boolean | null } | null>(null)
+  const request = useRef(0)
+  const [readMessage, setReadMessage] = useState('')
   const [busy, setBusy] = useState<string | null>(null)
   const [sweep, setSweep] = useState<PositionerSweepResult | null>(null)
 
   const handle = async (label: string, fn: () => Promise<PositionerResult>) => {
+    const sequence = ++request.current
+    setPos(null)
+    setReadMessage('')
     setBusy(label)
     try {
       const r = await fn()
+      if (sequence !== request.current) return
       if (r.ok) {
         if (typeof r.azimuth === 'number' && typeof r.elevation === 'number') {
-          setPos({ az: r.azimuth, el: r.elevation })
+          setPos({ az: r.azimuth, el: r.elevation, stopped: r.stopped })
         }
         notifications.show({ color: 'green', message: r.message || `${label} 成功` })
       } else {
+        setReadMessage(r.message || r.reason || '位置未知')
         notifications.show({
           color: 'red',
           title: `${label} 失败`,
@@ -59,13 +66,15 @@ export function PositionerControlPanel() {
         })
       }
     } catch (e) {
+      if (sequence !== request.current) return
+      setReadMessage(e instanceof Error ? e.message : '请求失败，当前位置未知')
       notifications.show({
         color: 'red',
         title: `${label} 请求出错`,
         message: e instanceof Error ? e.message : String(e),
       })
     } finally {
-      setBusy(null)
+      if (sequence === request.current) setBusy(null)
     }
   }
 
@@ -119,10 +128,11 @@ export function PositionerControlPanel() {
             <Badge size="lg" color="grape">
               俯仰 El = {pos.el.toFixed(2)}°
             </Badge>
+            <Text>{pos.stopped === true ? '读取时已停稳' : pos.stopped === false ? '读取时未停稳' : '停稳状态未知'}</Text>
           </Group>
         ) : (
           <Text c="dimmed" size="sm">
-            尚未读取 (点刷新)
+            {readMessage || '暂无当前位置读数（点刷新）'}
           </Text>
         )}
       </Card>
