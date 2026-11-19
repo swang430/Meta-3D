@@ -127,6 +127,12 @@ export interface SMUProjectSyncResult {
   preview: SMUProjectSyncPreview
 }
 
+export function hasMultipleChannelSnapshots(asset: ChannelAsset): boolean {
+  const snapshots = asset.payload?.snapshots
+  return (asset.source_type === 'rt_dynamic' || asset.source_type === 'custom_static')
+    && Array.isArray(snapshots) && snapshots.length > 1
+}
+
 /** POST /channel-assets 请求体 (mirror ChannelAssetCreate)。 */
 export interface ChannelAssetCreatePayload {
   name: string

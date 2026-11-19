@@ -7,7 +7,7 @@ import { PrecheckPhase, ReferencePhase, MIMOTestPhase, AnalysisPhase, ReportPhas
 import * as api from './api'
 import type { SessionResponse, LabResolutionDetail } from './api'
 import { useOperationalLab, useOperationalLabSwitchGuard } from '../../features/OperationalLab'
-import { fetchChannelAssets, type ChannelAsset } from '../../api/channelAssetService'
+import { fetchChannelAssets, hasMultipleChannelSnapshots, type ChannelAsset } from '../../api/channelAssetService'
 import { parseChannelFrequencyIdentity } from '../../features/ChannelWorkbench/channelFrequencyIdentity'
 import { fetchReadiness } from '../../api/service'
 import {
@@ -379,21 +379,14 @@ export function CommissioningSandbox() {
                   const requiredTarget = engineMode === 'keysight_gcm'
                     ? 'gcm_native'
                     : 'asc_baked'
-                  const engineCompatible = asset.allowed_targets.includes(requiredTarget)
-                  const assetPayload = asset.payload as
-                    | { snapshots?: unknown[] }
-                    | null
-                    | undefined
-                  const multiSnapshotRt =
-                    asset.source_type === 'rt_dynamic' &&
-                    Array.isArray(assetPayload?.snapshots) &&
-                    (assetPayload?.snapshots?.length ?? 0) > 1
+                  const engineCompatible = asset.source_type !== 'rt_dynamic' && asset.allowed_targets.includes(requiredTarget)
+                  const multiSnapshot = hasMultipleChannelSnapshots(asset)
                   return {
                     value: asset.id,
                     label:
                       `${asset.name}（${asset.source_type}）` +
-                      (!engineCompatible ? ' — 与当前引擎不兼容' : ''),
-                    disabled: !engineCompatible || multiSnapshotRt,
+                      (multiSnapshot ? ' — 当前不能执行多快照轨迹' : !engineCompatible ? ' — 与当前引擎不兼容' : ''),
+                    disabled: !engineCompatible || multiSnapshot,
                   }
                 })}
                 value={channelAssetId}

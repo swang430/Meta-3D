@@ -36,7 +36,7 @@ import { fetchSIMProfiles } from '../../api/simProfileService'
 import { fetchBaseStationBindingPreview } from '../../api/labProfileService'
 import { projectMacStatisticalWindow } from '../../types/macStatisticalWindow'
 import { fetchCustomCDLProfiles } from '../../api/customCdlProfileService'
-import { fetchChannelAssets } from '../../api/channelAssetService'
+import { fetchChannelAssets, hasMultipleChannelSnapshots } from '../../api/channelAssetService'
 import { selectEmulationFile, selectedEmulationFilename } from './emulationSelectionTruth'
 import {
   LTE_TRANSMISSION_MODES,
@@ -459,15 +459,13 @@ export function MIMOOTAConfigForm({
   // 多快照 rt_dynamic 资产执行会 fail-loud (轨迹执行待 S5, channel_asset_resolver 对 snapshots>1
   // raise), 故选择器禁用该 option + 标注, 别让用户选了到运行期才发现不能执行 (Codex #185 P2)。
   const channelAssetOptions = channelAssets.map((a) => {
-    const snaps = (a.payload as { snapshots?: unknown[] })?.snapshots
-    const isMultiSnapshotRt =
-      a.source_type === 'rt_dynamic' && Array.isArray(snaps) && snaps.length > 1
+    const multiSnapshot = hasMultipleChannelSnapshots(a)
     return {
       value: a.id,
       label:
         `${a.name}（${CHANNEL_ASSET_SOURCE_LABEL[a.source_type] ?? a.source_type}）` +
-        (isMultiSnapshotRt ? ' — 多快照·执行待 S5' : ''),
-      disabled: isMultiSnapshotRt,
+        (multiSnapshot ? ' — 当前不能执行多快照轨迹' : ''),
+      disabled: multiSnapshot,
     }
   })
   const channelAssetSelectOptions =

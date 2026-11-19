@@ -19,6 +19,7 @@ import {
   createChannelAsset,
   updateChannelAsset,
   type CDLClusterPayload,
+  hasMultipleChannelSnapshots,
   type ChannelAsset,
   type ChannelAssetCreatePayload,
   type ChannelSourceType,
@@ -197,6 +198,9 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
 
   function handleSubmit() {
     setFormError(null)
+    if (asset?.source_type === 'custom_static' && hasMultipleChannelSnapshots(asset)) {
+      setFormError('该静态资产包含多个快照，保存会丢失其余帧。请另建单快照资产。'); return
+    }
     if (!isEdit && sourceType === 'vendor_file' && (!owner || !ownerConfirmed)) {
       setFormError('新建厂商文件必须显式确认已保存仪器的型号与地址'); return
     }
@@ -292,8 +296,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
             <RTRayEditor snapshots={raySnapshots} onChange={setRaySnapshots} />
             {raySnapshots.length > 1 && (
               <Alert color="yellow" variant="light">
-                多快照（轨迹）RT 信道的执行装配（时空跟踪逐快照合成）尚未接线（P2-16 S5）；
-                当前执行仅消费快照 1，多快照执行会 fail-loud。多快照资产可现在保存，供 S5 接通后使用。
+                可以保存多个快照。当前正式执行仅支持单快照射线资产，选择多快照资产时会拒绝执行。
               </Alert>
             )}
           </>
