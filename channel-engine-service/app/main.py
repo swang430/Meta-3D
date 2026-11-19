@@ -10,7 +10,7 @@ import os
 from datetime import datetime
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.endpoints import health, ota, hardware_pipeline, b2_cluster
+from app.api.endpoints import health, ota, hardware_pipeline, b2_cluster, cluster_response
 
 
 # ============================================================================
@@ -126,6 +126,8 @@ app.include_router(
     prefix="/api/v1",
     tags=["健康检查"]
 )
+
+app.include_router(cluster_response.router, prefix="/api/v1/ota", tags=["轨迹频响"])
 
 # OTA endpoints
 app.include_router(

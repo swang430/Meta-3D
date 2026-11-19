@@ -28,6 +28,7 @@ import {
   type ChannelSourceType,
   type SMUProjectSyncPreview,
 } from '../../api/channelAssetService'
+import { ClusterResponsePanel } from './ClusterResponsePanel'
 import { ChannelAssetForm } from './ChannelAssetForm'
 import { fetchInstrumentCatalog } from '../../api/service'
 import { savedChannelAssetOwner, ownershipConfirmationPayload, type SavedChannelAssetOwner } from './channelAssetOwnership'
@@ -151,6 +152,7 @@ export function ChannelWorkbench() {
 
   return (
     <Stack gap="md">
+      <ClusterResponsePanel />
       <Group justify="space-between" align="flex-end">
         <div>
           <Title order={3}>
