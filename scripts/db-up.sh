@@ -36,7 +36,10 @@ host_port_bound() {
 # 远程/自定义/SQLite DB 直接跳过 (exit 0), 交给上层 (check_db_state.py) 处理 ——
 # 避免误重建本地容器、或卡在对一个根本不用的 localhost:5432 做验证 (Codex P2 #153)。
 ENV_FILE="${COMPOSE_DIR}/.env"
-DB_URL_LINE="$(grep -E '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null | head -1 || true)"
+DB_URL_LINE="${DATABASE_URL:-}"
+if [ -z "$DB_URL_LINE" ]; then
+  DB_URL_LINE="$(grep -E '^DATABASE_URL=' "$ENV_FILE" 2>/dev/null | head -1 || true)"
+fi
 if [ -n "$DB_URL_LINE" ] && ! echo "$DB_URL_LINE" | grep -Eq '@(localhost|127\.0\.0\.1):5432'; then
   echo "ℹ️  [db-up] DATABASE_URL 非本地 compose Postgres (localhost:5432) → 跳过本地 DB 自愈"
   exit 0

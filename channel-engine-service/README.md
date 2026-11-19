@@ -64,7 +64,7 @@ channel-engine-service/.venv/bin/python -m pip install \
   --reload --host 127.0.0.1 --port 8001)
 ```
 
-也可在根目录安装 npm 依赖后运行 `npm run dev:channel-engine`。该命令继承终端中的引擎路径，使用服务自己的虚拟环境；当前模块入口固定监听 `0.0.0.0:8001`，并开启自动重载。
+也可在根目录安装 npm 依赖后运行 `npm run dev:channel-engine`。该命令继承终端中的引擎路径，使用服务自己的虚拟环境；当前模块入口固定监听 `127.0.0.1:8001`，并开启自动重载。
 
 同时启动完整开发系统，请先完成[根目录安装说明](../README.md#-快速开始)，然后在同一终端的根目录执行：
 

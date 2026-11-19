@@ -33,9 +33,12 @@ SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 BACKUP_DIR="${META3D_BACKUP_DIR:-$SCRIPT_DIR/../db-backups}"
 RETENTION="${META3D_BACKUP_RETENTION:-30}"
 
+umask 077
 mkdir -p "$BACKUP_DIR"
 TS=$(date +%Y%m%d_%H%M%S)
-OUT="$BACKUP_DIR/${DB}_${TS}.dump"
+STAGING=$(mktemp "$BACKUP_DIR/.${DB}_${TS}.XXXXXXXX")
+trap 'rm -f "$STAGING"' 0
+OUT="$BACKUP_DIR/${STAGING##*/.}.dump"
 
 # 容器没在跑 → 非 0 退出 (launchd 记失败, 不静默跳过)。
 if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
@@ -44,22 +47,24 @@ if ! docker ps --format '{{.Names}}' | grep -q "^${CONTAINER}$"; then
 fi
 
 echo "[backup] $(date '+%Y-%m-%d %H:%M:%S') pg_dump ${DB} → ${OUT}"
-docker exec "$CONTAINER" pg_dump -U "$PGUSER_" -Fc "$DB" > "$OUT"
+docker exec "$CONTAINER" pg_dump -U "$PGUSER_" -Fc "$DB" > "$STAGING"
 
-# 验证: dump 非空 + pg_restore -l 能列出 TOC (确认不是半截 / 损坏)。
-if [ ! -s "$OUT" ]; then
+# 验证归档目录可读；数据内容仍需通过恢复演练核对。
+if [ ! -s "$STAGING" ]; then
     echo "[backup] ERROR: dump 为空, 删除 ${OUT}" >&2
-    rm -f "$OUT"
+    rm -f "$STAGING"
     exit 1
 fi
-TOC=$(docker run --rm -i "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}')" \
-        pg_restore -l < "$OUT" 2>/dev/null | grep -cE "^[0-9;]" || true)
+LISTING=$(docker run --rm -i "$(docker inspect "$CONTAINER" --format '{{.Config.Image}}')" \
+        pg_restore -l < "$STAGING") || exit 1
+TOC=$(printf '%s\n' "$LISTING" | grep -cE '^[0-9]+;' || true)
 if [ "${TOC:-0}" -lt 1 ]; then
     echo "[backup] ERROR: dump 无有效 TOC 对象 (可能损坏), 删除 ${OUT}" >&2
-    rm -f "$OUT"
+    rm -f "$STAGING"
     exit 1
 fi
 
+mv "$STAGING" "$OUT"
 SIZE=$(du -h "$OUT" | cut -f1)
 echo "[backup] OK: ${OUT} (${SIZE}, ${TOC} 对象)"
 

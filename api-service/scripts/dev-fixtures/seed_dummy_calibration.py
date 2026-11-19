@@ -9,6 +9,7 @@ Bypass 真正的硬件校准流程。所有数据均为物理上合理但非实�
     .venv/bin/python scripts/seed_dummy_calibration.py
 """
 
+import os
 import uuid
 import json
 import random
@@ -16,8 +17,9 @@ import math
 from datetime import datetime, timedelta
 
 from sqlalchemy import create_engine, text
+from sqlalchemy.engine import make_url
 
-PG_URL = "postgresql://meta3d:meta3d_password@localhost:5432/meta3d_ota"
+PG_URL = os.environ["DATABASE_URL"]
 CHAMBER_ID = "59c73fbe-7362-4004-9a80-f72dd8779c3e"  # CAICT-16-Probe-Dual (active in PG)
 CALIBRATOR = "SYSTEM_SEED"
 NOW = datetime.utcnow()
@@ -442,7 +444,7 @@ def seed_probe_calibration_validity(conn):
 def main():
     print("=" * 60)
     print("  Dummy Calibration Data Seeder (PostgreSQL)")
-    print(f"  Target DB: {PG_URL.split('@')[1]}")
+    print(f"  Target DB: {make_url(PG_URL).database}")
     print(f"  Target Chamber: CATR-16-Dual ({CHAMBER_ID})")
     print(f"  Timestamp: {NOW.isoformat()}")
     print("=" * 60)
