@@ -2908,8 +2908,10 @@ async def _device_connection_probe(driver) -> Optional[TestConnectionResult]:
         else:
             # EMCenter chassis identification: emcenter_switch_health, manual lines 136–155.
             reply = await asyncio.wait_for(driver._send_command("*IDN?"), timeout=6)
-            if not reply or not reply.strip() or reply.strip().upper().startswith("ERROR"):
-                raise ValueError("未取得有效的机箱身份回复")
+            # Part #1801188 Rev A p6: chassis *IDN?, not a slot/card reply.
+            identity = reply.strip().replace(",", " ").split() if isinstance(reply, str) else []
+            if identity[:2] != ["ETS-Lindgren", "EMCenter"] or "ERROR" in reply.upper():
+                raise ValueError("未确认 ETS-Lindgren EMCenter 机箱身份，不能判为开关连接成功")
             idn = reply.strip()
             message = "射频开关已返回机箱身份，通信正常（未切换路径）"
     except Exception as exc:

@@ -79,10 +79,14 @@ export function PositionerControlPanel() {
   }
 
   const runSweep = async () => {
+    const sequence = ++request.current
+    setPos(null)
+    setReadMessage('')
     setBusy('sweep')
     setSweep(null)
     try {
       const r = await positionerSweep()
+      if (sequence !== request.current) return
       setSweep(r)
       notifications.show({
         color: r.ok ? 'green' : 'red',
@@ -90,13 +94,14 @@ export function PositionerControlPanel() {
         message: r.message || '',
       })
     } catch (e) {
+      if (sequence !== request.current) return
       notifications.show({
         color: 'red',
         title: '扫描请求出错',
         message: e instanceof Error ? e.message : String(e),
       })
     } finally {
-      setBusy(null)
+      if (sequence === request.current) setBusy(null)
     }
   }
 

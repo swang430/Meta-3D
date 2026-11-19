@@ -10,6 +10,9 @@ from app.hal.rf_switch import EtslSwitchDriver
     ("positioner", "0", True), ("positioner", "nan", False),
     ("positioner", "", False), ("positioner", TimeoutError(), False),
     ("rfSwitch", "ETS-Lindgren,EMCenter,123", True),
+    ("rfSwitch", "ETS-Lindgren EMCenter version 4.3.4", True),
+    ("rfSwitch", "Keysight,F64,123", False), ("rfSwitch", "OK", False),
+    ("rfSwitch", "ETS-Lindgren,EMSwitch,123", False),
     ("rfSwitch", "ERROR 3", False), ("rfSwitch", "", False),
     ("rfSwitch", TimeoutError(), False),
 ])

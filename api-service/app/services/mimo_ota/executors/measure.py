@@ -3879,6 +3879,10 @@ class MeasureExecutor(IStepExecutor):
             dut_disconnect_warnings: List[str] = []
             targets = config.azimuths_deg
             origin = None
+            def check_running():
+                context.db.refresh(context.test_execution, attribute_names=["status"])
+                if context.test_execution.status != "running":
+                    raise RuntimeError("执行已停止，不继续诊断运动或吞吐测量")
             if relative_diag:
                 origin, targets = await positioner.diagnostic_relative_plan(targets, **motion_stop_kwargs)
                 logger.info("诊断相对方位：编码器起点 %s°，目标 %s°；首点原位采样", origin, targets)
@@ -3934,7 +3938,8 @@ class MeasureExecutor(IStepExecutor):
                     else:
                         moved = await positioner.move_to(
                             targets[az_idx], 0.0, **motion_stop_kwargs,
-                            **({"diagnostic_wait": True} if relative_diag else {}),
+                            **({"diagnostic_wait": True, "check_before_segment": check_running}
+                               if relative_diag else {}),
                         )
                 if hasattr(positioner, "build_p0_5_position_evidence"):
                     try:
@@ -4007,10 +4012,6 @@ class MeasureExecutor(IStepExecutor):
                             base_station, "adapter_manifest", None
                         )
                     diagnostic_rows = []
-                    def check_running():
-                        context.db.refresh(context.test_execution, attribute_names=["status"])
-                        if context.test_execution.status != "running":
-                            raise RuntimeError("执行已停止，不启动下一次吞吐测量")
                     collect = self._diagnostic_cmw_windows if repeated_cmw else self._measure_base_station_samples
                     base_station_samples = await collect(
                         base_station,
@@ -4406,12 +4407,8 @@ class MeasureExecutor(IStepExecutor):
             if relative_diag and len(azimuth_results) == len(targets) and all(
                 row.get("throughput_valid") is True for row in azimuth_results
             ) and not dut_disconnect_warnings:
-                def ensure_return_allowed():
-                    context.db.refresh(context.test_execution, attribute_names=["status"])
-                    if context.test_execution.status != "running":
-                        raise RuntimeError("执行已中断，不继续返回起点")
                 result_payload["diagnostic_origin_return"] = await _return_diagnostic_origin(
-                    positioner, origin, targets[-1], ensure_return_allowed, motion_stop_kwargs)
+                    positioner, origin, targets[-1], check_running, motion_stop_kwargs)
         except _CaSetupBlocked as exc:
             ca_setup_blocker = str(exc)
         finally:
