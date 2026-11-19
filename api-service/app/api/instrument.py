@@ -2889,6 +2889,37 @@ class TestConnectionResult(BaseModel):
     latency_ms: Optional[float] = None
 
 
+async def _device_connection_probe(driver) -> Optional[TestConnectionResult]:
+    """Only attest a fresh reply, not motion, relay position or interlock safety."""
+    import asyncio
+    import time
+    from app.hal.aerotech_positioner import AeroBasicCmd, RealAerotechDriver
+    from app.hal.rf_switch import EtslSwitchDriver
+
+    if not isinstance(driver, (RealAerotechDriver, EtslSwitchDriver)):
+        return None
+    start = time.monotonic()
+    idn = None
+    try:
+        if isinstance(driver, RealAerotechDriver):
+            command = AeroBasicCmd.POSITION_FEEDBACK.format(axis=driver.az_axis)
+            await driver._query_finite_value(command)
+            message = "转台已返回当前轴的位置反馈，通信正常（未执行运动）"
+        else:
+            # EMCenter chassis identification: emcenter_switch_health, manual lines 136–155.
+            reply = await asyncio.wait_for(driver._send_command("*IDN?"), timeout=6)
+            if not reply or not reply.strip() or reply.strip().upper().startswith("ERROR"):
+                raise ValueError("未取得有效的机箱身份回复")
+            idn = reply.strip()
+            message = "射频开关已返回机箱身份，通信正常（未切换路径）"
+    except Exception as exc:
+        reason = "等待回复超时" if isinstance(exc, TimeoutError) else str(exc)
+        return TestConnectionResult(success=False, status="error",
+                                    message=f"本次只读通信检查未通过：{reason}")
+    return TestConnectionResult(success=True, status="connected", message=message,
+                                idn=idn, latency_ms=round((time.monotonic()-start)*1000, 1))
+
+
 class TestConnectionRequest(BaseModel):
     """测试连接请求（可选覆盖参数）"""
     # 基站/信道仿真器类别按单会话控制，不接受未保存地址覆盖。
@@ -3236,6 +3267,15 @@ async def test_instrument_connection(
 
     if hal_driver is not None:
         try:
+            probe = await _device_connection_probe(hal_driver)
+            if probe is not None:
+                if conn:
+                    from datetime import datetime
+                    conn.status = probe.status
+                    conn.last_connected_at = datetime.utcnow() if probe.success else None
+                    conn.last_error = None if probe.success else probe.message
+                    db.commit()
+                return probe
             result = await _run_command_via_hal(
                 hal_driver,
                 "*IDN?",
