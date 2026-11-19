@@ -48,3 +48,23 @@ def test_only_positive_infinite_loss_represents_zero(tmp_path, loss):
     else:
         with pytest.raises(ValueError):
             read_groups(table, CLUSTER)
+
+
+@pytest.mark.parametrize('budget', [8, 16, 24])
+def test_missing_quality_still_compares_physical_paths(budget):
+    rows = [dict(sample(), AOA=i) for i in range(budget)]
+    paths = [cluster_path(row) for row in rows]
+    assert compare_group(7, paths, rows, None, budget)['power']['ratio'] == pytest.approx(1)
+    with pytest.raises(ValueError):
+        compare_group(7, paths, rows[:-1], None, budget)
+
+
+@pytest.mark.parametrize('changes', [
+    {'FORWARD': -0.1}, {'BACKWARD': 1.1}, {'OVERALL': 0.7},
+])
+def test_reject_invalid_quality_scores(changes):
+    rows = [dict(sample(), AOA=i) for i in range(8)]
+    quality = dict(LINK_ID=7, N_RAYS=8, N_CLUSTERS=8, FORWARD=0.2, BACKWARD=0.8, OVERALL=0.5)
+    quality.update(changes)
+    with pytest.raises(ValueError, match='评分'):
+        compare_group(7, [cluster_path(row) for row in rows], rows, quality, 8)
