@@ -182,6 +182,34 @@ def test_cmw_diagnostic_route_requires_all_six_authoritative_physical_fields():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("replay", [False, True])
+async def test_diagnostic_cmw_series_records_distinct_native_windows(replay):
+    from dataclasses import replace
+    class Driver(_Cmw):
+        async def measure_base_station_window(self, *args, **kwargs):
+            w = await super().measure_base_station_window(*args, **kwargs)
+            n = 1 if replay else self.native_calls
+            return replace(w, window_id=f"w{n}", trust=replace(
+                w.trust, exchange_ids=(f"proof{n}",), stages=tuple(
+                    replace(s, exchange_ids=(f"proof{n}",)) for s in w.trust.stages)))
+    driver = Driver()
+    rows = []
+    call = MeasureExecutor._diagnostic_cmw_windows(driver, rows=rows,
+        check_running=lambda: None, azimuth=90., window_s=1., throughput_scope="pcell",
+        requested_sample_count=3, manifest=RealCmw500Driver.adapter_manifest,
+        simulated_diagnostic=False, statistical_basis_subframes=5000)
+    if replay:
+        with pytest.raises(RuntimeError, match="重复"):
+            await call
+        assert driver.native_calls == 2 and len(rows) == 1
+    else:
+        last = await call
+        assert driver.native_calls == 3 and last[0].window.window_id == "w3"
+        assert [r["window_id"] for r in rows] == ["w1","w2","w3"]
+        assert [r["throughput_mbps"] for r in rows] == [98.] * 3
+
+
+@pytest.mark.asyncio
 async def test_cmw_measure_scan_uses_one_driver_native_extended_bler_window():
     driver = _Cmw()
 

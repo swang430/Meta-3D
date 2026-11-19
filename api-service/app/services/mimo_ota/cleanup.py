@@ -46,6 +46,7 @@ async def cleanup_chamber_instruments(
     *,
     expected_operator_stop_generation: int | None = None,
     channel_emulator_safe_idle_owned: bool | None = None,
+    stop_positioner_in_place: bool = False,
 ) -> ChamberCleanupResult:
     """Stop signaling, confirm SAFE_IDLE, home positioner and stop emulation.
 
@@ -129,10 +130,11 @@ async def cleanup_chamber_instruments(
                 if expected_operator_stop_generation is not None
                 else {}
             )
-            home_confirmed = await positioner.move_to(0.0, 0.0, **move_kwargs)
+            home_confirmed = (False if stop_positioner_in_place else
+                              await positioner.move_to(0.0, 0.0, **move_kwargs))
             if home_confirmed:
                 safe_to_disconnect = True
-            else:
+            elif not stop_positioner_in_place:
                 msg = (
                     "positioner.move_to(home) 被拒；编码器未证明回零，"
                     "cleanup 改为确认急停后再决定是否断开"

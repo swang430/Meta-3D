@@ -65,6 +65,7 @@ async def _collect_sample(
     phase: str,
     execution_id: str,
     measure_input: Callable[[int], Awaitable[Any]] | None = None,
+    diagnostic_latest: bool = False,
 ) -> dict[str, Any]:
     cmw_power = await base_station.read_configured_downlink_power_dbm()
     instrument_metrics = await channel_emulator.get_metrics()
@@ -78,7 +79,17 @@ async def _collect_sample(
     measured: dict[int, float | None] = {}
     # §20.4.4.6 p250：主动测量的设备错误，不是 latest result 的有限数值，
     # 才能说明本窗口测量是否完成；不据此判 LTE 有效或人为设功率阈值。
-    if metrics.get("topology_source") == "readback" and not is_mock_driver(channel_emulator):
+    latest = (diagnostic_latest and metrics.get("simulation_state") == "RUNNING"
+              and metrics.get("topology_source") == "readback" and sorted(input_ports) == [1, 2]
+              and not is_mock_driver(channel_emulator))
+    if latest:
+        # get_metrics already queried INP:MEAS:RES:GET? per physical input
+        # (PROPSIM User Reference rev 10.2 §20.4.4.36 p258).
+        rows = _power_rows(metrics.get("input_powers_dbm"), input_ports)
+        logger.warning("[%s] CMW 开小区后读取 F64 最近输入功率（采样时间未确认）：%s",
+                       execution_id, "；".join(f"输入 {r['port']}：" +
+                       ("未取得" if r["value_dbm"] is None else f'{r["value_dbm"]} dBm') for r in rows))
+    elif metrics.get("topology_source") == "readback" and not is_mock_driver(channel_emulator):
         for port in input_ports:
             result = (
                 await measure_input(port) if measure_input is not None
@@ -119,6 +130,9 @@ async def _collect_sample(
         "invalid_input_ports": invalid_input_ports,
         "input_topology_known": bool(input_ports),
     }
+    if latest:
+        sample.update(latest_input_powers_dbm=rows, input_measurement_source="latest_result",
+                      input_sample_time_confirmed=False)
     logger.info(
         "[%s] Cell-ready power observation phase=%s "
         "CMW_RS_EPRE_config_dbm=%s smu=%s topology=%s "
@@ -154,6 +168,7 @@ async def run_attach_power_observation(
     is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     measure_input: Callable[[int], Awaitable[Any]] | None = None,
+    diagnostic_latest: bool = False,
 ) -> dict[str, Any]:
     """Collect Cell-ready power truth and optionally hold before attach polling.
 
@@ -167,12 +182,17 @@ async def run_attach_power_observation(
             base_station=base_station,
             channel_emulator=channel_emulator,
             phase="cell_ready",
+            diagnostic_latest=diagnostic_latest,
             execution_id=execution_id,
             measure_input=measure_input,
         )
     ]
     invalid_ports, failure = _input_failure(samples[0])
-    if strict_input_level and failure is not None:
+    def advisory(sample):
+        return (sample.get("input_measurement_source") == "latest_result"
+                and sample["metrics_status"] == "normal" and not sample["query_errors"]
+                and sample["cmw_configured_rs_epre_dbm"] is not None)
+    if strict_input_level and failure is not None and not advisory(samples[0]):
         logger.error("[%s] %s", execution_id, failure)
         return {
             "schema_version": 1,
@@ -208,6 +228,7 @@ async def run_attach_power_observation(
                 base_station=base_station,
                 channel_emulator=channel_emulator,
                 phase="observation_complete",
+                diagnostic_latest=diagnostic_latest,
                 execution_id=execution_id,
                 measure_input=measure_input,
             )
@@ -216,7 +237,7 @@ async def run_attach_power_observation(
         if final_failure is not None:
             invalid_ports = final_invalid
             failure = final_failure
-            if strict_input_level:
+            if strict_input_level and not advisory(samples[-1]):
                 logger.error("[%s] %s", execution_id, failure)
                 return {
                     "schema_version": 1,
@@ -232,6 +253,8 @@ async def run_attach_power_observation(
         sample["query_errors"] or sample["metrics_status"] == "error"
         for sample in samples
     )
+    if any(advisory(s) for s in samples):
+        failure = "诊断观察：已查询最近输入功率，采样时间未确认，不据此阻止 UE 接入。"
     return {
         "schema_version": 1,
         "accepted": True,

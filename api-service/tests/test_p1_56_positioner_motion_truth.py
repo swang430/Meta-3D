@@ -70,7 +70,7 @@ class ScriptedMotionDriver(RealAerotechDriver):
                 raise value
             return str(value)
         if command.startswith(
-            ("ENABLE ", "MOVEABS ", "HOME ", "ABORT ", "WAIT INPOS ")
+            ("ENABLE ", "MOVEABS ", "MOVEINC ", "HOME ", "ABORT ", "WAIT INPOS ")
         ):
             return ""
         if command == "VFBK(X)":
@@ -87,6 +87,81 @@ def _driver(*positions: Any, tolerance: float = 0.5) -> ScriptedMotionDriver:
         },
         tolerance=tolerance,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("running,final_angle", [(True, 216.), (True, 219.), (False, 216.)])
+async def test_diagnostic_return_to_recorded_origin(running, final_angle):
+    from app.services.mimo_ota.executors import measure
+    driver = _driver(306., 306., 276., 246., 216., final_angle)
+    driver.blocking_command_budget_s = 6
+    def check():
+        if not running:
+            raise RuntimeError("已停止")
+    if running and final_angle == 216.:
+        result = await measure._return_diagnostic_origin(driver, 216., 306., check, {})
+        assert result["encoder_after_return_deg"] == 216.
+    else:
+        with pytest.raises(RuntimeError, match="已停止|未确认"):
+            await measure._return_diagnostic_origin(driver, 216., 306., check, {})
+    assert [c for c in driver.sent if c.startswith("MOVE")] == (
+        ["MOVEINC X -30.0000 XF5.0000"] * 3 if running else [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("velocity,stopped", [("0", True), ("0.8", False)])
+async def test_position_refresh_opens_only_read_session(monkeypatch, velocity, stopped):
+    from app.api import instrument
+    driver = _driver(216.)
+    events = []
+    async def connect():
+        events.append("connect")
+        driver._axes_present = ["X"]
+        return True
+    async def disconnect():
+        events.append("disconnect")
+        return True
+    driver._axes_present = []
+    driver._responses["VFBK(X)"] = [velocity, velocity]
+    monkeypatch.setattr(driver, "connect", connect)
+    monkeypatch.setattr(driver, "disconnect", disconnect)
+    monkeypatch.setattr(instrument, "_resolve_positioner", lambda: (driver, None))
+    result = await instrument.positioner_position()
+    assert result.ok and result.azimuth == 216. and result.stopped is stopped
+    assert events == ["connect", "disconnect"]
+    assert set(driver.sent) == {"PFBK(X)", "VFBK(X)"}
+
+
+@pytest.mark.asyncio
+async def test_relative_diagnostic_starts_in_place_and_waits_for_encoder():
+    driver = _driver(3., 3., 3., 8.)
+    origin, targets = await driver.diagnostic_relative_plan([0., 5.])
+    assert (origin, targets) == (3., [3., 8.])
+    assert not any("MOVE" in cmd for cmd in driver.sent)
+    assert await driver.move_to(targets[1], 0., diagnostic_wait=True)
+    assert [cmd for cmd in driver.sent if cmd.startswith("MOVE")] == ["MOVEINC X 5.0000 XF5.0000"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("positions,ok,count", [
+    ([3., 33., 63., 93.], True, 3), ([3., 36., 36.], False, 1),
+])
+async def test_relative_segments_without_program_offset(positions, ok, count):
+    driver = _driver(*positions)
+    driver.blocking_command_budget_s = 6
+    driver.config.pop("motion_truth_coordinate_offset_deg")
+    assert await driver.move_to(93., 0., diagnostic_wait=True) is ok
+    assert [c for c in driver.sent if c.startswith("MOVE")] == ["MOVEINC X 30.0000 XF5.0000"] * count
+    if not ok:
+        assert "ABORT X" in driver.sent
+
+
+@pytest.mark.asyncio
+async def test_relative_diagnostic_refuses_out_of_range_sweep_before_move():
+    driver = _driver(359.)
+    with pytest.raises(Exception, match="行程"):
+        await driver.diagnostic_relative_plan([0., 5.])
+    assert not any("MOVE" in cmd for cmd in driver.sent)
 
 
 @pytest.mark.asyncio

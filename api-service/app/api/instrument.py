@@ -2889,6 +2889,39 @@ class TestConnectionResult(BaseModel):
     latency_ms: Optional[float] = None
 
 
+async def _device_connection_probe(driver) -> Optional[TestConnectionResult]:
+    """Only attest a fresh reply, not motion, relay position or interlock safety."""
+    import asyncio
+    import time
+    from app.hal.aerotech_positioner import AeroBasicCmd, RealAerotechDriver
+    from app.hal.rf_switch import EtslSwitchDriver
+
+    if not isinstance(driver, (RealAerotechDriver, EtslSwitchDriver)):
+        return None
+    start = time.monotonic()
+    idn = None
+    try:
+        if isinstance(driver, RealAerotechDriver):
+            command = AeroBasicCmd.POSITION_FEEDBACK.format(axis=driver.az_axis)
+            await driver._query_finite_value(command)
+            message = "转台已返回当前轴的位置反馈，通信正常（未执行运动）"
+        else:
+            # EMCenter chassis identification: emcenter_switch_health, manual lines 136–155.
+            reply = await asyncio.wait_for(driver._send_command("*IDN?"), timeout=6)
+            # Part #1801188 Rev A p6: chassis *IDN?, not a slot/card reply.
+            identity = reply.strip().replace(",", " ").split() if isinstance(reply, str) else []
+            if identity[:2] != ["ETS-Lindgren", "EMCenter"] or "ERROR" in reply.upper():
+                raise ValueError("未确认 ETS-Lindgren EMCenter 机箱身份，不能判为开关连接成功")
+            idn = reply.strip()
+            message = "射频开关已返回机箱身份，通信正常（未切换路径）"
+    except Exception as exc:
+        reason = "等待回复超时" if isinstance(exc, TimeoutError) else str(exc)
+        return TestConnectionResult(success=False, status="error",
+                                    message=f"本次只读通信检查未通过：{reason}")
+    return TestConnectionResult(success=True, status="connected", message=message,
+                                idn=idn, latency_ms=round((time.monotonic()-start)*1000, 1))
+
+
 class TestConnectionRequest(BaseModel):
     """测试连接请求（可选覆盖参数）"""
     # 基站/信道仿真器类别按单会话控制，不接受未保存地址覆盖。
@@ -3236,6 +3269,15 @@ async def test_instrument_connection(
 
     if hal_driver is not None:
         try:
+            probe = await _device_connection_probe(hal_driver)
+            if probe is not None:
+                if conn:
+                    from datetime import datetime
+                    conn.status = probe.status
+                    conn.last_connected_at = datetime.utcnow() if probe.success else None
+                    conn.last_error = None if probe.success else probe.message
+                    db.commit()
+                return probe
             result = await _run_command_via_hal(
                 hal_driver,
                 "*IDN?",
@@ -5214,6 +5256,7 @@ class PositionerSweepRequest(BaseModel):
 
 class PositionerResult(BaseModel):
     ok: bool
+    stopped: Optional[bool] = None
     azimuth: Optional[float] = None
     elevation: Optional[float] = None
     reason: Optional[str] = None
@@ -5323,15 +5366,26 @@ async def positioner_move(request: PositionerMoveRequest) -> PositionerResult:
 @router.get("/instruments/positioner/position", response_model=PositionerResult)
 async def positioner_position() -> PositionerResult:
     """读转台当前位置反馈 (PFBK)。"""
-    driver, reason = _resolve_positioner()
-    if driver is None:
-        return PositionerResult(ok=False, reason=reason,
-                                message=_POSITIONER_REASON_MSG.get(reason))
-    (az, el), pos_err = await _positioner_position(driver)
-    if pos_err:
-        return PositionerResult(ok=False, azimuth=az, elevation=el, reason="position_read_failed",
-                                message=_POSITIONER_REASON_MSG["position_read_failed"])
-    return PositionerResult(ok=True, azimuth=az, elevation=el)
+    from app.services.instrument_test_lease import positioner_operation_guard, positioner_refresh_busy
+    from app.hal.aerotech_positioner import RealAerotechDriver
+    if positioner_refresh_busy():
+        return PositionerResult(ok=False, reason="busy", message="仪器正在被测试或其他操作占用，未读取位置")
+    async with positioner_operation_guard("panel-read-position"):
+        driver, reason = _resolve_positioner()
+        if driver is None:
+            return PositionerResult(ok=False, reason=reason, message=_POSITIONER_REASON_MSG.get(reason))
+        try:
+            if isinstance(driver, RealAerotechDriver):
+                az, el, stopped = await driver.refresh_encoder_status()
+                return PositionerResult(ok=True, azimuth=az, elevation=el, stopped=stopped)
+            from app.services.instrument_hal_service import is_mock_driver
+            if is_mock_driver(driver):
+                return PositionerResult(ok=False, reason="simulated", message="模拟驱动不能读取现场编码器")
+            az, el = await driver.get_position()
+            return PositionerResult(ok=True, azimuth=az, elevation=el)
+        except Exception as exc:
+            logger.warning("[Positioner] 刷新失败: %s", exc)
+            return PositionerResult(ok=False, reason="position_read_failed", message=f"当前位置未知：{exc}")
 
 
 @router.post("/instruments/positioner/stop", response_model=PositionerResult)

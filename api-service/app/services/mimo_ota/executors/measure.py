@@ -102,6 +102,26 @@ from app.services.execution_evidence_outcome import (
 
 logger = logging.getLogger(__name__)
 
+
+async def _return_diagnostic_origin(positioner, origin, last_target, check_running, motion_kwargs):
+    """只在正常采完后调用；使用本轮编码器坐标，不回机械零点。"""
+    check_running()
+    before = await positioner.diagnostic_stationary_angle(**motion_kwargs)
+    tol = positioner.position_tolerance_deg
+    if not abs(before - last_target) <= tol:
+        raise RuntimeError("诊断结束位置未确认，不返回起点")
+    if abs(before - origin) > tol:
+        check_running()
+        if not await positioner.move_to(origin, 0., diagnostic_wait=True,
+                                        check_before_segment=check_running, **motion_kwargs):
+            raise RuntimeError("诊断返回起点未确认，停止运动")
+    actual = await positioner.diagnostic_stationary_angle(**motion_kwargs)
+    check_running()
+    if not abs(actual - origin) <= tol:
+        raise RuntimeError("诊断返回起点未确认：最终编码器角度不符")
+    logger.info("诊断返回本轮起点完成：起点 %s°，编码器 %s°，已停稳", origin, actual)
+    return {"encoder_origin_deg": origin, "encoder_after_return_deg": actual, "stopped": True}
+
 # Floor for window duration so mock paths still take a perceptible amount of
 # time (helps surface ordering bugs) but don't actually wait 5s in unit tests.
 _MOCK_WINDOW_FLOOR_S = 0.05
@@ -387,6 +407,7 @@ async def _observe_cell_ready_power(
     config: Any,
     holder: Dict[str, Dict[str, Any]],
     operation_recorder: Any = None,
+    manual_reference=None,
 ) -> bool:
     """Cell-ready 回调本体：采样、落到本次执行的 measurements，返回是否允许继续 attach。"""
 
@@ -397,6 +418,24 @@ async def _observe_cell_ready_power(
         context.db.expire(context.test_execution)
         context.db.refresh(context.test_execution)
         return context.test_execution.status != "running"
+
+    from app.services.execution_qualification import (
+        EXECUTION_QUALIFICATION_KEY, validate_frozen_execution_qualification,
+    )
+    from app.hal.cmw500_base_station import RealCmw500Driver
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    frozen = getattr(context.test_execution, "config", None)
+    policy = frozen.get(EXECUTION_QUALIFICATION_KEY) if isinstance(frozen, dict) else None
+    diagnostic_latest = (
+        validate_frozen_execution_qualification(policy) is None
+        and policy.get("policy_mode") == policy.get("classification") == "diagnostic"
+        and isinstance(base_station, RealCmw500Driver)
+        and isinstance(channel_emulator, RealPropsimF64Driver)
+        and isinstance(manual_reference, dict)
+        and manual_reference.get("mode") == "manual"
+        and manual_reference.get("application_succeeded") is True
+        and sorted(manual_reference.get("input_ports") or []) == [1, 2]
+    )
 
     async def _measure_input(port: int):
         return await _observe_channel_emulator_operation(
@@ -413,6 +452,7 @@ async def _observe_cell_ready_power(
         execution_id=str(context.test_execution.id),
         is_cancelled=_observation_cancelled,
         measure_input=_measure_input,
+        diagnostic_latest=diagnostic_latest,
     )
     holder["result"] = observation
     measurements = dict(context.test_execution.measurements or {})
@@ -537,7 +577,15 @@ def _finalize_manual_input_reference(
         )
         return result
 
-    rows = sample.get("input_powers_dbm")
+    # latest_result is produced only by the frozen diagnostic CMW/F64 path.
+    diagnostic_latest = (
+        observed_ports and sorted(observed_ports) == [1, 2]
+        and all(isinstance(s, dict) and s.get("input_measurement_source") == "latest_result"
+                and s.get("input_sample_time_confirmed") is False
+                and s.get("metrics_status") == "normal" and not s.get("query_errors")
+                and s.get("cmw_configured_rs_epre_dbm") is not None for s in samples)
+    )
+    rows = sample.get("latest_input_powers_dbm" if diagnostic_latest else "input_powers_dbm")
     row_by_port: Dict[int, float] = {}
     if isinstance(rows, list):
         for row in rows:
@@ -559,6 +607,14 @@ def _finalize_manual_input_reference(
         result["failure_reason"] = (
             f"F64 活动输入口缺少有效实测功率: {missing_ports}"
         )
+        return result
+
+    if diagnostic_latest:
+        result.update(verification_status="diagnostic_latest_sample_time_unknown",
+                      verification_source="attach_power_observation.latest_result",
+                      latest_input_powers_dbm=rows, input_sample_time_confirmed=False,
+                      failure_reason=None,
+                      warning="诊断使用开小区后读取的两路最近功率；采样时间未确认，不作为正式工作点验证。")
         return result
 
     if any(
@@ -1235,6 +1291,39 @@ class MeasureExecutor(IStepExecutor):
         return samples
 
     @staticmethod
+    async def _diagnostic_cmw_windows(base_station, *, rows, check_running, azimuth,
+                                      requested_sample_count, **kwargs):
+        """Repeat whole closed single-shot transactions, never just FETCH."""
+        seen_ids, seen_exchanges = set(), set()
+        for index in range(requested_sample_count):
+            check_running()
+            samples = await MeasureExecutor._measure_base_station_samples(
+                base_station, requested_sample_count=requested_sample_count, **kwargs)
+            sample, = samples
+            window = sample.window
+            if (not window.trust.formally_confirmed or not window.completed_at
+                    or not window.window_id):
+                raise _BaseStationWindowBlocked(window)
+            proof = window.trust.exchange_ids
+            if window.window_id in seen_ids or seen_exchanges.intersection(proof):
+                raise RuntimeError("诊断吞吐窗口回执重复，停止采集，不复用旧结果")
+            value = MeasureExecutor._trusted_throughput_value(
+                sample.metrics, required_scope=kwargs["throughput_scope"])
+            if value is None:
+                raise RuntimeError(f"诊断吞吐第 {index+1} 个窗口没有有效读数")
+            seen_ids.add(window.window_id)
+            seen_exchanges.update(proof)
+            row = dict(window_number=index+1, window_id=window.window_id,
+                       started_at=window.started_at.isoformat(),
+                       completed_at=window.completed_at.isoformat(), throughput_mbps=value)
+            rows.append(row)
+            logger.info("CMW500 诊断方位 %s° 吞吐窗 %d/%d：%s", azimuth, index+1,
+                        requested_sample_count, row)
+        # Full per-shot exchanges already live in the execution SCPI log.
+        # Keep the last native window for the existing single-window evidence contract.
+        return samples
+
+    @staticmethod
     def _channel_emulator_plan_context(context, hal, config):
         """P2-59 ①：在任何 CE I/O 之前，把启动期冻结的 CE 执行计划与当下装载驱动重算的
         live 计划对账（镜像 `_base_station_attempt_context` 对 BS 计划的 digest 对账）。
@@ -1813,6 +1902,21 @@ class MeasureExecutor(IStepExecutor):
         frozen_positioner = execution_config.get(
             POSITIONER_COORDINATE_FREEZE_CONFIG_KEY
         )
+        from app.hal.aerotech_positioner import RealAerotechDriver
+        from app.services.execution_qualification import (
+            EXECUTION_QUALIFICATION_KEY, validate_frozen_execution_qualification,
+        )
+        qualification = execution_config.get(EXECUTION_QUALIFICATION_KEY)
+        measurement = getattr(getattr(base_station, "adapter_manifest", None), "measurement", None)
+        repeated_cmw = (getattr(measurement, "cardinality", None) == "single"
+                        and not is_mock_driver(base_station)
+                        and isinstance(qualification, dict)
+                        and validate_frozen_execution_qualification(qualification) is None
+                        and qualification.get("policy_mode") == qualification.get("classification") == "diagnostic")
+        relative_diag = (isinstance(positioner, RealAerotechDriver)
+                         and isinstance(qualification, dict)
+                         and validate_frozen_execution_qualification(qualification) is None
+                         and qualification.get("policy_mode") == qualification.get("classification") == "diagnostic")
         if not isinstance(frozen_positioner, dict):
             if is_mock_driver(positioner):
                 frozen_positioner = {
@@ -2975,6 +3079,7 @@ class MeasureExecutor(IStepExecutor):
                         channel_emulator=emulator,
                         config=config,
                         holder=observation_holder,
+                        manual_reference=input_level_payload,
                         operation_recorder=record_channel_emulator_operation,
                     )
 
@@ -3636,6 +3741,7 @@ class MeasureExecutor(IStepExecutor):
             if (
                 not input_level_payload.get("skipped")
                 and not input_level_payload.get("success")
+                and input_level_payload.get("verification_status") != "diagnostic_latest_sample_time_unknown"
                 and config.precheck_strict_input_level
             ):
                 # strict 模式: 操作点未确定 → 后续 RSRP/吞吐都是 garbage, fail-loud。
@@ -3771,12 +3877,21 @@ class MeasureExecutor(IStepExecutor):
                 )
 
             dut_disconnect_warnings: List[str] = []
+            targets = config.azimuths_deg
+            origin = None
+            def check_running():
+                context.db.refresh(context.test_execution, attribute_names=["status"])
+                if context.test_execution.status != "running":
+                    raise RuntimeError("执行已停止，不继续诊断运动或吞吐测量")
+            if relative_diag:
+                origin, targets = await positioner.diagnostic_relative_plan(targets, **motion_stop_kwargs)
+                logger.info("诊断相对方位：编码器起点 %s°，目标 %s°；首点原位采样", origin, targets)
             for az_idx, azimuth in enumerate(config.azimuths_deg):
                 register_required_scpi_evidence(
                     context.test_execution,
                     requirement_id=f"positioner.azimuth.{az_idx:03d}",
                     evidence_key="positioner.angle",
-                    requested={"angle_deg": azimuth},
+                    requested={"angle_deg": targets[az_idx]},
                     required_evidence_level=EvidenceLevel.APPLIED,
                 )
                 register_required_scpi_evidence(
@@ -3817,17 +3932,21 @@ class MeasureExecutor(IStepExecutor):
                     frozen_stat_count,
                 )
                 with capture_scpi_exchanges() as position_exchanges:
-                    moved = await positioner.move_to(
-                        azimuth,
-                        0.0,
-                        **motion_stop_kwargs,
-                    )
+                    if relative_diag and az_idx == 0:
+                        actual = await positioner.diagnostic_stationary_angle(**motion_stop_kwargs)
+                        moved = abs(actual - origin) <= positioner.position_tolerance_deg
+                    else:
+                        moved = await positioner.move_to(
+                            targets[az_idx], 0.0, **motion_stop_kwargs,
+                            **({"diagnostic_wait": True, "check_before_segment": check_running}
+                               if relative_diag else {}),
+                        )
                 if hasattr(positioner, "build_p0_5_position_evidence"):
                     try:
                         record_positioner_capture(
                             context.test_execution,
                             requirement_id=f"positioner.azimuth.{az_idx:03d}",
-                            requested_angle_deg=azimuth,
+                            requested_angle_deg=targets[az_idx],
                             frozen_positioner=frozen_positioner,
                             driver=positioner,
                             exchanges=position_exchanges,
@@ -3851,6 +3970,10 @@ class MeasureExecutor(IStepExecutor):
                         ),
                     )
                 await asyncio.sleep(config.settling_time_s)
+                if relative_diag:
+                    encoder = await positioner.diagnostic_stationary_angle(**motion_stop_kwargs)
+                    if abs(encoder - targets[az_idx]) > positioner.position_tolerance_deg:
+                        raise RuntimeError(f"相对方位 {azimuth}° 采样前未到位：目标 {targets[az_idx]}°，编码器 {encoder}°")
 
                 samples_rsrp: List[float] = []
                 samples_sinr: List[float] = []
@@ -3888,8 +4011,12 @@ class MeasureExecutor(IStepExecutor):
                         measurement_manifest = getattr(
                             base_station, "adapter_manifest", None
                         )
-                    base_station_samples = await self._measure_base_station_samples(
+                    diagnostic_rows = []
+                    collect = self._diagnostic_cmw_windows if repeated_cmw else self._measure_base_station_samples
+                    base_station_samples = await collect(
                         base_station,
+                        **(dict(rows=diagnostic_rows, check_running=check_running, azimuth=azimuth)
+                           if repeated_cmw else {}),
                         window_s=window_s,
                         throughput_scope=throughput_scope,
                         requested_sample_count=num_windows,
@@ -3952,7 +4079,9 @@ class MeasureExecutor(IStepExecutor):
                         metrics,
                         required_scope=throughput_scope,
                     )
-                    if trusted_tput is not None:
+                    if repeated_cmw:
+                        samples_tput.extend(row["throughput_mbps"] for row in diagnostic_rows)
+                    elif trusted_tput is not None:
                         samples_tput.append(trusted_tput)
                     # P1 (Codex #126): ThroughputMetrics.mcs_dl 默认 0 —— 真 UXM 不报
                     # DL_MCS 时保持 0, 不能当有效样本 (否则众数 0 < 请求 → 误判 clamp 把
@@ -4031,6 +4160,12 @@ class MeasureExecutor(IStepExecutor):
                     ),
                     "route_compensation":az_meta.get('route_compensation'),
                 }
+                if relative_diag:
+                    az.update(angle_reference="diagnostic_relative", encoder_origin_deg=origin,
+                              relative_azimuth_deg=azimuth, encoder_target_deg=targets[az_idx],
+                              encoder_before_sampling_deg=encoder)
+                if repeated_cmw:
+                    az["diagnostic_throughput_windows"] = diagnostic_rows
                 azimuth_results.append(az)
 
                 if measurement_simulated:
@@ -4269,6 +4404,11 @@ class MeasureExecutor(IStepExecutor):
                 result_payload["emulation_file_source"] = (
                     "testcase" if config.emulation_file else "driver_default"
                 )
+            if relative_diag and len(azimuth_results) == len(targets) and all(
+                row.get("throughput_valid") is True for row in azimuth_results
+            ) and not dut_disconnect_warnings:
+                result_payload["diagnostic_origin_return"] = await _return_diagnostic_origin(
+                    positioner, origin, targets[-1], check_running, motion_stop_kwargs)
         except _CaSetupBlocked as exc:
             ca_setup_blocker = str(exc)
         finally:
@@ -4278,6 +4418,7 @@ class MeasureExecutor(IStepExecutor):
                 hal,
                 context.test_execution.id,
                 expected_operator_stop_generation=motion_stop_generation,
+                **({"stop_positioner_in_place": True} if relative_diag else {}),
             )
             cleanup_warnings = list(cleanup_result.warnings)
             if (

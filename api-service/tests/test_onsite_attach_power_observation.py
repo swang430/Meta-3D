@@ -64,6 +64,37 @@ def _metrics(*, input_1=-17.2, input_2=-17.4, output_1=-50.5):
     }
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("latest,errors,accepted", [
+    (-29.1, [], True), (None, [], True), (-29.1, ["output_1: timeout"], False),
+])
+async def test_running_diagnostic_records_latest_without_active_query(latest, errors, accepted):
+    snap = _metrics(input_1=latest)
+    snap["metrics"]["query_errors"] = errors
+    async def forbidden(port):
+        pytest.fail("RUNNING 诊断不得主动测量")
+    result = await run_attach_power_observation(
+        base_station=_BaseStation(), channel_emulator=_ChannelEmulator([snap]),
+        observation_s=0, strict_input_level=True, execution_id="diag",
+        diagnostic_latest=True, measure_input=forbidden)
+    assert result["accepted"] is accepted
+    sample = result["samples"][0]
+    assert sample["latest_input_powers_dbm"][0]["value_dbm"] == latest
+    assert sample["input_sample_time_confirmed"] is False
+    assert sample["input_measurement_confirmed"] is False
+    assert all(r["value_dbm"] is None for r in sample["input_powers_dbm"])
+    from app.services.mimo_ota.executors.measure import _finalize_manual_input_reference
+    level = _finalize_manual_input_reference(
+        {"mode": "manual", "application_succeeded": True, "input_ports": [1, 2]}, result)
+    assert level["success"] is False
+    assert level["readback"] == []
+    if accepted and latest is not None:
+        assert level["verification_status"] == "diagnostic_latest_sample_time_unknown"
+        assert level["latest_input_powers_dbm"] == sample["latest_input_powers_dbm"]
+    else:
+        assert level["verification_status"] == "failed"
+
+
 def test_attach_power_observation_window_has_bounded_explicit_contract():
     assert MIMOOTAConfiguration().attach_power_observation_s == 0.0
     assert (

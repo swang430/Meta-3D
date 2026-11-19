@@ -118,6 +118,25 @@ async def _no_sleep(_seconds: float) -> None:
 
 
 @pytest.mark.asyncio
+async def test_diagnostic_three_separate_cmw_initiations_and_reads():
+    driver = _FakeTransportCmw()
+    driver.cell_states = deque(["ON,ADJ"] * 6)
+    driver.ps_states = deque(["CEST"] * 6)
+    driver.ebler_states = deque(["OFF", "RUN", "RUN", "RDY", "OFF"] * 3)
+    rows = []
+    with patch("app.hal.cmw500_base_station.asyncio.sleep", _no_sleep):
+        await MeasureExecutor._diagnostic_cmw_windows(
+            driver, rows=rows, check_running=lambda: None, azimuth=0.,
+            window_s=0.1, throughput_scope="pcell", requested_sample_count=3,
+            manifest=driver.adapter_manifest, simulated_diagnostic=False,
+            statistical_basis_subframes=5000)
+    assert driver.writes.count("INITiate:LTE:SIGN1:EBLer") == 3
+    assert driver.queries.count("FETCh:LTE:SIGN1:EBLer:PCC:ABSolute?") == 3
+    assert len({r["window_id"] for r in rows}) == 3
+    assert [r["throughput_mbps"] for r in rows] == pytest.approx([123.4565] * 3)
+
+
+@pytest.mark.asyncio
 async def test_fake_transport_runs_config_route_attach_window_cleanup_then_release():
     driver = _FakeTransportCmw()
     session = driver._visa_session
