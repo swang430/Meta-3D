@@ -1,4 +1,4 @@
-import { TrajectoryImport, downloadJson } from './TrajectoryImport'
+import { TrajectoryImport, downloadFile } from './TrajectoryImport'
 import { useState } from 'react'
 import { Alert, Button, FileInput, Paper, ScrollArea, Stack, Table, Text } from '@mantine/core'
 
@@ -48,11 +48,11 @@ export function ClusterResponsePanel() {
     <TrajectoryImport onImport={value => { setFile(value); setResult(null); setError('') }} />
     <FileInput label="聚簇轨迹文件" accept=".json" disabled={busy} value={file}
       onChange={value => { setFile(value); setResult(null); setError('') }} />
-    {file && <Button variant="light" onClick={async () => downloadJson(file.name, JSON.parse(await file.text()))}>下载交换文件</Button>}
+    {file && <Button variant="light" onClick={() => downloadFile(file.name, file)}>下载交换文件</Button>}
     <Button disabled={!file} loading={busy} onClick={calculate}>计算逐帧模型频响</Button>
     {error && <Alert color="red">{error}</Alert>}
     {result && <>
-      <Button onClick={() => downloadJson(result.direction + '-response.json', result)}>下载逐帧计算结果</Button>
+      <Button onClick={() => downloadFile(result.direction + '-response.json', new Blob([JSON.stringify(result)], { type: 'application/json' }))}>下载逐帧计算结果</Button>
       <Text>{result.direction === 'uplink' ? '上行' : '下行'}共 {result.frames.length} 帧。数值为模型计算结果，设备播放尚未验证。</Text>
       <ScrollArea.Autosize mah={350}><Table><Table.Thead><Table.Tr>
         <Table.Th>帧编号</Table.Th><Table.Th>时刻（秒）</Table.Th>

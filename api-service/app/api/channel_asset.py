@@ -11,8 +11,10 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Literal, Optional
 from uuid import UUID
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
@@ -228,3 +230,38 @@ def delete_asset(asset_id: UUID, hard: bool = False, db: Session = Depends(get_d
         delete_channel_asset(db, asset_id, soft=not hard)
     except ChannelAssetNotFound as e:
         raise HTTPException(status_code=404, detail=str(e))
+
+
+@router.post("/trajectory/import")
+def import_cluster_trajectory(
+    archive: UploadFile, clusters: UploadFile, quality: UploadFile,
+    direction: Literal["downlink", "uplink"] = Form(...),
+    speed_m_s: float = Form(..., gt=0), coordinate_units: Literal["metres"] = Form(...),
+):
+    """用操作员确认的恒速、米制位置及上下行原始文件还原单个方向的时间轴。"""
+    from app.services.channel_generation import mpdb_input as mpdb
+    from app.services.channel_generation.cluster_exchange import convert
+
+    with TemporaryDirectory() as temporary:
+        folder = Path(temporary)
+        try:
+            for upload in (archive, clusters, quality):
+                name = upload.filename or ""
+                if not name or Path(name).name != name or name in {".", ".."}:
+                    raise ValueError("文件名无效")
+                with (folder / name).open("xb") as output:
+                    while chunk := upload.file.read(1024 * 1024):
+                        if output.tell() + len(chunk) > mpdb.MAX_BYTES:
+                            raise ValueError("文件超过允许读取的大小")
+                        output.write(chunk)
+            document = mpdb.inspect_mpdb(folder / archive.filename, speed_m_s=speed_m_s,
+                                         coordinate_units=coordinate_units, speed_source="user_confirmed")
+            source = next(d for d in document["directions"] if d["direction"] == direction)
+            stem = Path(source["source_document"]["meta"]["lauraycsPlatform"]["name"]).stem
+            if (clusters.filename, quality.filename) != (f"{stem}_cluster_cdl.csv", f"{stem}_cluster_quality.csv"):
+                raise ValueError("所选方向与聚簇文件、质量文件的名称不匹配")
+            hashes = {item["path"]: item["sha256"] for item in document["source_files"]}
+            hashes.update({u.filename: mpdb.digest((folder / u.filename).read_bytes()) for u in (clusters, quality)})
+            return convert(document, source, folder, hashes)
+        except (ValueError, KeyError, OverflowError, FileExistsError) as exc:
+            raise HTTPException(422, f"无法导入轨迹：{exc}") from exc
