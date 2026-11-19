@@ -64,6 +64,28 @@ def _metrics(*, input_1=-17.2, input_2=-17.4, output_1=-50.5):
     }
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("ports,state,allowed", [
+    ([1, 2], "RUNNING", True), ([1], "RUNNING", False),
+    ([], "RUNNING", False), ([1, 2], "STOPPED", False),
+])
+async def test_p295_unknown_is_never_a_power_measurement(ports, state, allowed):
+    metrics = _metrics()
+    metrics["metrics"]["simulation_state"] = state
+    evidence = {}
+    async def measure(port):
+        if port in ports:
+            evidence[port] = '-200,"Execution error;Wrong device state for command"'
+        return None
+    result = await run_attach_power_observation(
+        base_station=_BaseStation(), channel_emulator=_ChannelEmulator([metrics]),
+        observation_s=0, strict_input_level=True, execution_id="test",
+        measure_input=measure, diagnostic_rejections=evidence)
+    assert result["accepted"] is allowed
+    assert result["status"] == ("warning" if allowed else "rejected")
+    assert all(row["value_dbm"] is None for row in result["samples"][0]["input_powers_dbm"])
+
+
 def test_attach_power_observation_window_has_bounded_explicit_contract():
     assert MIMOOTAConfiguration().attach_power_observation_s == 0.0
     assert (

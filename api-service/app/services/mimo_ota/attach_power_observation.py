@@ -154,6 +154,7 @@ async def run_attach_power_observation(
     is_cancelled: Callable[[], Awaitable[bool]] | None = None,
     sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
     measure_input: Callable[[int], Awaitable[Any]] | None = None,
+    diagnostic_rejections: dict | None = None,
 ) -> dict[str, Any]:
     """Collect Cell-ready power truth and optionally hold before attach polling.
 
@@ -172,7 +173,19 @@ async def run_attach_power_observation(
         )
     ]
     invalid_ports, failure = _input_failure(samples[0])
-    if strict_input_level and failure is not None:
+    def diagnostic_warning(sample):
+        if not (diagnostic_rejections and set(diagnostic_rejections) == {1, 2}
+                and sorted(sample["topology"]["active_input_ports"]) == [1, 2]
+                and sorted(sample["invalid_input_ports"]) == [1, 2]
+                and sample["topology"]["source"] == "readback"
+                and sample["simulation_state"] == "RUNNING"
+                and sample["metrics_status"] == "normal" and not sample["query_errors"]
+                and sample["cmw_configured_rs_epre_dbm"] is not None):
+            return False
+        sample["device_rejections"] = dict(diagnostic_rejections)
+        return True
+
+    if strict_input_level and failure is not None and not diagnostic_warning(samples[0]):
         logger.error("[%s] %s", execution_id, failure)
         return {
             "schema_version": 1,
@@ -216,7 +229,7 @@ async def run_attach_power_observation(
         if final_failure is not None:
             invalid_ports = final_invalid
             failure = final_failure
-            if strict_input_level:
+            if strict_input_level and not diagnostic_warning(samples[-1]):
                 logger.error("[%s] %s", execution_id, failure)
                 return {
                     "schema_version": 1,
@@ -232,6 +245,9 @@ async def run_attach_power_observation(
         sample["query_errors"] or sample["metrics_status"] == "error"
         for sample in samples
     )
+    if any(s.get("device_rejections") for s in samples):
+        failure = "P2-95：F64 运行中拒绝两路新测量，输入功率未知；仅继续诊断接入，不确认输入工作点。"
+        logger.warning("[%s] %s", execution_id, failure)
     return {
         "schema_version": 1,
         "accepted": True,

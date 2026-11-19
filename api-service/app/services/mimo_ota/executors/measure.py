@@ -387,6 +387,7 @@ async def _observe_cell_ready_power(
     config: Any,
     holder: Dict[str, Dict[str, Any]],
     operation_recorder: Any = None,
+    manual_reference=None,
 ) -> bool:
     """Cell-ready 回调本体：采样、落到本次执行的 measurements，返回是否允许继续 attach。"""
 
@@ -398,11 +399,33 @@ async def _observe_cell_ready_power(
         context.db.refresh(context.test_execution)
         return context.test_execution.status != "running"
 
+    from app.services.execution_qualification import (
+        EXECUTION_QUALIFICATION_KEY, validate_frozen_execution_qualification,
+    )
+    from app.hal.cmw500_base_station import RealCmw500Driver
+    from app.hal.propsim_f64 import RealPropsimF64Driver
+    frozen = getattr(context.test_execution, "config", None)
+    policy = frozen.get(EXECUTION_QUALIFICATION_KEY) if isinstance(frozen, dict) else None
+    rejection = {} if (
+        validate_frozen_execution_qualification(policy) is None
+        and policy.get("policy_mode") == policy.get("classification") == "diagnostic"
+        and isinstance(base_station, RealCmw500Driver)
+        and isinstance(channel_emulator, RealPropsimF64Driver)
+        and isinstance(manual_reference, dict)
+        and manual_reference.get("mode") == "manual"
+        and manual_reference.get("application_succeeded") is True
+        and sorted(manual_reference.get("input_ports") or []) == [1, 2]
+    ) else None
+
     async def _measure_input(port: int):
+        kwargs = {}
+        if rejection is not None:
+            rejection.pop(port, None)
+            kwargs["rejection"] = rejection
         return await _observe_channel_emulator_operation(
             operation_recorder, phase="adjust", operation="measure_input",
             requested={"measurement": {"input_port": port, "measurement_time_s": 1.0}},
-            invoke=lambda: channel_emulator.measure_input(port, 1.0),
+            invoke=lambda: channel_emulator.measure_input(port, 1.0, **kwargs),
         )
 
     observation = await run_attach_power_observation(
@@ -413,6 +436,7 @@ async def _observe_cell_ready_power(
         execution_id=str(context.test_execution.id),
         is_cancelled=_observation_cancelled,
         measure_input=_measure_input,
+        diagnostic_rejections=rejection,
     )
     holder["result"] = observation
     measurements = dict(context.test_execution.measurements or {})
@@ -2975,6 +2999,7 @@ class MeasureExecutor(IStepExecutor):
                         channel_emulator=emulator,
                         config=config,
                         holder=observation_holder,
+                        manual_reference=input_level_payload,
                         operation_recorder=record_channel_emulator_operation,
                     )
 
