@@ -49,3 +49,27 @@ def test_failed_backup_does_not_publish_or_rotate(tmp_path):
     assert result.returncode != 0
     assert list(backup_dir.iterdir()) == [previous]
     assert previous.read_bytes() == b"original backup"
+
+
+def test_remote_process_url_skips_local_compose(tmp_path):
+    import os
+    import shutil
+
+    root = Path(__file__).resolve().parents[2]
+    scripts = tmp_path / "scripts"
+    config = tmp_path / "api-service"
+    scripts.mkdir()
+    config.mkdir()
+    script = scripts / "db-up.sh"
+    shutil.copyfile(root / "scripts/db-up.sh", script)
+    (config / ".env").write_text("DATABASE_URL=postgresql://meta3d@localhost:5432/meta3d_ota\n")
+    docker = scripts / "docker"
+    docker.write_text('#!/bin/sh\ntouch "$DOCKER_INVOKED"\nexit 12\n')
+    docker.chmod(0o700)
+    marker = tmp_path / "docker-invoked"
+    env = {**os.environ, "PATH": str(scripts) + os.pathsep + os.environ["PATH"],
+           "DATABASE_URL": "postgresql://audit@isolated.invalid:5432/restored",
+           "DOCKER_INVOKED": str(marker)}
+    result = subprocess.run(["bash", str(script)], env=env, capture_output=True)
+    assert result.returncode == 0
+    assert not marker.exists()
