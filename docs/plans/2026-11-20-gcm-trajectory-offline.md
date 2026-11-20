@@ -42,3 +42,9 @@
 本次修正的[先红](../evidence/2026-11-20-gcm-trajectory/association-red.log)、[20项通过](../evidence/2026-11-20-gcm-trajectory/association-green.log)、[三个变异](../evidence/2026-11-20-gcm-trajectory/association-mutations.log)单独保存，不覆盖上一阶段历史结果。当前核心变异为实际文件哈希、独立关联对应及取整碰撞；在临时副本执行，未改工作树源文件。
 
 该增量已获[独立内审CLEAN](../evidence/2026-11-20-gcm-trajectory/internal-associations.md)，源码SHA256为7c991108961e71d310bdd2b75550438133f087066beac4b99f8affc3693f122c。独立定点还核验构造真实来源分支在成员变化后保留持续身份、缺关联拒绝，未将此称为实测验收。
+
+## 已合并依赖版本的交付前验证
+
+单帧#598已先合并，正式依赖origin/main为8d83386b0b5bb38d221ec1299812679cd8c51235。轨迹树合入该版本后，在5faf3470ecd45ee13b7a80980038625e670d5e2e上运行 `python3 -B -m unittest discover -s scripts/tests -p 'test_gcm*.py'`，33项全部通过（单帧13+轨迹20），没有额外PYTHONPATH或外部工作树源码。随后仅增加本段及验证输出，测试源码、模型、配置及依赖内容未变化，结果可复用。
+
+[33项输出](../evidence/2026-11-20-gcm-trajectory/formal-dependency-tests.log)；[正式依赖下的三个核心变异](../evidence/2026-11-20-gcm-trajectory/formal-dependency-mutations.log)均在临时副本检出，复制本工作树单帧版本，不访问其他工作树。CLI命令 `python3 -B scripts/gcm_trajectory.py scripts/fixtures/gcm_trajectory/input.json /tmp/gcm-trajectory-formal-e2e` 生成38行36列，末帧00:00:37.018；独立CSV读取校验全部行持续ID、列数及文件SHA256，清单保持synthetic、formal_eligible=false、hardware_called=false。代码/依赖/输入/CSV哈希见[端到端摘要](../evidence/2026-11-20-gcm-trajectory/formal-dependency-e2e.json)。这仍是合成材料验证，不是厂商导入或设备播放。
