@@ -1,0 +1,32 @@
+...FFF.................
+======================================================================
+FAIL: test_actual_source_types_must_match_model_and_mapping (test_gcm_trajectory.TrajectoryTests.test_actual_source_types_must_match_model_and_mapping) (mode='export_bool')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Simon/Tools/MIMO-gcm-trajectory/scripts/tests/test_gcm_trajectory.py", line 205, in test_actual_source_types_must_match_model_and_mapping
+    with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_actual_source_types_must_match_model_and_mapping (test_gcm_trajectory.TrajectoryTests.test_actual_source_types_must_match_model_and_mapping) (mode='source_index_bool')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Simon/Tools/MIMO-gcm-trajectory/scripts/tests/test_gcm_trajectory.py", line 205, in test_actual_source_types_must_match_model_and_mapping
+    with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_actual_source_types_must_match_model_and_mapping (test_gcm_trajectory.TrajectoryTests.test_actual_source_types_must_match_model_and_mapping) (mode='association_bool')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Simon/Tools/MIMO-gcm-trajectory/scripts/tests/test_gcm_trajectory.py", line 205, in test_actual_source_types_must_match_model_and_mapping
+    with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.370s
+
+FAILED (failures=3)

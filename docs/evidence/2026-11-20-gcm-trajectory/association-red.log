@@ -1,0 +1,14 @@
+...............F...
+======================================================================
+FAIL: test_same_named_members_without_independent_associations_rejected (test_gcm_trajectory.TrajectoryTests.test_same_named_members_without_independent_associations_rejected)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/Users/Simon/Tools/MIMO-gcm-trajectory/scripts/tests/test_gcm_trajectory.py", line 161, in test_same_named_members_without_independent_associations_rejected
+    with self.assertRaises(ValueError):self.run_conversion()
+         ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 19 tests in 0.297s
+
+FAILED (failures=1)

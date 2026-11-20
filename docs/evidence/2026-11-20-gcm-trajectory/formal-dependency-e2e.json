@@ -1,0 +1,20 @@
+{
+  "dependency_main": "8d83386b0b5bb38d221ec1299812679cd8c51235",
+  "tested_head": "5faf3470ecd45ee13b7a80980038625e670d5e2e",
+  "trajectory_source_sha256": "7c991108961e71d310bdd2b75550438133f087066beac4b99f8affc3693f122c",
+  "single_frame_source_sha256": "28b84e8586627a535400dfcbfff07862fafbdb2091d4225655c56492225b1035",
+  "input_sha256": "4cebfa7463f682b705d3e49af1305cb29a6860c81fab44770642def7f4d5c4ba",
+  "rows": 38,
+  "columns": 36,
+  "last_timestamp": "00:00:37.018",
+  "csv_sha256": "8330e28b351655cf9b5241bea7715b35c3aeeeb98c00a0f731870f432db24c3e",
+  "association_evidence": {
+    "path": "associations.json",
+    "sha256": "c2cef96dd53765fc2f952104493944d4a356c2185f716b27889e2b5b0140e205"
+  },
+  "provenance": "synthetic",
+  "formal_eligible": false,
+  "hardware_called": false,
+  "unit_test_command": "python3 -B -m unittest discover -s scripts/tests -p 'test_gcm*.py'",
+  "unit_test_count": 33
+}

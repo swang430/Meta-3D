@@ -1,0 +1,1054 @@
+{
+  "schema": "gcm-associations/1",
+  "batch_id": "trajectory-fixture-1",
+  "direction": "downlink",
+  "frames_sha256": "395dda6b955967e28ec35de0c789366001f7c4cf5e29df4162cdb00d04de9305",
+  "input_sha256": {
+    "raw_paths": "24e3fc7cac2bc072888a3cc0db6078aef5e4bbdfaf4023b2ee8400aff893c37f",
+    "final_membership": "8c9c87b7267b87f46e3f8f9d4832af38b8f8bb187523c2e98aa7117734066caa",
+    "cluster_export": "36dc3c445d4dbb9617d71b2c0c9ab9506ed29e69323b0d1ae9f442443c59a413"
+  },
+  "producer": {
+    "name": "构造测试来源",
+    "version": "1",
+    "method": "显式构造身份真值，非算法推断"
+  },
+  "links": [
+    {
+      "from_frame_id": "f00",
+      "to_frame_id": "f01",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f01",
+      "to_frame_id": "f02",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f02",
+      "to_frame_id": "f03",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f03",
+      "to_frame_id": "f04",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f04",
+      "to_frame_id": "f05",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f05",
+      "to_frame_id": "f06",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f06",
+      "to_frame_id": "f07",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f07",
+      "to_frame_id": "f08",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f08",
+      "to_frame_id": "f09",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f09",
+      "to_frame_id": "f10",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f10",
+      "to_frame_id": "f11",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f11",
+      "to_frame_id": "f12",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f12",
+      "to_frame_id": "f13",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f13",
+      "to_frame_id": "f14",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f14",
+      "to_frame_id": "f15",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f15",
+      "to_frame_id": "f16",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f16",
+      "to_frame_id": "f17",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f17",
+      "to_frame_id": "f18",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f18",
+      "to_frame_id": "f19",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f19",
+      "to_frame_id": "f20",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f20",
+      "to_frame_id": "f21",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f21",
+      "to_frame_id": "f22",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f22",
+      "to_frame_id": "f23",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f23",
+      "to_frame_id": "f24",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f24",
+      "to_frame_id": "f25",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f25",
+      "to_frame_id": "f26",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f26",
+      "to_frame_id": "f27",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f27",
+      "to_frame_id": "f28",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f28",
+      "to_frame_id": "f29",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f29",
+      "to_frame_id": "f30",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f30",
+      "to_frame_id": "f31",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f31",
+      "to_frame_id": "f32",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f32",
+      "to_frame_id": "f33",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f33",
+      "to_frame_id": "f34",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f34",
+      "to_frame_id": "f35",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f35",
+      "to_frame_id": "f36",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "from_frame_id": "f36",
+      "to_frame_id": "f37",
+      "pairs": [
+        {
+          "track_id": 1,
+          "from_local_id": 7,
+          "to_local_id": 7,
+          "from_member_ids": [
+            "p1"
+          ],
+          "to_member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "track_id": 2,
+          "from_local_id": 9,
+          "to_local_id": 9,
+          "from_member_ids": [
+            "p2"
+          ],
+          "to_member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    }
+  ]
+}

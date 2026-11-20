@@ -1,0 +1,42 @@
+{
+  "source_zip_sha256": "6cada6a493b04bbf05725ffdeaac61956e382a18897fad5c3efce94113a0037d",
+  "time_source": "按用户确认5m/s及米坐标推导，并非源文件实测时间",
+  "directions": [
+    {
+      "direction": "downlink",
+      "frames": 38,
+      "intervals": 37,
+      "minimum_distance_m": 0.72956886766057,
+      "last_distance_m": 0.72956886766057,
+      "maximum_distance_m": 5.111417556779601,
+      "route_length_m": 180.8746968837547,
+      "span_s": 36.17493937675094,
+      "cluster_spacing_0_3m_passed": true
+    },
+    {
+      "direction": "uplink",
+      "frames": 38,
+      "intervals": 37,
+      "minimum_distance_m": 0.72956886766057,
+      "last_distance_m": 0.72956886766057,
+      "maximum_distance_m": 5.111417556779601,
+      "route_length_m": 180.8746968837547,
+      "span_s": 36.17493937675094,
+      "cluster_spacing_0_3m_passed": true
+    }
+  ],
+  "downlink_conversion": {
+    "input_sha256": "a827f7c35ad500adce98399e2b00b7a370a709ad13ad6a1fa2548c612c31f395",
+    "exit_code": 2,
+    "error": "拒绝转换：不支持的轨迹格式；须提供可核验的身份依据",
+    "output_exists": false,
+    "declared_identity": "frame-local-only"
+  },
+  "uplink_conversion": {
+    "input_sha256": "82a9de8aa48a36b4101198973bf9db46674f0805d9fa1f87e643299e620994b3",
+    "exit_code": 2,
+    "error": "拒绝转换：不支持的轨迹格式；须提供可核验的身份依据",
+    "output_exists": false,
+    "declared_identity": "frame-local-only"
+  }
+}

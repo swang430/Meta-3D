@@ -1,0 +1,1412 @@
+{
+  "batch_id": "trajectory-fixture-1",
+  "direction": "downlink",
+  "frames": [
+    {
+      "frame_id": "f00",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "0.0",
+      "frame_index": 0
+    },
+    {
+      "frame_id": "f01",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "1.000013",
+      "frame_index": 1
+    },
+    {
+      "frame_id": "f02",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "2.000052",
+      "frame_index": 2
+    },
+    {
+      "frame_id": "f03",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "3.000117",
+      "frame_index": 3
+    },
+    {
+      "frame_id": "f04",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "4.000208",
+      "frame_index": 4
+    },
+    {
+      "frame_id": "f05",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "5.000325",
+      "frame_index": 5
+    },
+    {
+      "frame_id": "f06",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "6.000468",
+      "frame_index": 6
+    },
+    {
+      "frame_id": "f07",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "7.000637",
+      "frame_index": 7
+    },
+    {
+      "frame_id": "f08",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "8.000832",
+      "frame_index": 8
+    },
+    {
+      "frame_id": "f09",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "9.001053",
+      "frame_index": 9
+    },
+    {
+      "frame_id": "f10",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "10.0013",
+      "frame_index": 10
+    },
+    {
+      "frame_id": "f11",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "11.001573",
+      "frame_index": 11
+    },
+    {
+      "frame_id": "f12",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "12.001872",
+      "frame_index": 12
+    },
+    {
+      "frame_id": "f13",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "13.002197",
+      "frame_index": 13
+    },
+    {
+      "frame_id": "f14",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "14.002548",
+      "frame_index": 14
+    },
+    {
+      "frame_id": "f15",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "15.002925",
+      "frame_index": 15
+    },
+    {
+      "frame_id": "f16",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "16.003328",
+      "frame_index": 16
+    },
+    {
+      "frame_id": "f17",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "17.003757",
+      "frame_index": 17
+    },
+    {
+      "frame_id": "f18",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "18.004212",
+      "frame_index": 18
+    },
+    {
+      "frame_id": "f19",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "19.004693",
+      "frame_index": 19
+    },
+    {
+      "frame_id": "f20",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "20.0052",
+      "frame_index": 20
+    },
+    {
+      "frame_id": "f21",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "21.005733",
+      "frame_index": 21
+    },
+    {
+      "frame_id": "f22",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "22.006292",
+      "frame_index": 22
+    },
+    {
+      "frame_id": "f23",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "23.006877",
+      "frame_index": 23
+    },
+    {
+      "frame_id": "f24",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "24.007488",
+      "frame_index": 24
+    },
+    {
+      "frame_id": "f25",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "25.008125",
+      "frame_index": 25
+    },
+    {
+      "frame_id": "f26",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "26.008788",
+      "frame_index": 26
+    },
+    {
+      "frame_id": "f27",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "27.009477",
+      "frame_index": 27
+    },
+    {
+      "frame_id": "f28",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "28.010192",
+      "frame_index": 28
+    },
+    {
+      "frame_id": "f29",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "29.010933",
+      "frame_index": 29
+    },
+    {
+      "frame_id": "f30",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "30.0117",
+      "frame_index": 30
+    },
+    {
+      "frame_id": "f31",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "31.012493",
+      "frame_index": 31
+    },
+    {
+      "frame_id": "f32",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "32.013312",
+      "frame_index": 32
+    },
+    {
+      "frame_id": "f33",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "33.014157",
+      "frame_index": 33
+    },
+    {
+      "frame_id": "f34",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "34.015028",
+      "frame_index": 34
+    },
+    {
+      "frame_id": "f35",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "35.015925",
+      "frame_index": 35
+    },
+    {
+      "frame_id": "f36",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "36.016848",
+      "frame_index": 36
+    },
+    {
+      "frame_id": "f37",
+      "paths": [
+        {
+          "id": "p1",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            1,
+            0,
+            0
+          ],
+          "departure": [
+            1,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "p2",
+          "batch_id": "trajectory-fixture-1",
+          "power_db": -80,
+          "arrival": [
+            0.8660254037844386,
+            0.5,
+            0
+          ],
+          "departure": [
+            0.8660254037844386,
+            0.5,
+            0
+          ]
+        }
+      ],
+      "time_seconds": "37.017797",
+      "frame_index": 37
+    }
+  ]
+}

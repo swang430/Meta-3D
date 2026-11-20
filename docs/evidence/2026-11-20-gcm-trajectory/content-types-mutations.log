@@ -1,0 +1,93 @@
+file_binding exit 1
+............F........
+======================================================================
+FAIL: test_file_byte_hash_verified (test_gcm_trajectory.TrajectoryTests.test_file_byte_hash_verified)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/yp/qwyry2250l98qj4sbg0cmgd00000gp/T/tmpax_e0xzp/scripts/tests/test_gcm_trajectory.py", line 123, in test_file_byte_hash_verified
+    with self.assertRaisesRegex(ValueError,'校验'):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.381s
+
+FAILED (failures=1)
+
+association_pairing exit 1
+...FF................
+======================================================================
+FAIL: test_actual_source_types_must_match_model_and_mapping (test_gcm_trajectory.TrajectoryTests.test_actual_source_types_must_match_model_and_mapping) (mode='association_bool')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/yp/qwyry2250l98qj4sbg0cmgd00000gp/T/tmpgm9o4ei5/scripts/tests/test_gcm_trajectory.py", line 205, in test_actual_source_types_must_match_model_and_mapping
+    with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_association_source_mismatch_rejected_even_with_valid_file_hash (test_gcm_trajectory.TrajectoryTests.test_association_source_mismatch_rejected_even_with_valid_file_hash)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/yp/qwyry2250l98qj4sbg0cmgd00000gp/T/tmpgm9o4ei5/scripts/tests/test_gcm_trajectory.py", line 187, in test_association_source_mismatch_rejected_even_with_valid_file_hash
+    with self.assertRaisesRegex(ValueError,'独立跨帧关联'):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.380s
+
+FAILED (failures=2)
+
+rounded_collision exit 1
+.........F...........
+======================================================================
+FAIL: test_decimal_rounding_collision_reverse_and_day_boundary (test_gcm_trajectory.TrajectoryTests.test_decimal_rounding_collision_reverse_and_day_boundary) (value='0.0004')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/yp/qwyry2250l98qj4sbg0cmgd00000gp/T/tmp2eurr8jm/scripts/tests/test_gcm_trajectory.py", line 266, in test_decimal_rounding_collision_reverse_and_day_boundary
+    with self.subTest(value=value),self.assertRaises(ValueError):self.run_conversion()
+                                   ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.386s
+
+FAILED (failures=1)
+
+3 mutations rejected; source untouched
+content_types exit 1
+...FFF.................
+======================================================================
+FAIL: test_actual_source_types_must_match_model_and_mapping (test_gcm_trajectory.TrajectoryTests.test_actual_source_types_must_match_model_and_mapping) (mode='export_bool')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/yp/qwyry2250l98qj4sbg0cmgd00000gp/T/tmpflugsazo/scripts/tests/test_gcm_trajectory.py", line 205, in test_actual_source_types_must_match_model_and_mapping
+    with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_actual_source_types_must_match_model_and_mapping (test_gcm_trajectory.TrajectoryTests.test_actual_source_types_must_match_model_and_mapping) (mode='source_index_bool')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/yp/qwyry2250l98qj4sbg0cmgd00000gp/T/tmpflugsazo/scripts/tests/test_gcm_trajectory.py", line 205, in test_actual_source_types_must_match_model_and_mapping
+    with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_actual_source_types_must_match_model_and_mapping (test_gcm_trajectory.TrajectoryTests.test_actual_source_types_must_match_model_and_mapping) (mode='association_bool')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/private/var/folders/yp/qwyry2250l98qj4sbg0cmgd00000gp/T/tmpflugsazo/scripts/tests/test_gcm_trajectory.py", line 205, in test_actual_source_types_must_match_model_and_mapping
+    with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+                                 ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.362s
+
+FAILED (failures=3)
+
+4 mutations rejected; source untouched
