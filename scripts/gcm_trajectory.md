@@ -27,7 +27,11 @@ python3 -m unittest discover -s scripts/tests -p 'test_gcm_trajectory.py'
 
 `identity_evidence` 以同样的 `{path,sha256}` 引用独立跨帧映射JSON，格式为 `schema=gcm-identity/1`，包含相同批次、方向和完整有序帧列表的 `frames_sha256`。每帧有 `frame_id`、`frame_sha256` 和 `mapping`。哈希函数为脚本导出的 `frames_sha256`：规范JSON排序键、不含空白、UTF-8、不允许NaN。整体哈希覆盖输入文档的整个 `frames` 列表；单帧哈希覆盖完整帧对象。
 
-每项映射为 `{local_id,track_id,slot,member_ids}`：局部簇编号、跨帧持续编号、从0开始的固定列槽位、按字符串排序的最终成员ID。所有簇必须一一对应。持续身份的成员集合和槽位不得变化；成员身份本身是否可信，仍须由数据交付方提供独立依据，本工具不会从功率、时延或局部序号推断它。缺少更细证据的成员变化会被保守拒绝。
+每项映射为 `{local_id,track_id,slot,member_ids}`：局部簇编号、跨帧持续编号、从0开始的固定列槽位、按字符串排序的最终成员ID。所有簇必须一一对应。每帧成员必须和同帧最终成员表一致，跨帧局部逐径ID、局部簇编号和成员集合可以变化；持续身份来自下述独立关联文件，槽位不得变化。本工具不会从同名成员、功率、时延或局部序号推断持续身份。
+
+`association_evidence` 另以 `{path,sha256}` 引用实际关联来源文件，不能复用输出映射文件自身。它不是工具按照同名成员生成的推断，须由数据交付方独立提供。格式为 `schema=gcm-associations/1`，含同批 `batch_id`、`direction`、完整 `frames_sha256`、三份实际文件的 `input_sha256={raw_paths,final_membership,cluster_export}`，以及 `producer={name,version,method}` 说明产生方、版本和方法。没有该文件，即使所有帧成员同名，也会拒绝。
+
+关联文件 `links` 必须覆盖全部相邻帧间隔，各项 `from_frame_id`、`to_frame_id` 和按持续ID排序的 `pairs`。每对为 `{track_id,from_local_id,to_local_id,from_member_ids,to_member_ids}`，明确关联两端的局部簇及各自同帧成员。实际关联必须与输出映射逐项相符；允许两端成员和编号不同，不允许拿输出映射自身代替关联来源。文件存在和内容一致仍不等于关联算法已经过物理验证，正式资格不因此放行。
 
 ## 表达范围与限制
 

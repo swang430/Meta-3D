@@ -57,6 +57,20 @@ class TrajectoryTests(unittest.TestCase):
                 source['frames'].append(record)
             self.doc['inputs'][name] = self.save(name+'.json', source)
         self.doc['identity_evidence'] = self.save('identity.json', self.evidence)
+        links=[]
+        for i in range(len(self.doc['frames'])-1):
+            left={m['track_id']:m for m in self.evidence['frames'][i]['mapping']}
+            right={m['track_id']:m for m in self.evidence['frames'][i+1]['mapping']}
+            pairs=[{'track_id':t,'from_local_id':left[t]['local_id'],'to_local_id':right[t]['local_id'],
+                    'from_member_ids':left[t]['member_ids'],'to_member_ids':right[t]['member_ids']}
+                   for t in sorted(t for t in set(left)&set(right) if type(t) is int)]
+            links.append({'from_frame_id':self.doc['frames'][i]['frame_id'],
+                          'to_frame_id':self.doc['frames'][i+1]['frame_id'],'pairs':pairs})
+        association={'schema':'gcm-associations/1','batch_id':self.doc['batch_id'],'direction':self.doc['direction'],
+                     'frames_sha256':gcm.frames_sha256(self.doc['frames']),
+                     'input_sha256':{k:v['sha256'] for k,v in self.doc['inputs'].items()},
+                     'producer':{'name':'构造测试来源','version':'1','method':'显式构造身份真值，非算法推断'},'links':links}
+        self.doc['association_evidence']=self.save('associations.json',association)
 
     def run_conversion(self):
         return gcm.convert_trajectory(self.doc, self.base)
@@ -139,6 +153,38 @@ class TrajectoryTests(unittest.TestCase):
             e['mapping'][1]['track_id']=3
         self.bind()
         with self.assertRaisesRegex(ValueError,'出生|消失'):
+            self.run_conversion()
+
+    def test_continuing_track_with_frame_local_path_id(self):
+        frame = self.doc['frames'][1]['model']
+        path = next(p for p in frame['paths'] if p['id'] == 'p1')
+        path['id'] = 'frame1-ray42'
+        cluster = next(c for c in frame['clusters'] if c['members'] == ['p1'])
+        extra=copy.deepcopy(path)
+        extra['id']='frame1-ray99'
+        extra['power_db']=-85
+        frame['paths'].append(extra)
+        cluster['members'] = [path['id'],extra['id']]
+        mapping = next(m for m in self.evidence['frames'][1]['mapping']
+                       if m['local_id'] == cluster['id'])
+        cluster['id']=42
+        mapping['local_id']=42
+        mapping['member_ids'] = sorted(cluster['members'])
+        self.bind()
+        header, rows, manifest = self.run_conversion()
+        slot = mapping['slot']
+        column = [i for i, field in enumerate(header) if field == 'CLUSTERID'][slot]
+        self.assertEqual([row[column] for row in rows[:3]], [mapping['track_id']] * 3)
+
+    def test_same_named_members_without_independent_associations_rejected(self):
+        self.doc.pop('association_evidence',None)
+        with self.assertRaises(ValueError):self.run_conversion()
+
+    def test_association_source_mismatch_rejected_even_with_valid_file_hash(self):
+        association=json.loads((self.base/'associations.json').read_bytes())
+        association['links'][0]['pairs'][0]['to_local_id']=999
+        self.doc['association_evidence']=self.save('associations.json',association)
+        with self.assertRaisesRegex(ValueError,'独立跨帧关联'):
             self.run_conversion()
 
     def test_mapping_rejected(self):

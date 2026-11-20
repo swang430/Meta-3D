@@ -122,6 +122,48 @@ def _verify_evidence(document, frames, base_dir):
         mappings.append(record.get('mapping'))
     return mappings
 
+def _verify_associations(document, frames, mappings, base_dir):
+    """独立来源提供相邻帧关联；不从同名成员、功率或距离推算。"""
+    reference = document.get('association_evidence')
+    association = _load_bound(reference, base_dir)
+    # 映射文件与关联来源文件必须独立，不能拿输出映射自身充作关联来源。
+    if (Path(base_dir) / reference['path']).resolve() == (Path(base_dir) / document['identity_evidence']['path']).resolve():
+        raise ValueError('跨帧关联来源必须独立于输出身份映射文件')
+    if not isinstance(association, dict) or association.get('schema') != 'gcm-associations/1':
+        raise ValueError('缺少独立来源的跨帧关联依据')
+    if association.get('batch_id') != document['batch_id'] or association.get('direction') != document['direction']:
+        raise ValueError('跨帧关联来源批次或方向不匹配')
+    if association.get('frames_sha256') != frames_sha256(frames):
+        raise ValueError('跨帧关联来源未绑定完整输入帧')
+    if association.get('input_sha256') != {k: v['sha256'] for k, v in document['inputs'].items()}:
+        raise ValueError('跨帧关联来源未绑定实际逐径、成员和簇导出文件')
+    producer = association.get('producer')
+    if not isinstance(producer, dict) or any(not isinstance(producer.get(k), str) or not producer[k].strip() for k in ('name', 'version', 'method')):
+        raise ValueError('跨帧关联来源必须说明产生方、版本和关联方法')
+    links = association.get('links')
+    if not isinstance(links, list) or len(links) != len(frames) - 1:
+        raise ValueError('独立关联必须覆盖每个相邻帧间隔')
+    for index, link in enumerate(links):
+        if link.get('from_frame_id') != frames[index]['frame_id'] or link.get('to_frame_id') != frames[index+1]['frame_id']:
+            raise ValueError('独立关联两端帧身份不匹配')
+        before, after = mappings[index], mappings[index+1]
+        if not isinstance(before, list) or not isinstance(after, list):
+            raise ValueError('输出映射必须为逐簇列表')
+        left = {m['track_id']: m for m in before}
+        right = {m['track_id']: m for m in after}
+        if len(left) != len(before) or len(right) != len(after):
+            raise ValueError('输出持续身份不能重复')
+        if set(left) != set(right):
+            raise ValueError('出生消失的导入语义未经确认，拒绝同槽替换')
+        expected = [{
+            'track_id': track, 'from_local_id': left[track]['local_id'],
+            'to_local_id': right[track]['local_id'],
+            'from_member_ids': left[track]['member_ids'],
+            'to_member_ids': right[track]['member_ids'],
+        } for track in sorted(left)]
+        if link.get('pairs') != expected:
+            raise ValueError('输出身份映射与独立跨帧关联来源不一致')
+
 
 def _position(common, prefix):
     # Rev15.0 表4-2，第19页：各坐标范围及到原点距离<100000m。
@@ -150,13 +192,14 @@ def _convert_trajectory(document, base_dir):
     if len(indices) != len(frames) or any(type(x) is not int or x < 0 for x in indices) or any(b != a + 1 for a, b in zip(indices, indices[1:])):
         raise ValueError('必须提供相邻且连续的帧索引')
     mappings = _verify_evidence(document, frames, base_dir)
+    _verify_associations(document, frames, mappings, base_dir)
     digest = frames_sha256(frames)
 
     # 延迟导入：未知来源在调用单帧转换前即拒绝。
     from gcm_single_frame import CLUSTER_FIELDS, convert_frame, _convert
 
     rows, times, points, identities = [], [], [], []
-    previous_active, retired, slots, member_sets = set(), set(), {}, {}
+    previous_active, retired, slots = set(), set(), {}
     original_times = []
     decimals = []
     first_common, header, count, link, bs_position = None, None, None, None, None
@@ -221,10 +264,6 @@ def _convert_trajectory(document, base_dir):
             actual_members = next(c['members'] for c in model['clusters'] if c['id'] == local)
             if entry.get('member_ids') != sorted(actual_members):
                 raise ValueError('跨帧映射成员与同批最终成员表不一致')
-            members = tuple(sorted(actual_members))
-            if track in member_sets and member_sets[track] != members:
-                raise ValueError('同一身份成员发生变化，缺少可核验的继续关联依据')
-            member_sets[track] = members
             slots[track] = slot
             cluster = dict(local_clusters[local])
             cluster['CLUSTERID'] = track
@@ -251,6 +290,7 @@ def _convert_trajectory(document, base_dir):
         'formal_eligible': False, 'hardware_called': False,
         'frames_sha256': digest, 'frame_count': len(rows),
         'source_inputs': document['inputs'], 'identity_evidence': document['identity_evidence'],
+        'association_evidence': document['association_evidence'],
         'batch_id': document['batch_id'], 'direction': document['direction'],
         'original_time_seconds': original_times,
         'timestamps': [r[header.index('TIMESTAMP')] for r in rows],
