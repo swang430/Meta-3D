@@ -4,6 +4,7 @@
 # "开放上界 = 静默升级"的根因对两个服务对称成立, 结论同步落地。
 fastapi>=0.115.0,<0.142.0
 uvicorn[standard]>=0.34.0
+python-dotenv>=0.13
 pydantic>=2.0.0
 
 # CORS middleware

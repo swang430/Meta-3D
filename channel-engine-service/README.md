@@ -47,11 +47,11 @@ channel-engine-service/.venv/bin/python -m pip install \
 
 | 配置项 | 设置方式 | 说明 |
 |---------|-----|------|
-| `CHANNEL_ENGINE_PATH` | 在终端中 `export` | 外部 `ChannelEgine` 仓库的绝对路径 |
+| `CHANNEL_ENGINE_PATH` | 终端中 `export`；npm 入口也可读取服务目录的 `.env` | 外部 `ChannelEgine` 仓库的绝对路径 |
 | 监听地址 | `uvicorn --host` | 下例使用 `127.0.0.1` |
 | 监听端口 | `uvicorn --port` | 信道引擎服务标准端口为 `8001` |
 
-当前服务入口未加载 `.env` 文件，也未读取 `HOST`、`PORT` 环境变量来设置监听地址。仅复制 `.env.example` 或设置这两个变量不会自动改变监听配置；请使用下面的显式启动参数。
+下面手动执行的 uvicorn 命令不加载服务的 `.env`，监听地址和端口由命令行参数指定。一键启动读取引擎目录的规则见下文。
 
 ## 运行
 
@@ -64,7 +64,7 @@ channel-engine-service/.venv/bin/python -m pip install \
   --reload --host 127.0.0.1 --port 8001)
 ```
 
-也可在根目录安装 npm 依赖后运行 `npm run dev:channel-engine`。该命令继承终端中的引擎路径，使用服务自己的虚拟环境；当前模块入口固定监听 `127.0.0.1:8001`，并开启自动重载。
+使用一键启动时，只需在本机的 `channel-engine-service/.env` 中设置一次 `CHANNEL_ENGINE_PATH=/实际安装目录/ChannelEgine`。该文件不提交；若终端已设置同名变量，以终端为准。之后在仓库根目录执行 `npm run dev:safe:all`（或单独执行 `npm run dev:channel-engine`）。npm 入口使用服务自己的虚拟环境，监听 `127.0.0.1:8001`，不开启自动重载；启动失败时工作进程直接退出，不保留占用端口的重载进程。以 `/api/v1/health` 返回 `channel_engine_available: true` 确认可用。
 
 同时启动完整开发系统，请先完成[根目录安装说明](../README.md#-快速开始)，然后在同一终端的根目录执行：
 

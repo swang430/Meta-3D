@@ -8,7 +8,7 @@
     "dev:all": "concurrently -n \"ChannelEngine,API,GUI\" -c \"blue,yellow,green\" \"npm run dev:channel-engine\" \"npm run dev:api\" \"npm run dev:gui\"",
     "dev:safe": "bash scripts/safe-start.sh",
     "dev:safe:all": "bash scripts/safe-start.sh all",
-    "dev:channel-engine": "cd channel-engine-service && .venv/bin/python -m app.main",
+    "dev:channel-engine": "channel-engine-service/.venv/bin/python scripts/start_channel_engine.py",
     "dev:api": "cd api-service && .venv/bin/python -m app.main",
     "dev:gui": "npm run dev --prefix gui",
     "cleanup": "bash scripts/cleanup-ports.sh",

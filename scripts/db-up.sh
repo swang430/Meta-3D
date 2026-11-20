@@ -46,6 +46,27 @@ if [ -n "$DB_URL_LINE" ] && ! echo "$DB_URL_LINE" | grep -Eq '@(localhost|127\.0
 fi
 
 echo "🗄  [db-up] 确保 Postgres 容器在运行..."
+# 老实例在 DATABASE_URL 中已配置本地数据库登录密码。仅传给 Compose，
+# 不写第二份密码到 API 的 .env，也不依赖容器已启动。显式配置优先。
+if [ -z "${META3D_POSTGRES_PASSWORD:-}" ] && ! grep -Eq '^[[:space:]]*(export[[:space:]]+)?META3D_POSTGRES_PASSWORD[[:space:]]*=' "$ENV_FILE" 2>/dev/null; then
+  set +x
+  META3D_POSTGRES_PASSWORD="$(cd "$COMPOSE_DIR" && .venv/bin/python - <<'PY'
+import os
+from dotenv import dotenv_values
+from sqlalchemy.engine import make_url
+
+try:
+    url = make_url(os.environ.get("DATABASE_URL") or dotenv_values(".env").get("DATABASE_URL") or "")
+    if (url.get_backend_name() != "postgresql" or url.host not in {"localhost", "127.0.0.1"}
+            or url.port != 5432 or url.username != "meta3d" or not url.password):
+        raise ValueError()
+except Exception:
+    raise SystemExit("无法从本实例本地 DATABASE_URL 取得 meta3d 的密码；请配置数据库凭据。") from None
+print(url.password, end="")
+PY
+)"
+  export META3D_POSTGRES_PASSWORD
+fi
 ( cd "$COMPOSE_DIR" && docker compose up -d postgres )
 
 echo "⏳ [db-up] 等待容器内 Postgres ready..."
