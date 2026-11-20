@@ -24,7 +24,7 @@ def test_engine_only_loads_path_from_file(tmp_path, monkeypatch):
     monkeypatch.delenv("CHANNEL_ENGINE_PATH", raising=False)
     monkeypatch.delenv("MOCK_ASC_MODE", raising=False)
     monkeypatch.chdir(tmp_path)
-    with patch.object(os, "execv") as launch:
+    with patch.dict(os.environ), patch.object(os, "execv") as launch:
         runpy.run_path(str(script), run_name="__main__")
         assert os.environ["CHANNEL_ENGINE_PATH"] == "/客户 引擎"
         assert "MOCK_ASC_MODE" not in os.environ
@@ -33,7 +33,8 @@ def test_engine_only_loads_path_from_file(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("config,expected", [
     ("DATABASE_URL=postgresql://meta3d:url%40secret@localhost:5432/meta3d", "url@secret"),
-    ("DATABASE_URL=postgresql://meta3d@localhost:5432/meta3d\nMETA3D_POSTGRES_PASSWORD = explicit-secret", "explicit-secret"),
+    # 显式密码由 Compose 自行解析；脚本不能再解释单引号内的占位符。
+    ("DATABASE_URL=postgresql://meta3d@localhost:5432/meta3d\nMETA3D_POSTGRES_PASSWORD = 'literal${NOT_SET}'", ""),
 ])
 def test_compose_receives_instance_password_without_printing(tmp_path, config, expected):
     scripts = tmp_path / "scripts"
@@ -51,4 +52,4 @@ def test_compose_receives_instance_password_without_printing(tmp_path, config, e
     proc = subprocess.run(["bash", scripts / "db-up.sh"], env={**env, "PATH": str(scripts) + ":" + env["PATH"],
                           "EXPECTED": expected}, capture_output=True, text=True, timeout=10)
     assert proc.returncode == 0
-    assert expected not in proc.stdout + proc.stderr
+    assert (expected or "literal") not in proc.stdout + proc.stderr
