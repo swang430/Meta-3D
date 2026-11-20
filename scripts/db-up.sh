@@ -48,7 +48,7 @@ fi
 echo "🗄  [db-up] 确保 Postgres 容器在运行..."
 # 老实例在 DATABASE_URL 中已配置本地数据库登录密码。仅传给 Compose，
 # 不写第二份密码到 API 的 .env，也不依赖容器已启动。显式配置优先。
-if [ -z "${META3D_POSTGRES_PASSWORD:-}" ] && ! grep -Eq '^(export[[:space:]]+)?META3D_POSTGRES_PASSWORD=' "$ENV_FILE" 2>/dev/null; then
+if [ -z "${META3D_POSTGRES_PASSWORD:-}" ]; then
   set +x
   META3D_POSTGRES_PASSWORD="$(cd "$COMPOSE_DIR" && .venv/bin/python - <<'PY'
 import os
@@ -56,7 +56,11 @@ from dotenv import dotenv_values
 from sqlalchemy.engine import make_url
 
 try:
-    url = make_url(os.environ.get("DATABASE_URL") or dotenv_values(".env").get("DATABASE_URL") or "")
+    config = dotenv_values(".env")
+    if config.get("META3D_POSTGRES_PASSWORD"):
+        print(config["META3D_POSTGRES_PASSWORD"], end="")
+        raise SystemExit(0)
+    url = make_url(os.environ.get("DATABASE_URL") or config.get("DATABASE_URL") or "")
     if (url.get_backend_name() != "postgresql" or url.host not in {"localhost", "127.0.0.1"}
             or url.port != 5432 or url.username != "meta3d" or not url.password):
         raise ValueError()

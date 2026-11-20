@@ -47,11 +47,11 @@ channel-engine-service/.venv/bin/python -m pip install \
 
 | 配置项 | 设置方式 | 说明 |
 |---------|-----|------|
-| `CHANNEL_ENGINE_PATH` | 在终端中 `export` | 外部 `ChannelEgine` 仓库的绝对路径 |
+| `CHANNEL_ENGINE_PATH` | 终端中 `export`；npm 入口也可读取服务目录的 `.env` | 外部 `ChannelEgine` 仓库的绝对路径 |
 | 监听地址 | `uvicorn --host` | 下例使用 `127.0.0.1` |
 | 监听端口 | `uvicorn --port` | 信道引擎服务标准端口为 `8001` |
 
-当前服务入口未加载 `.env` 文件，也未读取 `HOST`、`PORT` 环境变量来设置监听地址。仅复制 `.env.example` 或设置这两个变量不会自动改变监听配置；请使用下面的显式启动参数。
+下面手动执行的 uvicorn 命令不加载服务的 `.env`，监听地址和端口由命令行参数指定。一键启动读取引擎目录的规则见下文。
 
 ## 运行
 
