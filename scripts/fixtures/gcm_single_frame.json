@@ -1,0 +1,14 @@
+{
+  "source": {"kind": "synthetic", "direction": "downlink", "batch_id": "example-final-1", "raw_paths": "此文件内构造逐径", "final_membership": "此文件内构造最终成员", "cluster_export": "此文件内构造簇功率和绝对时延"},
+  "common": {"TIMESTAMP": "15:02:33.324", "UEXCOORD": 10, "UEYCOORD": 0, "UEZCOORD": 1.5, "BSXCOORD": 0, "BSYCOORD": 0, "BSZCOORD": 10, "DLFREQUENCY": 3500, "ULFREQUENCY": 3500, "BSID": 1, "SID": 1, "UEID": 1, "SPEEDKMH": 0},
+  "propagation": "NLOS",
+  "directions": {"arrival": "toward_source", "departure": "toward_receiver"},
+  "rotations": {"arrival": [[0,-1,0],[1,0,0],[0,0,1]], "departure": [[1,0,0],[0,0,-1],[0,1,0]]},
+  "paths": [
+    {"id": "p1", "batch_id": "example-final-1", "power_db": -80, "arrival": [1,0,0], "departure": [1,0,0]},
+    {"id": "p2", "batch_id": "example-final-1", "power_db": -80, "arrival": [0.8660254037844386,0.5,0], "departure": [0.8660254037844386,0.5,0]}
+  ],
+  "clusters": [
+    {"id": 7, "batch_id": "example-final-1", "members": ["p1","p2"], "power_db": -76.98970004336019, "delay_ns": 123.5}
+  ]
+}
