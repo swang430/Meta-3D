@@ -1,0 +1,844 @@
+{
+  "schema": "gcm-identity/1",
+  "batch_id": "trajectory-fixture-1",
+  "direction": "downlink",
+  "frames": [
+    {
+      "frame_id": "f00",
+      "frame_sha256": "7bdd81cfee71d8b4c79c7140588598fec80b68c4aa5b39cd3aa7cfd361d2c4fc",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f01",
+      "frame_sha256": "8ae4895aff2cc52173764abc0808afbf5c84b382493fbf834bfb11a1c8a82500",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f02",
+      "frame_sha256": "daabc8d4dee81e28c0f6642df3237a1aa1229af3a1e03b99dca2480eae7cb010",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f03",
+      "frame_sha256": "b3d53b37f9e4c587c4025bcc9504513762aaeabb8a834bdb3dddca625a6332b8",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f04",
+      "frame_sha256": "f9d4a59fca24322d510650c69efd6eca9eb061248bfe61d18f9a81c291a85164",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f05",
+      "frame_sha256": "89c1c32d371123e1bc3d80e180eb8b30d2ef6a51270a3fa2fd8128e5d506282f",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f06",
+      "frame_sha256": "a3c5121a88a4266e3a9d6eca16e7b4edd9b239a0139fdad94b44da0bb2219871",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f07",
+      "frame_sha256": "4fbb62239b4910ea41a1dc3aa0b8cdeb4b586f83ddeba3d7e3a5ba52f3213b0c",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f08",
+      "frame_sha256": "a418792696b0c3bfdc12240966da9b906e644b0b9b9e1cda6e0204f4ffb8b4be",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f09",
+      "frame_sha256": "d4877a216695f25940fd0ea12363c842fe4066565611b2e2532f597642da3b3c",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f10",
+      "frame_sha256": "41ac1470508c953e09533f57281474f8217cc748c6bf3a599beb8ba531c187de",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f11",
+      "frame_sha256": "2ea48d372eaab031b4139a74b41c2a631b7a5aab9a76840f83efc1f82770bfeb",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f12",
+      "frame_sha256": "0b0195606c9742dff89ea2e6c30ba4910dc6ba940a172a3be14fc9d39dba05ae",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f13",
+      "frame_sha256": "188fa456e291ca206a8335c74d10ac4bf3f7a2fdb35b59331bafe75296b39c39",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f14",
+      "frame_sha256": "c140da5935865c4e74bfc96d498eaf23c5d59a0662e6853db26a1b6e0b17854e",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f15",
+      "frame_sha256": "520a72a508d0fc62d802f5cee73e2f75b59b2b31c0af5f51e04e6e5001f84558",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f16",
+      "frame_sha256": "779e939ea12bd3c567f189e48fa3e078d7aa0895c59eff68b25203e6122684ed",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f17",
+      "frame_sha256": "bf7b8a2c6e18112e77be915cc4b6fbbc28381df9cf1856dafb81ec934a4015a4",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f18",
+      "frame_sha256": "0039e1ee425baa6e1ead965206b442a34379234e319312d468c55c99ac67a821",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f19",
+      "frame_sha256": "3358677c8ec5b4b03195cf5b300b0909d03d77c137eba8be3d72a0220d75627f",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f20",
+      "frame_sha256": "687c24be4ffbb7f09c6bc6e1c72d71833f43c4a4d5fee0c5fe53b8b8cd6ef206",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f21",
+      "frame_sha256": "0a0ec2fc1c8e06220f84f3a976ee5fec5e76aaa592127ae5df432054710b57e2",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f22",
+      "frame_sha256": "cb0d7e7214f87b43afec7ac628503e47399b8ae4561daba28c01d27820d85ff4",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f23",
+      "frame_sha256": "76489412fb7f07d27618f0cbcf88487eed3253dbe48bdf155c274e8b5f3c9098",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f24",
+      "frame_sha256": "38df3af3eec1390b5bc635308d721c63894927b2e4db13f3c9d2e2fa37f3fbb0",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f25",
+      "frame_sha256": "e5ca9fc205e4693575cbd02084a75db9b62dd0b1588e928a2f868b3c774f5726",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f26",
+      "frame_sha256": "a77717c2777aacb35cc72447641724dd2d815617be6e8c1bbcb2952acf48c266",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f27",
+      "frame_sha256": "9e3639a2a69c955bcb7ff3e93ae703248e61024d8664ce92975e3218e01f58e1",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f28",
+      "frame_sha256": "8baa70669d0b16215c6d1a86c85f82337c3dc1b5220509d3b50ff30b09f5fa37",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f29",
+      "frame_sha256": "f850564348fbb599e12aecb42826a56eecf79d7dd201a8ae3bd3938a62741ac2",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f30",
+      "frame_sha256": "0ea92af33a072c6800657fb95ca6c32bc26e22cc6c03ede9bd1fd14a818f1ff1",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f31",
+      "frame_sha256": "dca14514a2d338fd5d3610712990ece02bbc239225d8c5a079cfef629460c2c5",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f32",
+      "frame_sha256": "5b979c4f9fc854ce2fa206d4f4130e994716e9733b7ddd0b4bb195ccd93f5740",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f33",
+      "frame_sha256": "a02c7b21a122fe208ea442ecd806a70b1fa2ba4f4ea2a16bd28fd99f15dc993e",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f34",
+      "frame_sha256": "10037e2a36fbdf26a6cfe84f14d2aa2d2f6cc5da7b064424f6124f6f8e682555",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f35",
+      "frame_sha256": "57f55383441e65ca2696189ae80b756949a4bff6e9ab73c6071c4fea66fcae44",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f36",
+      "frame_sha256": "4316c13e03e5e1b5ba392f32ff5b6bc36a55c0d91119f32717994bfd4173c138",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f37",
+      "frame_sha256": "7fb1a78da50199ca46c93842fc1b6f6138787e289e9ae773a82f23b17602d45e",
+      "mapping": [
+        {
+          "local_id": 7,
+          "track_id": 1,
+          "slot": 0,
+          "member_ids": [
+            "p1"
+          ]
+        },
+        {
+          "local_id": 9,
+          "track_id": 2,
+          "slot": 1,
+          "member_ids": [
+            "p2"
+          ]
+        }
+      ]
+    }
+  ],
+  "frames_sha256": "395dda6b955967e28ec35de0c789366001f7c4cf5e29df4162cdb00d04de9305"
+}

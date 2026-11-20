@@ -1,0 +1,652 @@
+{
+  "batch_id": "trajectory-fixture-1",
+  "direction": "downlink",
+  "frames": [
+    {
+      "frame_id": "f00",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f01",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f02",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f03",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f04",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f05",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f06",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f07",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f08",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f09",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f10",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f11",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f12",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f13",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f14",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f15",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f16",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f17",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f18",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f19",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f20",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f21",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f22",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f23",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f24",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f25",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f26",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f27",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f28",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f29",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f30",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f31",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f32",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f33",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f34",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f35",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f36",
+      "clusters": [
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        },
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        }
+      ]
+    },
+    {
+      "frame_id": "f37",
+      "clusters": [
+        {
+          "id": 9,
+          "members": [
+            "p2"
+          ]
+        },
+        {
+          "id": 7,
+          "members": [
+            "p1"
+          ]
+        }
+      ]
+    }
+  ]
+}

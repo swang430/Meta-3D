@@ -1,0 +1,4662 @@
+{
+  "schema": "gcm-trajectory/1",
+  "provenance": "synthetic",
+  "batch_id": "trajectory-fixture-1",
+  "direction": "downlink",
+  "inputs": {
+    "raw_paths": {
+      "path": "raw_paths.json",
+      "sha256": "b8ec4cd71ad3dc76397f6d21756270a4151a924a5aef084fc3c49e081862d7f9"
+    },
+    "final_membership": {
+      "path": "final_membership.json",
+      "sha256": "5ad032ea2456d5f4e4f8d69a39b14e790348f935232a3afe371bb13e43858b00"
+    },
+    "cluster_export": {
+      "path": "cluster_export.json",
+      "sha256": "03284092cc3ce597403a278da88ac1b07004fa7e50f89e732287fc9b86b96fc2"
+    }
+  },
+  "frames": [
+    {
+      "frame_id": "f00",
+      "frame_index": 0,
+      "time_seconds": "0.0",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:00.000",
+          "UEXCOORD": 10.0,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f01",
+      "frame_index": 1,
+      "time_seconds": "1.000013",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:01.000",
+          "UEXCOORD": 10.73,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f02",
+      "frame_index": 2,
+      "time_seconds": "2.000052",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:02.000",
+          "UEXCOORD": 11.46,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f03",
+      "frame_index": 3,
+      "time_seconds": "3.000117",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:03.000",
+          "UEXCOORD": 12.19,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f04",
+      "frame_index": 4,
+      "time_seconds": "4.000208",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:04.000",
+          "UEXCOORD": 12.92,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f05",
+      "frame_index": 5,
+      "time_seconds": "5.000325",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:05.000",
+          "UEXCOORD": 13.65,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f06",
+      "frame_index": 6,
+      "time_seconds": "6.000468",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:06.000",
+          "UEXCOORD": 14.379999999999999,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f07",
+      "frame_index": 7,
+      "time_seconds": "7.000637",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:07.001",
+          "UEXCOORD": 15.11,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f08",
+      "frame_index": 8,
+      "time_seconds": "8.000832",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:08.001",
+          "UEXCOORD": 15.84,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f09",
+      "frame_index": 9,
+      "time_seconds": "9.001053",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:09.001",
+          "UEXCOORD": 16.57,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f10",
+      "frame_index": 10,
+      "time_seconds": "10.0013",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:10.001",
+          "UEXCOORD": 17.3,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f11",
+      "frame_index": 11,
+      "time_seconds": "11.001573",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:11.002",
+          "UEXCOORD": 18.03,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f12",
+      "frame_index": 12,
+      "time_seconds": "12.001872",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:12.002",
+          "UEXCOORD": 18.759999999999998,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f13",
+      "frame_index": 13,
+      "time_seconds": "13.002197",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:13.002",
+          "UEXCOORD": 19.490000000000002,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f14",
+      "frame_index": 14,
+      "time_seconds": "14.002548",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:14.003",
+          "UEXCOORD": 20.22,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f15",
+      "frame_index": 15,
+      "time_seconds": "15.002925",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:15.003",
+          "UEXCOORD": 20.95,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f16",
+      "frame_index": 16,
+      "time_seconds": "16.003328",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:16.003",
+          "UEXCOORD": 21.68,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f17",
+      "frame_index": 17,
+      "time_seconds": "17.003757",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:17.004",
+          "UEXCOORD": 22.41,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f18",
+      "frame_index": 18,
+      "time_seconds": "18.004212",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:18.004",
+          "UEXCOORD": 23.14,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f19",
+      "frame_index": 19,
+      "time_seconds": "19.004693",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:19.005",
+          "UEXCOORD": 23.869999999999997,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f20",
+      "frame_index": 20,
+      "time_seconds": "20.0052",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:20.005",
+          "UEXCOORD": 24.6,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f21",
+      "frame_index": 21,
+      "time_seconds": "21.005733",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:21.006",
+          "UEXCOORD": 25.33,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f22",
+      "frame_index": 22,
+      "time_seconds": "22.006292",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:22.006",
+          "UEXCOORD": 26.06,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f23",
+      "frame_index": 23,
+      "time_seconds": "23.006877",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:23.007",
+          "UEXCOORD": 26.79,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f24",
+      "frame_index": 24,
+      "time_seconds": "24.007488",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:24.007",
+          "UEXCOORD": 27.52,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f25",
+      "frame_index": 25,
+      "time_seconds": "25.008125",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:25.008",
+          "UEXCOORD": 28.25,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f26",
+      "frame_index": 26,
+      "time_seconds": "26.008788",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:26.009",
+          "UEXCOORD": 28.98,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f27",
+      "frame_index": 27,
+      "time_seconds": "27.009477",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:27.009",
+          "UEXCOORD": 29.71,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f28",
+      "frame_index": 28,
+      "time_seconds": "28.010192",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:28.010",
+          "UEXCOORD": 30.439999999999998,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f29",
+      "frame_index": 29,
+      "time_seconds": "29.010933",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:29.011",
+          "UEXCOORD": 31.169999999999998,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f30",
+      "frame_index": 30,
+      "time_seconds": "30.0117",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:30.012",
+          "UEXCOORD": 31.9,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f31",
+      "frame_index": 31,
+      "time_seconds": "31.012493",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:31.012",
+          "UEXCOORD": 32.629999999999995,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f32",
+      "frame_index": 32,
+      "time_seconds": "32.013312",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:32.013",
+          "UEXCOORD": 33.36,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f33",
+      "frame_index": 33,
+      "time_seconds": "33.014157",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:33.014",
+          "UEXCOORD": 34.09,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f34",
+      "frame_index": 34,
+      "time_seconds": "34.015028",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:34.015",
+          "UEXCOORD": 34.82,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f35",
+      "frame_index": 35,
+      "time_seconds": "35.015925",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:35.016",
+          "UEXCOORD": 35.55,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f36",
+      "frame_index": 36,
+      "time_seconds": "36.016848",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:36.017",
+          "UEXCOORD": 36.28,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ]
+      }
+    },
+    {
+      "frame_id": "f37",
+      "frame_index": 37,
+      "time_seconds": "37.017797",
+      "model": {
+        "source": {
+          "kind": "synthetic",
+          "direction": "downlink",
+          "batch_id": "trajectory-fixture-1",
+          "raw_paths": "raw_paths.json",
+          "final_membership": "final_membership.json",
+          "cluster_export": "cluster_export.json"
+        },
+        "common": {
+          "TIMESTAMP": "00:00:37.018",
+          "UEXCOORD": 37.01,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        },
+        "paths": [
+          {
+            "id": "p1",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              1,
+              0,
+              0
+            ],
+            "departure": [
+              1,
+              0,
+              0
+            ]
+          },
+          {
+            "id": "p2",
+            "batch_id": "trajectory-fixture-1",
+            "power_db": -80,
+            "arrival": [
+              0.8660254037844386,
+              0.5,
+              0
+            ],
+            "departure": [
+              0.8660254037844386,
+              0.5,
+              0
+            ]
+          }
+        ],
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ]
+      }
+    }
+  ],
+  "identity_evidence": {
+    "path": "identity.json",
+    "sha256": "3ac41e100fda50fbace25cb761a9a701e2839310759232eed9f2c1fd924cf38d"
+  }
+}

@@ -1,0 +1,3046 @@
+{
+  "batch_id": "trajectory-fixture-1",
+  "direction": "downlink",
+  "frames": [
+    {
+      "frame_id": "f00",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:00.000",
+          "UEXCOORD": 10.0,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f01",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:01.000",
+          "UEXCOORD": 10.73,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f02",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:02.000",
+          "UEXCOORD": 11.46,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f03",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:03.000",
+          "UEXCOORD": 12.19,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f04",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:04.000",
+          "UEXCOORD": 12.92,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f05",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:05.000",
+          "UEXCOORD": 13.65,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f06",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:06.000",
+          "UEXCOORD": 14.379999999999999,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f07",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:07.001",
+          "UEXCOORD": 15.11,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f08",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:08.001",
+          "UEXCOORD": 15.84,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f09",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:09.001",
+          "UEXCOORD": 16.57,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f10",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:10.001",
+          "UEXCOORD": 17.3,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f11",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:11.002",
+          "UEXCOORD": 18.03,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f12",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:12.002",
+          "UEXCOORD": 18.759999999999998,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f13",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:13.002",
+          "UEXCOORD": 19.490000000000002,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f14",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:14.003",
+          "UEXCOORD": 20.22,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f15",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:15.003",
+          "UEXCOORD": 20.95,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f16",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:16.003",
+          "UEXCOORD": 21.68,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f17",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:17.004",
+          "UEXCOORD": 22.41,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f18",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:18.004",
+          "UEXCOORD": 23.14,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f19",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:19.005",
+          "UEXCOORD": 23.869999999999997,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f20",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:20.005",
+          "UEXCOORD": 24.6,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f21",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:21.006",
+          "UEXCOORD": 25.33,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f22",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:22.006",
+          "UEXCOORD": 26.06,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f23",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:23.007",
+          "UEXCOORD": 26.79,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f24",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:24.007",
+          "UEXCOORD": 27.52,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f25",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:25.008",
+          "UEXCOORD": 28.25,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f26",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:26.009",
+          "UEXCOORD": 28.98,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f27",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:27.009",
+          "UEXCOORD": 29.71,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f28",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:28.010",
+          "UEXCOORD": 30.439999999999998,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f29",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:29.011",
+          "UEXCOORD": 31.169999999999998,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f30",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:30.012",
+          "UEXCOORD": 31.9,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f31",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:31.012",
+          "UEXCOORD": 32.629999999999995,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f32",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:32.013",
+          "UEXCOORD": 33.36,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f33",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:33.014",
+          "UEXCOORD": 34.09,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f34",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:34.015",
+          "UEXCOORD": 34.82,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f35",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:35.016",
+          "UEXCOORD": 35.55,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f36",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:36.017",
+          "UEXCOORD": 36.28,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -60,
+            "delay_ns": 123.5
+          },
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -80,
+            "delay_ns": 140.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    },
+    {
+      "frame_id": "f37",
+      "model": {
+        "common": {
+          "TIMESTAMP": "00:00:37.018",
+          "UEXCOORD": 37.01,
+          "UEYCOORD": 0,
+          "UEZCOORD": 1.5,
+          "BSXCOORD": 0,
+          "BSYCOORD": 0,
+          "BSZCOORD": 10,
+          "DLFREQUENCY": 3500,
+          "ULFREQUENCY": 3500,
+          "BSID": 1,
+          "SID": 1,
+          "UEID": 1
+        },
+        "clusters": [
+          {
+            "id": 9,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p2"
+            ],
+            "power_db": -60,
+            "delay_ns": 140.5
+          },
+          {
+            "id": 7,
+            "batch_id": "trajectory-fixture-1",
+            "members": [
+              "p1"
+            ],
+            "power_db": -80,
+            "delay_ns": 123.5
+          }
+        ],
+        "propagation": "NLOS",
+        "directions": {
+          "arrival": "toward_source",
+          "departure": "toward_receiver"
+        },
+        "rotations": {
+          "arrival": [
+            [
+              0,
+              -1,
+              0
+            ],
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              1
+            ]
+          ],
+          "departure": [
+            [
+              1,
+              0,
+              0
+            ],
+            [
+              0,
+              0,
+              -1
+            ],
+            [
+              0,
+              1,
+              0
+            ]
+          ]
+        }
+      }
+    }
+  ]
+}

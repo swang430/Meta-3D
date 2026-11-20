@@ -1,0 +1,35 @@
+# GCM 离线轨迹实施与交付
+
+目标：把已确认单帧转换扩展为相邻2至38帧离线轨迹。跨帧身份必须有绑定输入内容的依据，不能把功率排序当身份。用户已授权实施至交付。
+
+架构：复用 scripts/gcm_single_frame.py::convert_frame。scripts/gcm_trajectory.py 接受真实或合成输入，同样核验实际逐径文件、最终成员表、簇导出文件及跨帧映射文件，不相信来源自述或只有哈希字符串。逐文件读取和校验SHA256，再比较每个有序帧ID、批次、方向、成员及完整模型内容。跨帧映射同时绑定完整有序帧列表和每帧内容，成员不明或不一致拒绝。输入文件的真实性仍由交付方负责，内容一致性不是物理身份认证。
+
+技术：Python标准库；无服务、网络、仪器、驱动或设备文件生成调用。
+
+方案取舍：不采用功率排序或时延近邻猜身份；不采用虚构-100 dB占位。按手册第14.2节固定列定义，所有帧必须填满同样槽位，持续身份保持列位置。当前未取得不同簇同槽替换的厂商语义依据，出生、消失、空槽、重新出现均拒绝。没有可信身份依据的现有真实38帧拒绝；有完整可核验材料的真实接口可用，不设synthetic-only门。
+
+时间：保留十进制秒原始字符串。CSV按十进制半入法取整为毫秒，拒绝原始或取整后的碰撞、逆序及跨日。清单保留两套时间、间隔及输出文件哈希。不重采样、不删末帧。
+
+手册依据：Channel Studio GCM User Guide，Revision 15.0，§13.2.1–13.2.2（第82页）、§13.2.5（第83–84页）、§14.2（第87–88页）、§14.2.3（第89–91页）：CLUSTER相邻至少0.3m，多点总长至少25波长，原时间在最终厂商模型中可能被调整；每链路每时刻一行、生命周期内固定顺序、LOS编号0、NLOS最多24。取两个载频的较长波长是本工具保守计算策略。表4-2的原点与链路距离须小于100000m；不将通用编辑器1m误用于CLUSTER导入，不套用PATH的30m上限。§22.4内部插值不构成CSV缺位语法。第13章只支持相同上下行载频的时分双工。
+
+一份输入只表达一条链路一个来源方向，同时声明DL/UL载频；不混合独立方向，不宣称复现两个方向。
+
+验收关系：CLI/convert_trajectory → 实际文件内容和SHA256/逐帧完整身份映射 → 同源单帧转换与固定槽CSV → 2帧/38帧、功率互换、非均匀时间、0.299m拒绝/0.73m通过、出生消失/未知/未绑定真实输入拒绝。CSV及清单均离线，不等于厂商软件已导入或仪器已播放。
+
+步骤：先写失败测试；实现离线脚本及合成材料；跑正反例、核心变异及CLI端到端；单帧先合并后同步origin/main；独立内审与GitHub两轮外审核HEAD；合并PR后核远端SHA，协调方同步本地主main，本工作树再跑合并版离线端到端。不得推送main。
+
+影响面：独立脚本及材料，不改变生产服务、后端共享行为或界面；后端全量和GUI构建不适用，需跑全部新增脚本测试和单帧相关回归。内审按全套检查新证据契约，复用有效测试结果。
+
+协作消息：/tmp/gcm-s5-trajectory-status.md；单帧接口：/tmp/gcm-s5-single-interface.md。
+
+## 本地验证记录（单帧合并前）
+
+全部文件均为本次离线实现的历史证据，不是硬件验收。命令 `PYTHONPATH=/Users/Simon/Tools/MIMO-gcm-frame/scripts python3 -m unittest discover -s scripts/tests -p test_gcm_trajectory.py`，结果17项、OK，见[输出](../evidence/2026-11-20-gcm-trajectory/green.log)。临时使用只读的单帧工作树，交付前必须同步已合并依赖后无额外PYTHONPATH复验。未连接应用或仪器。
+
+[先红记录](../evidence/2026-11-20-gcm-trajectory/red.log)；[三个核心变异](../evidence/2026-11-20-gcm-trajectory/mutations.log)在临时副本执行，分别去掉文件字节哈希、生灭拒绝和毫秒碰撞判据，各自引起行为失败；工作树源文件不变。首次内审的两条功能发现和修复复审见[内审R1](../evidence/2026-11-20-gcm-trajectory/internal-r1.md)、[内审R2](../evidence/2026-11-20-gcm-trajectory/internal-r2.md)。R2核到的源文件SHA256为5054ccb000403a2024098b854ca68624c32869d94c020fa9e077222eb2b82dd7；随后只增加负例和文档，源码未变。
+
+实际原件复核命令：`/Users/Simon/Tools/MIMO-First/api-service/.venv/bin/python scripts/inspect_mpdb.py /Users/Simon/.codex/artifacts/2026-11-11-s5-mpdb/original.zip --output /tmp/gcm-trajectory-real-inspection.json --speed-m-s 5 --coordinate-units metres`。输出上下行各38帧，原件SHA256为6cada6a493b04bbf05725ffdeaac61956e382a18897fad5c3efce94113a0037d。按下行RX位置、上行TX位置逐段Euclidean复算：总长180.8746968837547m，最短及末段0.72956886766057m，最大5.111417556779601m；满足0.3m和2400MHz下25波长要求。36.17493937675094秒是按已确认5m/s和米坐标推导，并非源文件实测时间。
+
+对已有真实交换文件分别执行 `python3 scripts/gcm_trajectory.py /tmp/meta-s5-real-trajectory/downlink.json /tmp/gcm-trajectory-real-rejected-downlink` 及上行对应命令，均退出2、不创建输出目录。它们自述身份为frame-local-only，尚无本工具要求的同批成员与跨帧身份材料，且不是本接口格式；本次没有伪造转换为新格式再宣称真实验收通过。独立列出[原件距离与真实输入拒绝记录](../evidence/2026-11-20-gcm-trajectory/real-input-check.json)。坐标通过与身份不足是两件事。
+
+真实来源分支的成功用例仅为构造完整材料的接口测试，不代表本批真实38帧已取得身份、姿态或正式播放证据。厂商导入与设备播放仍待独立验收。
