@@ -97,7 +97,7 @@ def _verify_evidence(document, frames, base_dir):
         model = frame['model']
         # 原始时序取实际逐径材料，不允许包装层重新声明替换。
         timing = sources['raw_paths']['frames'][i]
-        if timing.get('time_seconds') != frame.get('time_seconds') or timing.get('frame_index') != frame.get('frame_index'):
+        if timing.get('time_seconds') != frame.get('time_seconds') or type(timing.get('frame_index')) is not int or timing.get('frame_index') != frame.get('frame_index'):
             raise ValueError('原始时间或帧索引与实际逐径来源不一致')
         _, _, timestamp = _rounded_time(timing['time_seconds'])
         if model['common'].get('TIMESTAMP') != timestamp:
@@ -108,13 +108,13 @@ def _verify_evidence(document, frames, base_dir):
         for name, ref in inputs.items():
             if source[name] != ref['path']:
                 raise ValueError('模型来源路径与实际读取文件不一致')
-        if sources['raw_paths']['frames'][i].get('paths') != model['paths']:
+        if frames_sha256(sources['raw_paths']['frames'][i].get('paths')) != frames_sha256(model['paths']):
             raise ValueError('原始逐径内容与实际文件不一致')
         members = [{'id': c['id'], 'members': c['members']} for c in model['clusters']]
-        if sources['final_membership']['frames'][i].get('clusters') != members:
+        if frames_sha256(sources['final_membership']['frames'][i].get('clusters')) != frames_sha256(members):
             raise ValueError('最终成员表内容与实际文件不一致')
         exported = {k: model[k] for k in ('common', 'clusters', 'propagation', 'directions', 'rotations')}
-        if sources['cluster_export']['frames'][i].get('model') != exported:
+        if frames_sha256(sources['cluster_export']['frames'][i].get('model')) != frames_sha256(exported):
             raise ValueError('簇导出内容与实际文件不一致')
         record = evidence['frames'][i]
         if record.get('frame_sha256') != frames_sha256(frame):
@@ -161,7 +161,7 @@ def _verify_associations(document, frames, mappings, base_dir):
             'from_member_ids': left[track]['member_ids'],
             'to_member_ids': right[track]['member_ids'],
         } for track in sorted(left)]
-        if link.get('pairs') != expected:
+        if frames_sha256(link.get('pairs')) != frames_sha256(expected):
             raise ValueError('输出身份映射与独立跨帧关联来源不一致')
 
 

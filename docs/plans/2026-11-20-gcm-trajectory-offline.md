@@ -48,3 +48,15 @@
 单帧#598已先合并，正式依赖origin/main为8d83386b0b5bb38d221ec1299812679cd8c51235。轨迹树合入该版本后，在5faf3470ecd45ee13b7a80980038625e670d5e2e上运行 `python3 -B -m unittest discover -s scripts/tests -p 'test_gcm*.py'`，33项全部通过（单帧13+轨迹20），没有额外PYTHONPATH或外部工作树源码。随后仅增加本段及验证输出，测试源码、模型、配置及依赖内容未变化，结果可复用。
 
 [33项输出](../evidence/2026-11-20-gcm-trajectory/formal-dependency-tests.log)；[正式依赖下的三个核心变异](../evidence/2026-11-20-gcm-trajectory/formal-dependency-mutations.log)均在临时副本检出，复制本工作树单帧版本，不访问其他工作树。CLI命令 `python3 -B scripts/gcm_trajectory.py scripts/fixtures/gcm_trajectory/input.json /tmp/gcm-trajectory-formal-e2e` 生成38行36列，末帧00:00:37.018；独立CSV读取校验全部行持续ID、列数及文件SHA256，清单保持synthetic、formal_eligible=false、hardware_called=false。代码/依赖/输入/CSV哈希见[端到端摘要](../evidence/2026-11-20-gcm-trajectory/formal-dependency-e2e.json)。这仍是合成材料验证，不是厂商导入或设备播放。
+
+## R1期间作者补查的内容类型修复
+
+R1审查c42b8c1f时，作者定点发现实际来源中的布尔值true会被Python容器相等当成整数1，导致实际簇导出BSID=true而输出BSID=1仍被接受。同根两处是实际源帧索引true/1、独立关联持续ID true/1。实际文件哈希正确并不能补救这个内容比较错误。先补三种可观察负例，[旧实现三失败](../evidence/2026-11-20-gcm-trajectory/content-types-red.log)。修复把三份材料及独立关联对应比较换为既有规范JSON指纹比较，实际源帧索引要求整数；不新增机制。
+
+[34项集成通过](../evidence/2026-11-20-gcm-trajectory/content-types-green.log)（单帧13+轨迹21），[四项核心变异](../evidence/2026-11-20-gcm-trajectory/content-types-mutations.log)在临时副本检出。内容类型变异同时恢复5处原逻辑，三种负例重新失败。测试、样本和依赖未另作改动；未知拒绝路径没有放宽。
+
+外审R1回执已核对 reviewed commit=c42b8c1f5a、无重大问题，见 https://github.com/swang430/Meta-3D/pull/596#issuecomment-7043850063 。该回执仅签修复前版本；作者修复提交必须再由R2覆盖，不能以旧R1结论或内审替代。
+
+该内容类型修复已获[独立内审CLEAN](../evidence/2026-11-20-gcm-trajectory/internal-content-types.md)，源码SHA256为a5355707435927ec554ec1ec1526c328f66425e5b884f0e7891311ea2502330f。额外独立定点核对实际向量false/0、成员表整数/浮点、独立关联局部编号整数/浮点，均拒绝。用户另外要求同步既有P2-16 S5补充一行，保留#595的RT-IMT-2030主线不动，随修复提交共同外审。
+
+用户提供的S5路线图一行同步已获[独立文档内审CLEAN](../evidence/2026-11-20-gcm-trajectory/internal-roadmap.md)，核实三份链接、合成38帧证据与真实缺项界线；#595三项主线未修改。本轮代码、测试、说明和该行将由同一最新HEAD外审覆盖。

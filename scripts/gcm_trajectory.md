@@ -23,7 +23,7 @@ python3 -m unittest discover -s scripts/tests -p 'test_gcm_trajectory.py'
 - `final_membership`：每帧 `clusters=[{id,members}]` 与模型最终成员表完全相同。
 - `cluster_export`：每帧 `model={common,clusters,propagation,directions,rotations}` 与输入完整模型这些字段完全相同，包含簇功率、绝对时延、方向含义与姿态矩阵。
 
-单帧 `model.source` 的三条来源路径必须和以上实际读取路径相同；类型、批次和方向也必须匹配。只给文件名或填“已确认”不能通过。
+单帧 `model.source` 的三条来源路径必须和以上实际读取路径相同；类型、批次和方向也必须匹配。实际材料比较同时保留JSON数值类型，布尔值true不能代替编号1。只给文件名或填“已确认”不能通过。
 
 `identity_evidence` 以同样的 `{path,sha256}` 引用独立跨帧映射JSON，格式为 `schema=gcm-identity/1`，包含相同批次、方向和完整有序帧列表的 `frames_sha256`。每帧有 `frame_id`、`frame_sha256` 和 `mapping`。哈希函数为脚本导出的 `frames_sha256`：规范JSON排序键、不含空白、UTF-8、不允许NaN。整体哈希覆盖输入文档的整个 `frames` 列表；单帧哈希覆盖完整帧对象。
 

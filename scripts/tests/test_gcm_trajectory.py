@@ -187,6 +187,25 @@ class TrajectoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'独立跨帧关联'):
             self.run_conversion()
 
+    def test_actual_source_types_must_match_model_and_mapping(self):
+        for mode in ('export_bool','source_index_bool','association_bool'):
+            original=copy.deepcopy(self.doc)
+            if mode=='association_bool':
+                association=json.loads((self.base/'associations.json').read_bytes())
+                association['links'][0]['pairs'][0]['track_id']=True
+            else:
+                name='cluster_export' if mode=='export_bool' else 'raw_paths'
+                material=json.loads((self.base/(name+'.json')).read_bytes())
+                if mode=='export_bool':material['frames'][0]['model']['common']['BSID']=True
+                else:material['frames'][1]['frame_index']=True
+                self.doc['inputs'][name]=self.save(name+'.json',material)
+                association=json.loads((self.base/'associations.json').read_bytes())
+                association['input_sha256']={k:v['sha256'] for k,v in self.doc['inputs'].items()}
+            self.doc['association_evidence']=self.save('associations.json',association)
+            with self.subTest(mode=mode),self.assertRaises(ValueError):self.run_conversion()
+            self.doc=original
+            self.bind()
+
     def test_mapping_rejected(self):
         for mode in ('missing','duplicate','slot_change','unknown','wrong_members'):
             evidence=copy.deepcopy(self.evidence)
