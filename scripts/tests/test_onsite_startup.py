@@ -29,6 +29,7 @@ def test_engine_only_loads_path_from_file(tmp_path, monkeypatch):
         assert os.environ["CHANNEL_ENGINE_PATH"] == "/客户 引擎"
         assert "MOCK_ASC_MODE" not in os.environ
         assert launch.call_args.args[1][-2:] == ["--port", "8001"]
+        assert "--reload" not in launch.call_args.args[1]
 
 
 @pytest.mark.parametrize("config,expected", [
