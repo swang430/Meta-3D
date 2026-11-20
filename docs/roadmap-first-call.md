@@ -2,7 +2,8 @@
 
 ### 2026-11-20 现场核对：已验证范围与剩余待办
 
-- P2-96：三轮正常诊断从 93° 出发，经相对 +90° 后返回并停稳，最终编码器分别为 93°、92.999714°、92.999714°。不关闭异常中断分支，也不作为机械回零证据。P1-4：两轮相同配置下每轮六个 1000 子帧窗口均为 18.736 Mbps；这是诊断重复性，不替代正式指标。
+- [x] **P1-4 已关闭（2026-11-20，用户决定）**：两轮独立执行 `650cb845-ba7c-4cd3-84d0-816d167d0bad`、`04e2713f-719b-4785-993c-120f2145ea82` 配置相同，各在 93°、183° 分别取得三个 1000 子帧窗口；12 个吞吐读数均为 18.736 Mbps。不再安排重复验证；未测的 RSRP、SINR 和校准精度不记为通过。
+- P2-96：三轮正常诊断从 93° 出发，经相对 +90° 后返回并停稳，最终编码器分别为 93°、92.999714°、92.999714°。不关闭异常中断分支，也不作为机械回零证据。
 - NEW-1：诊断记录 `bedfd71a-b3b8-4b20-952b-5dee3e0e91a1` 中，16 个活动输出均在检查范围内；不代表整条射频链已校准。V2：固定位置诊断 `c1a989e4-2f6a-4e99-9482-34ab62c06b25` 已接入，三个 5000 子帧窗口均为 18.736 Mbps；不是正式验收。
 - NEW-2：软件释放连接后，操作员点击面板 Local Mode，蓝色指示和水印消失。手动接管已验证；不要求面板自行切回。P2-85：STOPPED 下重复 GOS 一次返回 -200，随后两次读到 STOPPED，错误队列清空；不推断 CLOSED 状态、射频关断或回卷。
 - RT-IMT-2030：由 ASC 生成的单天线工程已通过 Meta-3D 加载，设置并回读 −35 dBm，观察到 RUNNING 后停止至 STOPPED；这是设置回读，不是实测输出功率，也不是 B41 吞吐用例验收。
@@ -485,7 +486,7 @@ P3-20/P3-21 仍不得自动启动。
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。P2-42～P2-45
    的上一轮架构收敛已经全部合并（队列现状见上一条，不在此重复）。
-3. **First-call / on-site 队列按当前分类排期**：P0-5、P1-2、P1-4、P2-4，以及
+3. **First-call / on-site 队列按当前分类排期**：P0-5、P1-2、P2-4，以及
    P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半；P1-5 已退出当前 PFS power-only 队列，P1-6 继续 HOLD。
    到场后按「现场验证分类与执行顺序」推进；非现场只能准备载体，不能把本地测试或文档更新记成现场完成。
 
@@ -1161,7 +1162,7 @@ UXM 与 CE 认证按相应设备/手册和前置证据就绪情况另排。以�
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。2026-08-27 诊断已证明 Aerotech degree 单位和 +90° MOVEABS↔PFBK 偏置，P0-9B-3 已把该合同冻结进 execution 并接入 evidence。当前阻塞为：现场复验同一 TestCase 方位、独立证明 HOME 最终 PFBK、补 Aerotech 实时型号/固件依据，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未冻结进 execution 的转台真值会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | ~~P0-8~~ ✅ **2026-09-16 现场完成** | ~~F64 driver 现场修复落地~~ —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | **P0-8b ✅**：执行 `dbd53e6f` 在 SCME UMa 衰落下 DL ACK 100 % / BLER 0 %，吞吐 45.82 Mbps，且 NACK 0 % / DTX 0 % —— 调度的传输块全部被确认，即该调度下的满额（原始回复见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §3）；最难的衰落态已满额，bypass 半不再单独要求。✅ **2026-08-27 P0-8a 历史现场证据已通过**：LTE UMa 20 MHz SMU 加载/运行，输入侧测到 CMW500 信号，配置链正常。仅余 P0-8b：DUT Attach 后证明 DL 非 0% ACK/不失真 | ✅ [`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py) 已由 P2-73 收紧为服务器权威的 UXM-only 诊断载体：CMW500、Mock、缺少/漂移在 Remote/F64 I/O 前 fail-closed；`uxm_dl_confirmed` 只是物理满 RB DL 确认。CMW500 复验仍用 P0-9 同一 LTE MIMO_OTA TestCase，不使用本序列 |
 | P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-09-16 现场发现阻塞，不能关闭**：同机连续两次运行 `e916b910` / `c3a445a2` 均在第一轮已排空队列后复现同一 `-200 No simulation opened` + `-100 ATE command not supported`。许可真值 `SYSTem:INFO?` 已确认且与驱动 `INT-GEN` 对账一致，但当前校准有效性与用户对齐状态未确认。**P1-80 软件半已完成**：空回复不再脱离错误队列显示为绿色 | ✅ 载体仍为 [`propsim_f64_license_truth`](../api-service/app/diagnostics/sequences/propsim_f64_license_truth.py)：开场 residue 归档、逐查询错误归属、命令值域 fail-closed、license/calibration/user-alignment 分判均已落地且未新增/猜测 SCPI。仍须在同一 F8800A 上从干净队列复验；只有有效子判决 + 终态零残留才关闭。现场原始证据见 [`guides/2026-09-16-cmw500-f64-onsite-runbook.md`](guides/2026-09-16-cmw500-f64-onsite-runbook.md#propsim_f64_license_truth-%E6%8A%8A%E9%94%99%E8%AF%AF%E7%A9%BA%E5%9B%9E%E5%A4%8D%E6%98%BE%E7%A4%BA%E4%B8%BA%E6%88%90%E5%8A%9F) |
-| P1-4 | first-call repeatability test | on-site 全链路 | ✅ **软件载体已由 P1-72 / #396 补齐**：同一 MIMO_OTA TestCase 两次 execution，使用 execution 级 ReportComparison 与 repeatability_tests 对齐；现场实际重复执行及对比证据仍未关闭。不再把旧 plan_id 契约当待开发缺口 |
+| ~~P1-4~~ ✅ 已关闭 | 同配置两次独立运行的吞吐重复性 | 2026-11-20 用户确认关闭 | ✅ **软件载体已由 P1-72 / #396 补齐**：同一 MIMO_OTA TestCase 两次 execution，使用 execution 级 ReportComparison 与 repeatability_tests 对齐；现场吞吐对照见页首，不再列为阻塞。不再把旧 plan_id 契约当待开发缺口 |
 | P1-5 **退出当前现场队列** | CAL-04 phase calibration | 不作为 PFS power-only 测试前置 | 当前 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py) 已受控拒绝，旧 mock 落库入口已关闭；PFS power-only 不需要相位校准。不安排现场执行、不以关闭旧入口冒充真校准完成；未来确有相位需求时另立项。 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入。**✅ 驱动侧收口（P1-67 #383）**：`STATE_LOAD/STATE_SAVE` 已换 `SYSTem:SCPI:IMPort/EXPort`（写后 STATus? + 错误队列复核），`STATE_LIST=None`（手册无文件列表命令） |
 | P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
@@ -1202,7 +1203,7 @@ P2-74 / P2-85 / P2-86 / P2-32B / P1-79E 共 24 条。P1-5 撤出后当时为 **2
 - [ ] V2：当前 main 固定方位 LTE baseline（现有 TestCase，伴随 P2-85）；保留真实 Attach/吞吐/cleanup。P0-9 等已关闭项不重开。
 - [ ] V6：停止→释放→面板 Local→第二次执行（P2-85 / NEW-2 / P1-4 运行子项）。
 - [ ] V3：无输入/缺一路/正常输入三类 Cell-ready 测量语义（P2-86）；有功率异常时提前到 V2 前排查，不能证明 LTE 信号有效。
-- [x] V4：两合法统计长度连续执行（P1-74），2026-11-20 真机 1000 → 5000 已验证。P1-4 正式重复性单独跟踪。
+- [x] V4：两合法统计长度连续执行（P1-74），2026-11-20 真机 1000 → 5000 已验证。P1-4 已另按用户决定关闭。
 - [ ] V5：安全小步→多方位/长运动与 offset-aware 返回（NEW-4/P1-56 / P2-74）；可信多方位测试必须完成，不可仅测固定位置。独立 HOME 是剩余阻塞子项：当前非零偏置下无批准载体，GUI HOME 在 I/O 前拒绝，cleanup MOVEABS(0) 不能补真，另行批准方案后才排。
 
 详细前置、GUI 调试序列/单阶段分工、raw 证据及局部解除条件见
@@ -1835,7 +1836,9 @@ decision needs its own scoped change.
 
 **Status**: ✅ Done
 
-### P1-4 — first-call repeatability test
+### P1-4 — first-call repeatability test ✅ 已关闭
+
+2026-11-20 按用户决定关闭；实际覆盖见页首。以下为原计划，不作为待执行事项。
 
 **What**: Run first-call 3x back-to-back on the same config. Plot RSRP /
 SINR / Throughput variance. Establish the noise floor for "this is the
@@ -1843,7 +1846,7 @@ same lab".
 
 **Acceptance**: variance documented; outliers explained.
 
-**Status**: `[ ]` not started — depends on P0-3..P0-5 being on site
+**Status**: `[x]` 已关闭（按现场吞吐重复性收口）。
 **Estimate**: on-site 1 day
 
 ### P1-5 — CAL-04 phase calibration
