@@ -64,7 +64,7 @@ channel-engine-service/.venv/bin/python -m pip install \
   --reload --host 127.0.0.1 --port 8001)
 ```
 
-也可在根目录安装 npm 依赖后运行 `npm run dev:channel-engine`。该命令继承终端中的引擎路径，使用服务自己的虚拟环境；当前模块入口固定监听 `127.0.0.1:8001`，并开启自动重载。
+使用一键启动时，只需在本机的 `channel-engine-service/.env` 中设置一次 `CHANNEL_ENGINE_PATH=/实际安装目录/ChannelEgine`。该文件不提交；若终端已设置同名变量，以终端为准。之后在仓库根目录执行 `npm run dev:safe:all`（或单独执行 `npm run dev:channel-engine`）。npm 入口使用服务自己的虚拟环境，监听 `127.0.0.1:8001`，不开启自动重载；启动失败时工作进程直接退出，不保留占用端口的重载进程。以 `/api/v1/health` 返回 `channel_engine_available: true` 确认可用。
 
 同时启动完整开发系统，请先完成[根目录安装说明](../README.md#-快速开始)，然后在同一终端的根目录执行：
 
