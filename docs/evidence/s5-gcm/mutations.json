@@ -1,0 +1,30 @@
+[
+  {
+    "name": "间距错误改为1米",
+    "old": "d >= 0.3",
+    "new": "d >= 1",
+    "exit_code": 1,
+    "tail": "2 failed, 7 passed in 0.02s"
+  },
+  {
+    "name": "严格原点边界错误放行",
+    "old": "max_radius < 100000",
+    "new": "max_radius <= 100000",
+    "exit_code": 1,
+    "tail": "2 failed, 7 passed in 0.02s"
+  },
+  {
+    "name": "裁剪末帧",
+    "old": "last_frame=frame_ids[-1]",
+    "new": "last_frame=frame_ids[-2]",
+    "exit_code": 1,
+    "tail": "8 failed, 1 passed in 0.03s"
+  },
+  {
+    "name": "忽略最短路长",
+    "old": "length >= minimum_length",
+    "new": "length >= 0",
+    "exit_code": 1,
+    "tail": "1 failed, 8 passed in 0.02s"
+  }
+]
