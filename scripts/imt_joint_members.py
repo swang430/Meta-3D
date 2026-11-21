@@ -36,11 +36,13 @@ with zipfile.ZipFile(src) as db:
         for k in ("H", "DELAY", "AOA", "ZOA", "AOD", "ZOD")
     ]
 result = {}
-for frame in range(38):
+for frame in np.unique(fr):
     for t in range(4):
         for r in range(2):
             ident = int(lid[(fr == frame) & (tx == t) & (rx == r)].item())
             mask = (ids == ident) & (abs(columns[0]) > 0)
+            if not mask.any() or mask.sum() > 32768:
+                raise ValueError(f"帧 {frame} 链路 {ident} 的非零射线数须在 1 至 32768 之间")
             v = [torch.from_numpy(col[mask]) for col in columns]
             geom = torch.stack([v[1].double() * 1e9, *[x.double() for x in v[2:]]], 1)
             if t == 0 and r == 0:
@@ -51,7 +53,12 @@ for frame in range(38):
                 ref = geom
                 membership = labels
             else:
-                membership = labels[torch.cdist(geom, ref).argmin(1)]
+                # 双精度距离矩阵每块至多 8 MiB，仍对全部参考射线取最近邻。
+                chunk_rows = max(1, (1024 * 1024) // len(ref))
+                membership = torch.cat([
+                    labels[torch.cdist(block, ref).argmin(1)]
+                    for block in geom.split(chunk_rows)
+                ])
             result[f"L{ident}"] = membership.cpu().numpy()
 np.savez_compressed(
     out, source_sha256=hashlib.sha256(src.read_bytes()).hexdigest(), **result

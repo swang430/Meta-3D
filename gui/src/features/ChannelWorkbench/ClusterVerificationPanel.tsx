@@ -65,36 +65,42 @@ export function ClusterVerificationPanel() {
         />
         {notice && <Text>{notice}</Text>}
         {error && <Alert color="red">{error}</Alert>}
-        {report && (
-          <>
-            <Text>
-              两项均已核对 {report.checked} 簇，未完整核验 {report.unknown}{' '}
-              簇，发现 {report.warnings.length} 条异常。
-            </Text>
-            {report.warnings.length > 0 && (
-              <Alert color="orange" title="聚簇结果有异常">
-                {report.warnings.map(({ id, message }) => (
-                  <Text key={location(id) + message}>
-                    {location(id)}：{message}
-                  </Text>
-                ))}
-              </Alert>
-            )}
-            {report.unknown > 0 && (
-              <details>
-                <summary>
-                  未核验，可继续 · {report.unverified[0].reason}
-                </summary>
-                {report.unverified.map(({ id, reason }) => (
-                  <Text key={location(id)}>
-                    {location(id)}：{reason}
-                  </Text>
-                ))}
-              </details>
-            )}
-          </>
-        )}
+        {report && <ClusterReport report={report} />}
       </Stack>
     </Paper>
+  )
+}
+
+export function ClusterReport({
+  report,
+}: {
+  report: ReturnType<typeof verifyClusters>
+}) {
+  return (
+    <>
+      <Text>
+        两项均已核对 {report.checked} 簇，未完整核验 {report.unknown} 簇，发现{' '}
+        {report.warnings.length} 条异常。
+      </Text>
+      {report.warnings.length > 0 && (
+        <Alert color="orange" title="聚簇结果有异常">
+          {report.warnings.map(({ id, message }) => (
+            <Text key={location(id) + message}>
+              {location(id)}：{message}
+            </Text>
+          ))}
+        </Alert>
+      )}
+      {report.unknown > 0 && (
+        <details>
+          <summary>未核验，可继续 · {report.unverified[0].reason}</summary>
+          {report.unverified.map(({ id, reason }) => (
+            <Text key={location(id)}>
+              {location(id)}：{reason}
+            </Text>
+          ))}
+        </details>
+      )}
+    </>
   )
 }

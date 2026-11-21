@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import zipfile
 from pathlib import Path
 
@@ -14,21 +15,51 @@ OFFSETS = np.array([-50e6, 0.0, 50e6])
 
 
 def column(db, desc, table, name):
-    info = desc["records"][table][name]
+    if len(db.namelist()) != len(set(db.namelist())):
+        raise ValueError("传播数据库中存在同名文件，无法确认分片来源")
+    records = desc["records"][table]
+    info = records[name]
+    rows = info.get("rowCount")
+    shape = info.get("shape")
+    error = f"{table}.{name} 的分片行范围、形状或数据与列声明不一致"
+    if (type(rows) is not int or rows <= 0 or not isinstance(shape, list)
+            or not shape or any(type(n) is not int or n <= 0 for n in shape)
+            or shape[0] != rows or any(c.get("rowCount") != rows for c in records.values())):
+        raise ValueError(error)
+    if name in {"FRAME_ID", "TX_ANT", "RX_ANT", "LINK_ID", "FREQUENCY", "H",
+                "DELAY", "AOA", "ZOA", "AOD", "ZOD", "DOPPLER"} and shape[1:] not in ([], [1]):
+        raise ValueError(error)
+    if name == "RX_ANT_POSITION" and shape[1:] != [3]:
+        raise ValueError(error)
+    entries = [shard["entry"] for c in records.values() for shard in c["shards"]]
+    if len(set(entries)) != len(entries):
+        raise ValueError(error)
+    types = {"I32": "<i4", "I64": "<i8", "F32": "<f4", "F64": "<f8",
+             "C64": "<c8", "C128": "<c16"}
     parts = []
+    cursor = 0
     for shard in sorted(info["shards"], key=lambda item: item["rowStart"]):
+        start, end = shard.get("rowStart"), shard.get("rowEnd")
+        if (type(start) is not int or type(end) is not int or start != cursor
+                or not start < end <= rows):
+            raise ValueError(error)
         raw = db.read(shard["entry"])
         size = int.from_bytes(raw[:8], "little")
+        if not 0 < size <= len(raw) - 8:
+            raise ValueError(error)
         meta = json.loads(raw[8 : 8 + size])["data"]
-        dtype = {
-            "I32": "<i4",
-            "I64": "<i8",
-            "F32": "<f4",
-            "F64": "<f8",
-            "C64": "<c8",
-            "C128": "<c16",
-        }[meta["dtype"]]
-        parts.append(np.frombuffer(raw[8 + size :], dtype=dtype).reshape(meta["shape"]))
+        if meta.get("dtype") not in types:
+            raise ValueError(error)
+        dtype = np.dtype(types[meta["dtype"]])
+        expected_shape = [end - start, *shape[1:]]
+        byte_count = math.prod(expected_shape) * dtype.itemsize
+        if (info.get("dtype") != "torch." + dtype.name or meta.get("shape") != expected_shape
+                or meta.get("data_offsets") != [0, byte_count] or len(raw) != 8 + size + byte_count):
+            raise ValueError(error)
+        parts.append(np.frombuffer(raw, dtype=dtype, offset=8 + size).reshape(expected_shape))
+        cursor = end
+    if cursor != rows:
+        raise ValueError(error)
     return np.concatenate(parts)
 
 
