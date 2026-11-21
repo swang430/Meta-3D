@@ -73,3 +73,15 @@ test('实际字节和声明行数分别核对；文件内容或清单单独改�
     /文件头与清单不符/,
   )
 })
+
+test('动态交付目录显示六组端口的有效范围，覆盖数缺失时拒绝', async () => {
+  const { readFile } = await import('node:fs/promises')
+  const path = new URL('../../docs/evidence/imt-dynamic/dynamic-manifest.json', import.meta.url)
+  const manifest = JSON.parse(await readFile(path, 'utf8'))
+  const bundle = readBundle(manifest, 'ota')
+  assert.equal(bundle.links.length, 128)
+  assert.match(bundle.phaseSummary, /791531/)
+  assert.match(bundle.phaseSummary, /197992\/248/)
+  manifest.port_phase['0-1'].compared--
+  assert.throws(() => readBundle(manifest, 'ota'), /相位回读覆盖不完整/)
+})
