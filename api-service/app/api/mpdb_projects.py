@@ -15,6 +15,7 @@ from typing import Literal
 from uuid import UUID, uuid4
 import zipfile
 
+from dotenv import dotenv_values
 from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
@@ -32,6 +33,7 @@ class ImportedSource(BaseModel):
 class BuiltProject(BaseModel):
     download_url: str
     asc_count: int
+    manifests: dict[str, dict]
     results: dict | None = None
     evidence: dict | None = None
 
@@ -100,6 +102,20 @@ def import_source(file: UploadFile = File(...)):
         raise HTTPException(422, f"无法导入下行 MPDB：{exc}") from exc
 
 
+def worker_environment(root: Path):
+    env = os.environ.copy()
+    config = root / "channel-engine-service/.env"
+    local = dotenv_values(config, interpolate=False) if config.is_file() else {}
+    for key in ("CHANNEL_ENGINE_PATH", "HYPERRT_PATH"):
+        if key not in env and local.get(key):
+            env[key] = local[key]
+    engine = Path(env.get("CHANNEL_ENGINE_PATH", ""))
+    if not engine.is_absolute() or not (engine / "mimo_ota_simulator").is_dir():
+        raise HTTPException(503, "找不到信道引擎。请在 channel-engine-service/.env 中设置 CHANNEL_ENGINE_PATH 为引擎的绝对路径；启动环境中的同名设置优先。")
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (str(engine), env.get("PYTHONPATH"))))
+    return env
+
+
 def run_worker(command, env):
     # HyperRT 是传导计算的子进程；超时要一起结束，之后才能删除它正在使用的目录。
     with subprocess.Popen(
@@ -135,6 +151,33 @@ def run_worker(command, env):
         return worker.returncode, message
 
 
+def checked_manifest(directory: Path, role: str, expected: int):
+    try:
+        manifest = json.loads((directory / "manifest.json").read_text(encoding="utf-8"))
+        links = manifest["links"]
+        if not isinstance(links, list):
+            raise ValueError
+        declared = {link["file"] for link in links}
+        if not all(isinstance(name, str) for name in declared):
+            raise ValueError
+    except (FileNotFoundError, KeyError, TypeError, ValueError) as exc:
+        raise HTTPException(500, f"{role} 工程清单缺失或文件名列表无效") from exc
+
+    actual = {path.name for path in directory.iterdir()
+              if path.is_file() and path.suffix.lower() == ".asc"}
+    problems = []
+    if len(links) != expected or len(declared) != expected or len(actual) != expected:
+        problems.append(f"预期 {expected} 条通路，清单有 {len(links)} 条记录、"
+                        f"{len(declared)} 个不同文件名，目录有 {len(actual)} 个 ASC 文件")
+    if missing := declared - actual:
+        problems.append("缺少文件：" + "、".join(sorted(missing)))
+    if extra := actual - declared:
+        problems.append("额外文件：" + "、".join(sorted(extra)))
+    if problems:
+        raise HTTPException(500, f"{role} 工程未发布。" + "。".join(problems))
+    return manifest
+
+
 @router.post(
     "/{source_id}/build", response_model=BuiltProject, response_model_exclude_none=True
 )
@@ -144,14 +187,8 @@ def build_project(source_id: UUID, params: BuildParameters):
     if not archive.is_file():
         raise HTTPException(404, "导入记录已过期，请重新选择原始文件")
     os.utime(folder, None)
-    engine = os.getenv("CHANNEL_ENGINE_PATH", "")
-    if not engine or not (Path(engine) / "mimo_ota_simulator").is_dir():
-        raise HTTPException(503, "请在服务环境中配置 CHANNEL_ENGINE_PATH 指向信道引擎")
+    env = worker_environment(ROOT)
     ident = uuid4()
-    env = dict(
-        os.environ,
-        PYTHONPATH=os.pathsep.join([engine, os.environ.get("PYTHONPATH", "")]),
-    )
     engine_python = ROOT / "channel-engine-service/.venv/bin/python"
     python = str(engine_python) if engine_python.is_file() else sys.executable
     with tempfile.TemporaryDirectory(dir=folder) as tmp:
@@ -176,18 +213,27 @@ def build_project(source_id: UUID, params: BuildParameters):
                 raise HTTPException(
                     422, message[-1][:500] if message else "计算程序未生成工程"
                 )
-            base = output if params.mode == "conducted" else output / "dynamic"
-            count = len(list(base.rglob("*.asc")))
-            expected = 8 if params.mode == "conducted" else 128
-            if count != expected:
-                raise HTTPException(500, "工程通路数与输入配置不一致")
+            if params.mode == "conducted":
+                manifests = {"conducted": checked_manifest(output, "conducted", 8)}
+            else:
+                manifests = {
+                    role: checked_manifest(output / role, role, 128)
+                    for role in ("baseline", "dynamic")
+                }
+            primary = "conducted" if params.mode == "conducted" else "dynamic"
             result = {
                 "download_url": f"/api/v1/channel-assets/mpdb-projects/{source_id}/{ident}.zip",
-                "asc_count": count,
+                "asc_count": len(manifests[primary]["links"]),
+                "manifests": manifests,
             }
             if params.mode == "conducted":
                 for key in ("results", "evidence"):
-                    result[key] = json.loads((output / f"{key}.json").read_text())
+                    try:
+                        document = json.loads((output / f"{key}.json").read_text(encoding="utf-8"))
+                    except (FileNotFoundError, ValueError):
+                        continue
+                    if isinstance(document, dict):
+                        result[key] = document
             package = shutil.make_archive(str(stage / "package"), "zip", output)
             Path(package).replace(folder / f"{ident}.zip")
             return result

@@ -57,7 +57,7 @@ const TARGET_LABEL: Record<string, string> = {
 type SourceFilter = 'all' | ChannelSourceType
 
 export function ChannelWorkbench() {
-  const [section, setSection] = useState("create")
+  const [reviewTask, setReviewTask] = useState('files')
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [includeInactive, setIncludeInactive] = useState(false)
@@ -156,14 +156,18 @@ export function ChannelWorkbench() {
 
   return (
     <Stack gap="md">
-      <SegmentedControl value={section} onChange={setSection} data={[
-        { value: 'create', label: '从 MPDB 创建信道工程' },
-        { value: 'import', label: '导入已有结果' },
-      ]} />
-      <div hidden={section !== 'create'}><MpdbProjectPanel /></div>
-      <div hidden={section !== 'import'}>
-        <Stack><ClusterResponsePanel /><ClusterVerificationPanel /><ImtBundlePanel /></Stack>
-      </div>
+      <MpdbProjectPanel />
+      <details>
+        <summary>查看或核验已有工程</summary>
+        <Stack mt="sm">
+          <SegmentedControl aria-label="选择复查内容" value={reviewTask} onChange={setReviewTask} data={[
+            { value: 'files', label: '查看工程文件' },
+            { value: 'clusters', label: '核验聚簇结果' },
+          ]} />
+          <div hidden={reviewTask !== 'files'}><ImtBundlePanel /></div>
+          <div hidden={reviewTask !== 'clusters'}><ClusterVerificationPanel /></div>
+        </Stack>
+      </details>
       <Group justify="space-between" align="flex-end">
         <div>
           <Title order={3}>
@@ -308,6 +312,10 @@ export function ChannelWorkbench() {
         {viewing && <AssetDetail asset={viewing} />}
       </Modal>
 
+      <details>
+        <summary>轨迹工具：计算逐帧频率响应</summary>
+        <ClusterResponsePanel />
+      </details>
       <ChannelAssetForm opened={formOpen} asset={editingAsset} onClose={() => setFormOpen(false)} />
 
       <Modal

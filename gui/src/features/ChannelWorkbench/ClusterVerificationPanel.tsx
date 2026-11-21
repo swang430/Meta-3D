@@ -22,7 +22,9 @@ export function ClusterVerificationPanel() {
     setError('')
     setNotice('')
     if (result?.name.toLowerCase().endsWith('.asc')) {
-      setNotice('未核验，可继续。ASC 只包含抽头，没有逐射线成员与分簇规则。')
+      setNotice(
+        '聚簇结果未核验。ASC 文件记录信道抽头，缺少每个簇包含哪些射线以及如何分簇的信息，无法据此核对聚簇结果。',
+      )
       return
     }
     if (result)
@@ -47,21 +49,33 @@ export function ClusterVerificationPanel() {
       <Stack>
         <Title order={4}>聚簇结果核验</Title>
         <Text size="sm">
-          核对联合聚簇的复系数和代表多普勒。缺少对应成员证据时仍可继续使用工作台。
+          先选择 results.json，读取每个簇的汇总结果。再选择同一次计算的
+          evidence.json，用簇内各条射线的记录核对合成后的复系数和代表多普勒频移。缺少成员记录时，对应结果显示为未核验。
         </Text>
         <FileInput
           clearable
-          label="联合聚簇结果文件或 ASC"
+          label="聚簇结果（results.json）或单个 ASC 文件"
           accept=".json,.asc"
           value={result}
-          onChange={setResult}
+          onChange={(file) => {
+            setResult(file)
+            setEvidence(null)
+            setReport(null)
+            setError('')
+            setNotice('')
+          }}
         />
         <FileInput
           clearable
-          label="成员证据文件（可选）"
+          label="簇内射线成员记录（evidence.json，可选）"
           accept=".json"
+          disabled={!result || result.name.toLowerCase().endsWith('.asc')}
           value={evidence}
-          onChange={setEvidence}
+          onChange={(file) => {
+            setEvidence(file)
+            setReport(null)
+            setError('')
+          }}
         />
         {notice && <Text>{notice}</Text>}
         {error && <Alert color="red">{error}</Alert>}

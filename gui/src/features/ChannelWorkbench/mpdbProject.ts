@@ -1,3 +1,4 @@
+import { readBundle } from './imtBundle.ts'
 import { verifyClusters } from './clusterVerification.ts'
 
 export type ProjectMode = 'conducted' | 'ota'
@@ -17,6 +18,7 @@ export function readProject(
   data: {
     download_url?: unknown
     asc_count?: unknown
+    manifests?: Record<string, unknown>
     results?: unknown
     evidence?: unknown
   },
@@ -48,5 +50,30 @@ export function readProject(
       }
     }
   }
-  return { url: url.href, count: data.asc_count, report, notice }
+  const summaries = (mode === 'ota' ? ['baseline', 'dynamic'] : ['conducted']).map((role) => {
+    const label = role === 'dynamic' ? '动态工程' : role === 'baseline' ? '源帧工程' : '传导工程'
+    try {
+      const manifest = data.manifests?.[role]
+      if (!manifest) throw Error('缺少本次生成清单')
+      const bundle = readBundle(manifest, mode)
+      if ((role === 'dynamic') !== Boolean(bundle.phaseSummary))
+        throw Error('清单与工程类型不符')
+      if (role !== 'baseline' && bundle.links.length !== data.asc_count)
+        throw Error('清单与生成的文件数量不符')
+      const summary = label + '清单：' + bundle.links.length + ' 个 ASC 文件，' +
+        bundle.frames + ' 帧，每帧 ' + bundle.taps + ' 个抽头，文件头更新率 ' + bundle.rate + ' Hz。'
+      if (role === 'baseline') {
+        const usable = bundle.metrics.filter(m => m.field_nmse !== null && m.power_ratio !== null)
+        const maximum = usable.reduce((max, row) => Math.max(max, row.field_nmse!), 0)
+        return summary + (usable.length ? '场误差和功率比均有记录的 ' + usable.length +
+          ' 项中，最大归一化场均方误差为 ' + maximum.toExponential(2) + '。' : '') +
+          (usable.length < bundle.metrics.length ? '缺少完整对照数值的 ' +
+            (bundle.metrics.length - usable.length) + ' 项未核验。' : '')
+      }
+      return summary + bundle.phaseSummary
+    } catch (error) {
+      return label + '未核验：' + (error instanceof Error ? error.message : '清单格式无效')
+    }
+  })
+  return { summaries, url: url.href, count: data.asc_count, report, notice }
 }
