@@ -1,0 +1,1556 @@
+{
+  "mode": "ota",
+  "evidence": "offline_distance_doppler",
+  "direction": "downlink",
+  "smu_built": false,
+  "geometry": {
+    "description": "16 探头水平环，理想双极化平面波，测试区半径 0.1 米，仅离线",
+    "probe_azimuth_zenith_deg": [
+      [
+        0.0,
+        90
+      ],
+      [
+        22.5,
+        90
+      ],
+      [
+        45.0,
+        90
+      ],
+      [
+        67.5,
+        90
+      ],
+      [
+        90.0,
+        90
+      ],
+      [
+        112.5,
+        90
+      ],
+      [
+        135.0,
+        90
+      ],
+      [
+        157.5,
+        90
+      ],
+      [
+        180.0,
+        90
+      ],
+      [
+        202.5,
+        90
+      ],
+      [
+        225.0,
+        90
+      ],
+      [
+        247.5,
+        90
+      ],
+      [
+        270.0,
+        90
+      ],
+      [
+        292.5,
+        90
+      ],
+      [
+        315.0,
+        90
+      ],
+      [
+        337.5,
+        90
+      ]
+    ],
+    "fit_points_m": [
+      [
+        0,
+        0,
+        0
+      ],
+      [
+        0.1,
+        0.0,
+        0.0
+      ],
+      [
+        0.09807853,
+        0.01950903,
+        0.0
+      ],
+      [
+        0.09238795,
+        0.03826834,
+        0.0
+      ],
+      [
+        0.08314696,
+        0.05555702,
+        0.0
+      ],
+      [
+        0.07071068,
+        0.07071068,
+        0.0
+      ],
+      [
+        0.05555702,
+        0.08314696,
+        0.0
+      ],
+      [
+        0.03826834,
+        0.09238795,
+        0.0
+      ],
+      [
+        0.01950903,
+        0.09807853,
+        0.0
+      ],
+      [
+        0.0,
+        0.1,
+        0.0
+      ],
+      [
+        -0.01950903,
+        0.09807853,
+        0.0
+      ],
+      [
+        -0.03826834,
+        0.09238795,
+        0.0
+      ],
+      [
+        -0.05555702,
+        0.08314696,
+        0.0
+      ],
+      [
+        -0.07071068,
+        0.07071068,
+        0.0
+      ],
+      [
+        -0.08314696,
+        0.05555702,
+        0.0
+      ],
+      [
+        -0.09238795,
+        0.03826834,
+        0.0
+      ],
+      [
+        -0.09807853,
+        0.01950903,
+        0.0
+      ],
+      [
+        -0.1,
+        0.0,
+        0.0
+      ],
+      [
+        -0.09807853,
+        -0.01950903,
+        0.0
+      ],
+      [
+        -0.09238795,
+        -0.03826834,
+        0.0
+      ],
+      [
+        -0.08314696,
+        -0.05555702,
+        0.0
+      ],
+      [
+        -0.07071068,
+        -0.07071068,
+        0.0
+      ],
+      [
+        -0.05555702,
+        -0.08314696,
+        0.0
+      ],
+      [
+        -0.03826834,
+        -0.09238795,
+        0.0
+      ],
+      [
+        -0.01950903,
+        -0.09807853,
+        0.0
+      ],
+      [
+        -0.0,
+        -0.1,
+        0.0
+      ],
+      [
+        0.01950903,
+        -0.09807853,
+        0.0
+      ],
+      [
+        0.03826834,
+        -0.09238795,
+        0.0
+      ],
+      [
+        0.05555702,
+        -0.08314696,
+        0.0
+      ],
+      [
+        0.07071068,
+        -0.07071068,
+        0.0
+      ],
+      [
+        0.08314696,
+        -0.05555702,
+        0.0
+      ],
+      [
+        0.09238795,
+        -0.03826834,
+        0.0
+      ],
+      [
+        0.09807853,
+        -0.01950903,
+        0.0
+      ],
+      [
+        0.05,
+        0.0,
+        0.0
+      ],
+      [
+        0.04619398,
+        0.01913417,
+        0.0
+      ],
+      [
+        0.03535534,
+        0.03535534,
+        0.0
+      ],
+      [
+        0.01913417,
+        0.04619398,
+        0.0
+      ],
+      [
+        0.0,
+        0.05,
+        0.0
+      ],
+      [
+        -0.01913417,
+        0.04619398,
+        0.0
+      ],
+      [
+        -0.03535534,
+        0.03535534,
+        0.0
+      ],
+      [
+        -0.04619398,
+        0.01913417,
+        0.0
+      ],
+      [
+        -0.05,
+        0.0,
+        0.0
+      ],
+      [
+        -0.04619398,
+        -0.01913417,
+        0.0
+      ],
+      [
+        -0.03535534,
+        -0.03535534,
+        0.0
+      ],
+      [
+        -0.01913417,
+        -0.04619398,
+        0.0
+      ],
+      [
+        -0.0,
+        -0.05,
+        0.0
+      ],
+      [
+        0.01913417,
+        -0.04619398,
+        0.0
+      ],
+      [
+        0.03535534,
+        -0.03535534,
+        0.0
+      ],
+      [
+        0.04619398,
+        -0.01913417,
+        0.0
+      ]
+    ],
+    "check_points_m": [
+      [
+        0.09951847,
+        0.00980171,
+        0.0
+      ],
+      [
+        0.09569403,
+        0.02902847,
+        0.0
+      ],
+      [
+        0.08819213,
+        0.04713967,
+        0.0
+      ],
+      [
+        0.07730105,
+        0.06343933,
+        0.0
+      ],
+      [
+        0.06343933,
+        0.07730105,
+        0.0
+      ],
+      [
+        0.04713967,
+        0.08819213,
+        0.0
+      ],
+      [
+        0.02902847,
+        0.09569403,
+        0.0
+      ],
+      [
+        0.00980171,
+        0.09951847,
+        0.0
+      ],
+      [
+        -0.00980171,
+        0.09951847,
+        0.0
+      ],
+      [
+        -0.02902847,
+        0.09569403,
+        0.0
+      ],
+      [
+        -0.04713967,
+        0.08819213,
+        0.0
+      ],
+      [
+        -0.06343933,
+        0.07730105,
+        0.0
+      ],
+      [
+        -0.07730105,
+        0.06343933,
+        0.0
+      ],
+      [
+        -0.08819213,
+        0.04713967,
+        0.0
+      ],
+      [
+        -0.09569403,
+        0.02902847,
+        0.0
+      ],
+      [
+        -0.09951847,
+        0.00980171,
+        0.0
+      ],
+      [
+        -0.09951847,
+        -0.00980171,
+        0.0
+      ],
+      [
+        -0.09569403,
+        -0.02902847,
+        0.0
+      ],
+      [
+        -0.08819213,
+        -0.04713967,
+        0.0
+      ],
+      [
+        -0.07730105,
+        -0.06343933,
+        0.0
+      ],
+      [
+        -0.06343933,
+        -0.07730105,
+        0.0
+      ],
+      [
+        -0.04713967,
+        -0.08819213,
+        0.0
+      ],
+      [
+        -0.02902847,
+        -0.09569403,
+        0.0
+      ],
+      [
+        -0.00980171,
+        -0.09951847,
+        0.0
+      ],
+      [
+        0.00980171,
+        -0.09951847,
+        0.0
+      ],
+      [
+        0.02902847,
+        -0.09569403,
+        0.0
+      ],
+      [
+        0.04713967,
+        -0.08819213,
+        0.0
+      ],
+      [
+        0.06343933,
+        -0.07730105,
+        0.0
+      ],
+      [
+        0.07730105,
+        -0.06343933,
+        0.0
+      ],
+      [
+        0.08819213,
+        -0.04713967,
+        0.0
+      ],
+      [
+        0.09569403,
+        -0.02902847,
+        0.0
+      ],
+      [
+        0.09951847,
+        -0.00980171,
+        0.0
+      ],
+      [
+        0.04903926,
+        0.00975452,
+        0.0
+      ],
+      [
+        0.04157348,
+        0.02777851,
+        0.0
+      ],
+      [
+        0.02777851,
+        0.04157348,
+        0.0
+      ],
+      [
+        0.00975452,
+        0.04903926,
+        0.0
+      ],
+      [
+        -0.00975452,
+        0.04903926,
+        0.0
+      ],
+      [
+        -0.02777851,
+        0.04157348,
+        0.0
+      ],
+      [
+        -0.04157348,
+        0.02777851,
+        0.0
+      ],
+      [
+        -0.04903926,
+        0.00975452,
+        0.0
+      ],
+      [
+        -0.04903926,
+        -0.00975452,
+        0.0
+      ],
+      [
+        -0.04157348,
+        -0.02777851,
+        0.0
+      ],
+      [
+        -0.02777851,
+        -0.04157348,
+        0.0
+      ],
+      [
+        -0.00975452,
+        -0.04903926,
+        0.0
+      ],
+      [
+        0.00975452,
+        -0.04903926,
+        0.0
+      ],
+      [
+        0.02777851,
+        -0.04157348,
+        0.0
+      ],
+      [
+        0.04157348,
+        -0.02777851,
+        0.0
+      ],
+      [
+        0.04903926,
+        -0.00975452,
+        0.0
+      ]
+    ]
+  },
+  "tx_mode": "+45",
+  "reference_rx": 0,
+  "source_frames_only": false,
+  "header": {
+    "cir_count": 6195,
+    "taps": 24,
+    "carrier_hz": 2565000000.0,
+    "rate_hz": 171.18765176762867
+  },
+  "source_sha256": "217585159349afe88ca9864be4a98158625996fefc2639af4403e9727682a2dd",
+  "source_times_s": [
+    0.0,
+    0.9986425771106235,
+    1.997288205091241,
+    2.9959307821587324,
+    3.9945733241655588,
+    5.013047490798069,
+    6.01169006778629,
+    7.010335660672544,
+    8.008978237624627,
+    9.00762081457671,
+    10.00626644241744,
+    11.004909019335717,
+    12.003553086679672,
+    13.00219566353733,
+    14.000839765871952,
+    14.999483833159951,
+    15.998245502258673,
+    16.9654021141667,
+    17.971719327438898,
+    18.974249298560178,
+    19.976779176405667,
+    20.979307624500088,
+    21.98183768882167,
+    22.984366230116535,
+    23.98689638769183,
+    24.98942492896463,
+    25.99195365672771,
+    26.994482384490787,
+    27.9970126352803,
+    28.999540694771294,
+    30.002070277273482,
+    31.004599098262524,
+    32.007128012499585,
+    33.00965625848676,
+    34.01218517272382,
+    35.03446907406988,
+    36.036997794060426,
+    36.182911948349
+  ],
+  "time_source": "帧间三维距离除以申报速度",
+  "speed_m_s": 5.0,
+  "rate_hz": 171.18765176762867,
+  "rows": 6195,
+  "hardware_verified": false,
+  "absolute_phase_verified": false,
+  "links": [
+    {
+      "tx": 0,
+      "probe": 0,
+      "polarization": "theta",
+      "file": "TX0_PROBE00_theta.asc",
+      "sha256": "7161abb6ec2eed4e8811fa1e101fb53d3888ad35c07d1618166edff00a52d83d"
+    },
+    {
+      "tx": 0,
+      "probe": 0,
+      "polarization": "phi",
+      "file": "TX0_PROBE00_phi.asc",
+      "sha256": "4d22942996d7b0ded2cb5e25bd1c9a07f9eb78c7cb95c6cd3fba41dd76c8687b"
+    },
+    {
+      "tx": 0,
+      "probe": 1,
+      "polarization": "theta",
+      "file": "TX0_PROBE01_theta.asc",
+      "sha256": "d99ec6d8621cc3a9e722ddcb0104b745663bff27aa59cbfcbfad7f143dd74707"
+    },
+    {
+      "tx": 0,
+      "probe": 1,
+      "polarization": "phi",
+      "file": "TX0_PROBE01_phi.asc",
+      "sha256": "440ec80a1b908d53d2f1395184ff8508549a9d1fc42dc9772cb1560cf494d480"
+    },
+    {
+      "tx": 0,
+      "probe": 2,
+      "polarization": "theta",
+      "file": "TX0_PROBE02_theta.asc",
+      "sha256": "247ce872bec026e625f519974ea29e71078c1b6861b1f2f5053c22e2205d6750"
+    },
+    {
+      "tx": 0,
+      "probe": 2,
+      "polarization": "phi",
+      "file": "TX0_PROBE02_phi.asc",
+      "sha256": "24601f9330e0d7fa17f4a3c9429dde5c4447d1c9fd17d63e0b646e8ab7c61b14"
+    },
+    {
+      "tx": 0,
+      "probe": 3,
+      "polarization": "theta",
+      "file": "TX0_PROBE03_theta.asc",
+      "sha256": "b6332fb02c6879fa9934e75532b318d41a530b1da765d8d544a78a8a4044ac0a"
+    },
+    {
+      "tx": 0,
+      "probe": 3,
+      "polarization": "phi",
+      "file": "TX0_PROBE03_phi.asc",
+      "sha256": "3142472e126c34cb63ee5c4897fed9e4ab4cdb2987e791aee6ac626deb3a5bd8"
+    },
+    {
+      "tx": 0,
+      "probe": 4,
+      "polarization": "theta",
+      "file": "TX0_PROBE04_theta.asc",
+      "sha256": "81ffb1ace45f02592121d7a8a40065298338520bf4e719e13e2a5f455e2e7e65"
+    },
+    {
+      "tx": 0,
+      "probe": 4,
+      "polarization": "phi",
+      "file": "TX0_PROBE04_phi.asc",
+      "sha256": "2030f5b354139a7829db6f82e0a69decae3944601fff066e8c7778578e334c52"
+    },
+    {
+      "tx": 0,
+      "probe": 5,
+      "polarization": "theta",
+      "file": "TX0_PROBE05_theta.asc",
+      "sha256": "43043676f2687872a6aa1d8edb5f808caa957e32d5d941638a950370182c0a67"
+    },
+    {
+      "tx": 0,
+      "probe": 5,
+      "polarization": "phi",
+      "file": "TX0_PROBE05_phi.asc",
+      "sha256": "655ffe712dcd7601cdeb3c63a26d4ce452ec3a81173a2c49f651113beb9c514b"
+    },
+    {
+      "tx": 0,
+      "probe": 6,
+      "polarization": "theta",
+      "file": "TX0_PROBE06_theta.asc",
+      "sha256": "cb3750117d480f5b0d8ab1efed752e715a97b46cda10ad69e1aa5b19fa30a7b7"
+    },
+    {
+      "tx": 0,
+      "probe": 6,
+      "polarization": "phi",
+      "file": "TX0_PROBE06_phi.asc",
+      "sha256": "52664e7653e23ea920646e066004af52353fe485f5947329a13ceedad2066df1"
+    },
+    {
+      "tx": 0,
+      "probe": 7,
+      "polarization": "theta",
+      "file": "TX0_PROBE07_theta.asc",
+      "sha256": "70952b6e45d95d0d60773ea1451e865a16dd272b64a6095ba71c5671dbe1ff27"
+    },
+    {
+      "tx": 0,
+      "probe": 7,
+      "polarization": "phi",
+      "file": "TX0_PROBE07_phi.asc",
+      "sha256": "0e26dc4e89212ef05d83b2bae61409815e28d9e774e6330d6e49796f0c724907"
+    },
+    {
+      "tx": 0,
+      "probe": 8,
+      "polarization": "theta",
+      "file": "TX0_PROBE08_theta.asc",
+      "sha256": "4fe29c1aa6c4886264f4243e50b719095b96ebd44212b17e4502b35d081786e1"
+    },
+    {
+      "tx": 0,
+      "probe": 8,
+      "polarization": "phi",
+      "file": "TX0_PROBE08_phi.asc",
+      "sha256": "ec7500aa94ead670e6c6bb0d8853bfa98b1c4f372a25a24f48e39a6f6ec66c1a"
+    },
+    {
+      "tx": 0,
+      "probe": 9,
+      "polarization": "theta",
+      "file": "TX0_PROBE09_theta.asc",
+      "sha256": "1ed05275ebfdaacb8c9676db1393832c425645ece223d6c49b047ec2e108ceba"
+    },
+    {
+      "tx": 0,
+      "probe": 9,
+      "polarization": "phi",
+      "file": "TX0_PROBE09_phi.asc",
+      "sha256": "1822a3a23b69a1a18b084d746a722d469a787ef8695aae60a33f8d5c653cae8a"
+    },
+    {
+      "tx": 0,
+      "probe": 10,
+      "polarization": "theta",
+      "file": "TX0_PROBE10_theta.asc",
+      "sha256": "bc44e0e0d8d48283a68390fe6950ad1f9728b8c836f9b4be02c5b090eb4efebc"
+    },
+    {
+      "tx": 0,
+      "probe": 10,
+      "polarization": "phi",
+      "file": "TX0_PROBE10_phi.asc",
+      "sha256": "823d00a97114ddb101dec40e1675554409338301121a8f26c4131b8a3d776249"
+    },
+    {
+      "tx": 0,
+      "probe": 11,
+      "polarization": "theta",
+      "file": "TX0_PROBE11_theta.asc",
+      "sha256": "bf342f05021244ea740aa6f4c117da1f275050d7f951a0cafe40563d7bd190a0"
+    },
+    {
+      "tx": 0,
+      "probe": 11,
+      "polarization": "phi",
+      "file": "TX0_PROBE11_phi.asc",
+      "sha256": "b217e4182d54194020fcfedf9df9d9d84400c893316998823e63836769e69c3b"
+    },
+    {
+      "tx": 0,
+      "probe": 12,
+      "polarization": "theta",
+      "file": "TX0_PROBE12_theta.asc",
+      "sha256": "3a2a909976a574ba12b2c1e9812c14f99d0005ccc9f0a19df401715d45a92010"
+    },
+    {
+      "tx": 0,
+      "probe": 12,
+      "polarization": "phi",
+      "file": "TX0_PROBE12_phi.asc",
+      "sha256": "b9a486a1636643e212a708a3bd42d1d483da9290a4bfe9abaf24d7c0b0bafe8d"
+    },
+    {
+      "tx": 0,
+      "probe": 13,
+      "polarization": "theta",
+      "file": "TX0_PROBE13_theta.asc",
+      "sha256": "1d06518924eae31bf10898fdcf518a87571c53545d2e4047027cd6161c47dfc3"
+    },
+    {
+      "tx": 0,
+      "probe": 13,
+      "polarization": "phi",
+      "file": "TX0_PROBE13_phi.asc",
+      "sha256": "3a0f3651da52b1252a72fa420e6a6953b2787b63ac3c75af446f273284aac2aa"
+    },
+    {
+      "tx": 0,
+      "probe": 14,
+      "polarization": "theta",
+      "file": "TX0_PROBE14_theta.asc",
+      "sha256": "0ac5e5c6e6a8c3b238ae9e3d572bef8b4032c006142ca58919c8180acd719fd5"
+    },
+    {
+      "tx": 0,
+      "probe": 14,
+      "polarization": "phi",
+      "file": "TX0_PROBE14_phi.asc",
+      "sha256": "9f02abfbb7bcf2b074a3b29361b3e463e1ab8bd65c8c0d02b70e7a0120afada5"
+    },
+    {
+      "tx": 0,
+      "probe": 15,
+      "polarization": "theta",
+      "file": "TX0_PROBE15_theta.asc",
+      "sha256": "0d206c6f023e12905a79477b5e47be9b0b3b07193368c7c21d8f73e1f67c3d85"
+    },
+    {
+      "tx": 0,
+      "probe": 15,
+      "polarization": "phi",
+      "file": "TX0_PROBE15_phi.asc",
+      "sha256": "150e22dac9f55174814512d2ca5b35e15bbc17eec4b6c9b3b5ef67e106e4c896"
+    },
+    {
+      "tx": 1,
+      "probe": 0,
+      "polarization": "theta",
+      "file": "TX1_PROBE00_theta.asc",
+      "sha256": "2c01827c50e643a723549d846a23b8236722036f24214e46f37a2cca78cd0ab5"
+    },
+    {
+      "tx": 1,
+      "probe": 0,
+      "polarization": "phi",
+      "file": "TX1_PROBE00_phi.asc",
+      "sha256": "aff5e917324a30d25b836d7edf234bcc0719342eb42f9eb8406beb868a1dc4cd"
+    },
+    {
+      "tx": 1,
+      "probe": 1,
+      "polarization": "theta",
+      "file": "TX1_PROBE01_theta.asc",
+      "sha256": "f428812ccd8409bab73572df119f1528964dcbf11f497a5e2db252aef14af8ae"
+    },
+    {
+      "tx": 1,
+      "probe": 1,
+      "polarization": "phi",
+      "file": "TX1_PROBE01_phi.asc",
+      "sha256": "7a1cd1d6a1df805cba62bde99e0384b3464d118dca6f37659e3af9e126528684"
+    },
+    {
+      "tx": 1,
+      "probe": 2,
+      "polarization": "theta",
+      "file": "TX1_PROBE02_theta.asc",
+      "sha256": "cb6be45cfb113e3e873f06c46e312f9391a25122c026dc910d5bf4cea755137d"
+    },
+    {
+      "tx": 1,
+      "probe": 2,
+      "polarization": "phi",
+      "file": "TX1_PROBE02_phi.asc",
+      "sha256": "d39d1685463ec6742c52e28e60f6b7f385572a3e4edd32f4644e18b252fa5840"
+    },
+    {
+      "tx": 1,
+      "probe": 3,
+      "polarization": "theta",
+      "file": "TX1_PROBE03_theta.asc",
+      "sha256": "bb390148b12a6362658a20d8a432f6596c9ae6c041911fe5ba5b2ad6f3f05fda"
+    },
+    {
+      "tx": 1,
+      "probe": 3,
+      "polarization": "phi",
+      "file": "TX1_PROBE03_phi.asc",
+      "sha256": "9286c6b630be0e8ed27838021ddd3338dc9c1e6e7bd60f83a26c7654790bca4b"
+    },
+    {
+      "tx": 1,
+      "probe": 4,
+      "polarization": "theta",
+      "file": "TX1_PROBE04_theta.asc",
+      "sha256": "650856db98b27056eb9330ad4b157ac650602dd802409b4d73f5915587930501"
+    },
+    {
+      "tx": 1,
+      "probe": 4,
+      "polarization": "phi",
+      "file": "TX1_PROBE04_phi.asc",
+      "sha256": "a80bd050d03dc7cb3a47a6ac9f05528e65218cec25a2552643ea21f3d33d0bbb"
+    },
+    {
+      "tx": 1,
+      "probe": 5,
+      "polarization": "theta",
+      "file": "TX1_PROBE05_theta.asc",
+      "sha256": "9b8c1be2d7ce2a3cb206adf365cba551c69351248a2c5c1c52f2445ee698fadd"
+    },
+    {
+      "tx": 1,
+      "probe": 5,
+      "polarization": "phi",
+      "file": "TX1_PROBE05_phi.asc",
+      "sha256": "bc516d2e6af41c55cc5073287a209e9e2bb0e21f14bda93580c3a1475bdf3db8"
+    },
+    {
+      "tx": 1,
+      "probe": 6,
+      "polarization": "theta",
+      "file": "TX1_PROBE06_theta.asc",
+      "sha256": "a3046b5efbc519bec126f4833d8916a0bda1b1de8612fd3fa28e0f98f98b4ed7"
+    },
+    {
+      "tx": 1,
+      "probe": 6,
+      "polarization": "phi",
+      "file": "TX1_PROBE06_phi.asc",
+      "sha256": "f213c1ce4474ed054c4b9408201b9210057c486c1ec06c2c4e26afb88858cbd0"
+    },
+    {
+      "tx": 1,
+      "probe": 7,
+      "polarization": "theta",
+      "file": "TX1_PROBE07_theta.asc",
+      "sha256": "3d431db35374617e7e5da48097f35a473eeb29cfe847e28498e811ceb6cef1aa"
+    },
+    {
+      "tx": 1,
+      "probe": 7,
+      "polarization": "phi",
+      "file": "TX1_PROBE07_phi.asc",
+      "sha256": "1af5556757519349e8f9ebb3bcf05e0a895d40b031d902a998064a20fb3e1534"
+    },
+    {
+      "tx": 1,
+      "probe": 8,
+      "polarization": "theta",
+      "file": "TX1_PROBE08_theta.asc",
+      "sha256": "ef5ac6be3e4f316b1aa0a8855bbf86aa9658a140db38b61739b6479edaa1a7c4"
+    },
+    {
+      "tx": 1,
+      "probe": 8,
+      "polarization": "phi",
+      "file": "TX1_PROBE08_phi.asc",
+      "sha256": "f72ccad211d168e8e58f6b62050530c48aa6c3be7ba82c9422a88ae8d068ef80"
+    },
+    {
+      "tx": 1,
+      "probe": 9,
+      "polarization": "theta",
+      "file": "TX1_PROBE09_theta.asc",
+      "sha256": "b4ea3fa83582fde85395b8d876b73da6939a87d67f75e1ed08962db251dad477"
+    },
+    {
+      "tx": 1,
+      "probe": 9,
+      "polarization": "phi",
+      "file": "TX1_PROBE09_phi.asc",
+      "sha256": "a52d7e5d2c6b22e4c011fe4d7d6a26d2ddf0f9159db5b0a62150c253eeb6d920"
+    },
+    {
+      "tx": 1,
+      "probe": 10,
+      "polarization": "theta",
+      "file": "TX1_PROBE10_theta.asc",
+      "sha256": "6cb7c7ed727b5455d39441420440d07b883983aeae781e979396752aeea95340"
+    },
+    {
+      "tx": 1,
+      "probe": 10,
+      "polarization": "phi",
+      "file": "TX1_PROBE10_phi.asc",
+      "sha256": "5728c5d7dbfdc81f14afbc5ace4c748f586ba3377af5782ca146f9fa4c36fb87"
+    },
+    {
+      "tx": 1,
+      "probe": 11,
+      "polarization": "theta",
+      "file": "TX1_PROBE11_theta.asc",
+      "sha256": "6cc3fd447ec9cf52322133a5c8732b5e5f0a0d8ba4e812ea77f782b9798cf1c8"
+    },
+    {
+      "tx": 1,
+      "probe": 11,
+      "polarization": "phi",
+      "file": "TX1_PROBE11_phi.asc",
+      "sha256": "06cef8f8848e5cca36319196fd116feb5c5cff228590fdbe9b99c4e391da5596"
+    },
+    {
+      "tx": 1,
+      "probe": 12,
+      "polarization": "theta",
+      "file": "TX1_PROBE12_theta.asc",
+      "sha256": "d991b6d49ced5e77740db58f49770cb07a8c939f6209116f49d37048e88255b5"
+    },
+    {
+      "tx": 1,
+      "probe": 12,
+      "polarization": "phi",
+      "file": "TX1_PROBE12_phi.asc",
+      "sha256": "95e4413dc6ba090f1bd5ce81d9ef29164e4d01599da2c5af3420d6121195df9d"
+    },
+    {
+      "tx": 1,
+      "probe": 13,
+      "polarization": "theta",
+      "file": "TX1_PROBE13_theta.asc",
+      "sha256": "b8a70503e82cfb0c5ae8705f38a634a978d087f2059df76c2e3c8e9581d91e41"
+    },
+    {
+      "tx": 1,
+      "probe": 13,
+      "polarization": "phi",
+      "file": "TX1_PROBE13_phi.asc",
+      "sha256": "9c0969c3cd99121a6bb9040b9fd9e2448c0dee24c917dbb09a6ded4ded906dfc"
+    },
+    {
+      "tx": 1,
+      "probe": 14,
+      "polarization": "theta",
+      "file": "TX1_PROBE14_theta.asc",
+      "sha256": "add12713bd0fca68fcb91708d10a4bb7b838f397064b3acba439b2434cb8c2af"
+    },
+    {
+      "tx": 1,
+      "probe": 14,
+      "polarization": "phi",
+      "file": "TX1_PROBE14_phi.asc",
+      "sha256": "c4031c7e4f225bb3abcab6392ae7e8eae627e78a544d891bbe5f080cfd5858ba"
+    },
+    {
+      "tx": 1,
+      "probe": 15,
+      "polarization": "theta",
+      "file": "TX1_PROBE15_theta.asc",
+      "sha256": "d7f4d9ed25c3066b3dbe163809e37e9a2601bb72b7bc13b0a46f5daa827d07ac"
+    },
+    {
+      "tx": 1,
+      "probe": 15,
+      "polarization": "phi",
+      "file": "TX1_PROBE15_phi.asc",
+      "sha256": "d727e6be58cac3fdf8624388e01e4dd854f93bbedcbe2fd9e59fdef49d5c4d5c"
+    },
+    {
+      "tx": 2,
+      "probe": 0,
+      "polarization": "theta",
+      "file": "TX2_PROBE00_theta.asc",
+      "sha256": "f8d27384ebef9fa3f357423bc6af417e643ca905fff36fcd782ee2245e6437f5"
+    },
+    {
+      "tx": 2,
+      "probe": 0,
+      "polarization": "phi",
+      "file": "TX2_PROBE00_phi.asc",
+      "sha256": "f2b8781de1054c82b91f5c509311f8a5ce0af2cdcbf971fa78dfd8a204e9c898"
+    },
+    {
+      "tx": 2,
+      "probe": 1,
+      "polarization": "theta",
+      "file": "TX2_PROBE01_theta.asc",
+      "sha256": "e3fa2d4c7e67bd9243d7b1c6d4ed0c06c9ddf96ff3294f74f1a05109d7b32463"
+    },
+    {
+      "tx": 2,
+      "probe": 1,
+      "polarization": "phi",
+      "file": "TX2_PROBE01_phi.asc",
+      "sha256": "361fd242813b6233209da32250f7c215dadbeb5913a22d8dd613eb1c03931d38"
+    },
+    {
+      "tx": 2,
+      "probe": 2,
+      "polarization": "theta",
+      "file": "TX2_PROBE02_theta.asc",
+      "sha256": "972300e26f70ae1d981e8dac32dfa6a5b04ae7effa07ba02fd973bf600aaeb7a"
+    },
+    {
+      "tx": 2,
+      "probe": 2,
+      "polarization": "phi",
+      "file": "TX2_PROBE02_phi.asc",
+      "sha256": "d7cb07f5488b5ea572cac7ddb1da3b956615cb1d1c559688744d4acfd5e904e5"
+    },
+    {
+      "tx": 2,
+      "probe": 3,
+      "polarization": "theta",
+      "file": "TX2_PROBE03_theta.asc",
+      "sha256": "a94afa8c99e797ff26d27e79ae7c1d7624b8578e9eae308e070c0ee739bb98bb"
+    },
+    {
+      "tx": 2,
+      "probe": 3,
+      "polarization": "phi",
+      "file": "TX2_PROBE03_phi.asc",
+      "sha256": "1a59c67fde801d129dc1e7fd14807af94cc88b6dd9cc179d8164376b09a93c58"
+    },
+    {
+      "tx": 2,
+      "probe": 4,
+      "polarization": "theta",
+      "file": "TX2_PROBE04_theta.asc",
+      "sha256": "befb9fcf30ad1f315d2cc7283d575918fa721ba9f779a198b53244a7ac41f049"
+    },
+    {
+      "tx": 2,
+      "probe": 4,
+      "polarization": "phi",
+      "file": "TX2_PROBE04_phi.asc",
+      "sha256": "37cb9c59b886c3406eb40585868c2676b5fcec5e615e19fd6b87cbe1c5dec431"
+    },
+    {
+      "tx": 2,
+      "probe": 5,
+      "polarization": "theta",
+      "file": "TX2_PROBE05_theta.asc",
+      "sha256": "7798eea2e3cebc2a90cae9b9496d3b972a6be6c556add178a5914ec9fa8b0a4b"
+    },
+    {
+      "tx": 2,
+      "probe": 5,
+      "polarization": "phi",
+      "file": "TX2_PROBE05_phi.asc",
+      "sha256": "be85edbc60822a1082227583f8bf34609d14d9677d583c010366fd25da61555a"
+    },
+    {
+      "tx": 2,
+      "probe": 6,
+      "polarization": "theta",
+      "file": "TX2_PROBE06_theta.asc",
+      "sha256": "5f2477a728402c36d785a65c6c3e1b7cbe6c3c6770975a518cce1ed676d20477"
+    },
+    {
+      "tx": 2,
+      "probe": 6,
+      "polarization": "phi",
+      "file": "TX2_PROBE06_phi.asc",
+      "sha256": "1ca39cdbe560edb09dcfd346dafa4f1e8d3a30c815725e6682099fbb47355b71"
+    },
+    {
+      "tx": 2,
+      "probe": 7,
+      "polarization": "theta",
+      "file": "TX2_PROBE07_theta.asc",
+      "sha256": "397699946f17e7f67c40bba151ca71df280ae5ee931acc2f376fd809a8fdf695"
+    },
+    {
+      "tx": 2,
+      "probe": 7,
+      "polarization": "phi",
+      "file": "TX2_PROBE07_phi.asc",
+      "sha256": "9df34f41a861e27e2343ec05b3cb1ed850c9f90349e84288abb1e6fd2371c0f2"
+    },
+    {
+      "tx": 2,
+      "probe": 8,
+      "polarization": "theta",
+      "file": "TX2_PROBE08_theta.asc",
+      "sha256": "5372c79963d67ab492ab84bd6a60a5c918a2ed92c31a500748312e40d791c29a"
+    },
+    {
+      "tx": 2,
+      "probe": 8,
+      "polarization": "phi",
+      "file": "TX2_PROBE08_phi.asc",
+      "sha256": "898503cbdfcc00a8f09d99930cd8a345892179ea07cbef581a3970033d50502e"
+    },
+    {
+      "tx": 2,
+      "probe": 9,
+      "polarization": "theta",
+      "file": "TX2_PROBE09_theta.asc",
+      "sha256": "9cbf4ce299f6e3e44cffc1a82aba281e7537772d59b5f44d010415f87002edf3"
+    },
+    {
+      "tx": 2,
+      "probe": 9,
+      "polarization": "phi",
+      "file": "TX2_PROBE09_phi.asc",
+      "sha256": "b50b1519e70df2574a79430c55994edb39a70a752af094c57377e2a507dce03c"
+    },
+    {
+      "tx": 2,
+      "probe": 10,
+      "polarization": "theta",
+      "file": "TX2_PROBE10_theta.asc",
+      "sha256": "09a8715d4c50d79f57abd6a8791cbb5b8b4a91e72e2451561760e1818511ed78"
+    },
+    {
+      "tx": 2,
+      "probe": 10,
+      "polarization": "phi",
+      "file": "TX2_PROBE10_phi.asc",
+      "sha256": "fef3533ba657ea42910b0369af4ebbf1b7ad2600ee627d0fff7c7260d79d8089"
+    },
+    {
+      "tx": 2,
+      "probe": 11,
+      "polarization": "theta",
+      "file": "TX2_PROBE11_theta.asc",
+      "sha256": "847c2a073fcd25b3e774a4131effb3b11415bc0e9e53b2ce4bc79fc1ca7fa8a8"
+    },
+    {
+      "tx": 2,
+      "probe": 11,
+      "polarization": "phi",
+      "file": "TX2_PROBE11_phi.asc",
+      "sha256": "a9595bfbba939a89f8accecba294871aca30906605dcffeb7ee75deea24a93a4"
+    },
+    {
+      "tx": 2,
+      "probe": 12,
+      "polarization": "theta",
+      "file": "TX2_PROBE12_theta.asc",
+      "sha256": "64db66547bbfac7d55cb97594ddc2c21e9791ce7a37be3ab81de1afe74616a5e"
+    },
+    {
+      "tx": 2,
+      "probe": 12,
+      "polarization": "phi",
+      "file": "TX2_PROBE12_phi.asc",
+      "sha256": "2a75bbaf62b192b452547f885042bcd8af743a0edd56d118c67e4ffde7bd98be"
+    },
+    {
+      "tx": 2,
+      "probe": 13,
+      "polarization": "theta",
+      "file": "TX2_PROBE13_theta.asc",
+      "sha256": "cc35a07187ecd959f1b342c190babf17ac4c8425a4169c6355e12bc8591c511b"
+    },
+    {
+      "tx": 2,
+      "probe": 13,
+      "polarization": "phi",
+      "file": "TX2_PROBE13_phi.asc",
+      "sha256": "af6b408f302c86233121416592cfbab81e4198547a24720c3e567c8739e97d34"
+    },
+    {
+      "tx": 2,
+      "probe": 14,
+      "polarization": "theta",
+      "file": "TX2_PROBE14_theta.asc",
+      "sha256": "2e674e8c2703b799273e860891f9691f40d3af9a087cd29f16ee764db7fd116a"
+    },
+    {
+      "tx": 2,
+      "probe": 14,
+      "polarization": "phi",
+      "file": "TX2_PROBE14_phi.asc",
+      "sha256": "ac41ab3af2e8d6b33d1307ddc7e7b61a43cbcfe112fd61662bfaa80422e9b506"
+    },
+    {
+      "tx": 2,
+      "probe": 15,
+      "polarization": "theta",
+      "file": "TX2_PROBE15_theta.asc",
+      "sha256": "9af6e67705104c50fdd60cb3a52ef75e87e6c07c344ffe8626086cd417ef2889"
+    },
+    {
+      "tx": 2,
+      "probe": 15,
+      "polarization": "phi",
+      "file": "TX2_PROBE15_phi.asc",
+      "sha256": "bb15f7fef72e6d823a9522c7b91ea24c832074ab906e8dc0104e61a1ecd18732"
+    },
+    {
+      "tx": 3,
+      "probe": 0,
+      "polarization": "theta",
+      "file": "TX3_PROBE00_theta.asc",
+      "sha256": "c87ead7bc563e056690698c935b3f2ab0e116a19ae81ce86b577973d5958e495"
+    },
+    {
+      "tx": 3,
+      "probe": 0,
+      "polarization": "phi",
+      "file": "TX3_PROBE00_phi.asc",
+      "sha256": "5b905e128f7b931ef47210bc43099e8bb3547486d6b1ff22bf86cc0b0c472f38"
+    },
+    {
+      "tx": 3,
+      "probe": 1,
+      "polarization": "theta",
+      "file": "TX3_PROBE01_theta.asc",
+      "sha256": "ca9b2c8940413f93a4e206dfae4456183c514b8e6fc6f37dafcaded6750d5f4d"
+    },
+    {
+      "tx": 3,
+      "probe": 1,
+      "polarization": "phi",
+      "file": "TX3_PROBE01_phi.asc",
+      "sha256": "12366f3588db8e4d2747aedda2876537e429537954a5a55ca21c30faa8c1ebd3"
+    },
+    {
+      "tx": 3,
+      "probe": 2,
+      "polarization": "theta",
+      "file": "TX3_PROBE02_theta.asc",
+      "sha256": "e6d84e120eb39095960e9be2bb02a8a49ba0271e3e7340edb59fb6008f17193a"
+    },
+    {
+      "tx": 3,
+      "probe": 2,
+      "polarization": "phi",
+      "file": "TX3_PROBE02_phi.asc",
+      "sha256": "f4e0696cfe0884eccfd386ccd41e91af08210f561d1ed3a47e0c645fb8044b33"
+    },
+    {
+      "tx": 3,
+      "probe": 3,
+      "polarization": "theta",
+      "file": "TX3_PROBE03_theta.asc",
+      "sha256": "3ce535c99c0ef080e80dee411b8332726f5743b9e85827673ed3d392fa276225"
+    },
+    {
+      "tx": 3,
+      "probe": 3,
+      "polarization": "phi",
+      "file": "TX3_PROBE03_phi.asc",
+      "sha256": "a9818bc56c3313d06ac71783ff96429ef483a88343de1a2edf4302af55f0b956"
+    },
+    {
+      "tx": 3,
+      "probe": 4,
+      "polarization": "theta",
+      "file": "TX3_PROBE04_theta.asc",
+      "sha256": "7a2cf851167d898f37f97c7ac303a6d8bb040b407d5e1e0a315ae8a0ebac03e8"
+    },
+    {
+      "tx": 3,
+      "probe": 4,
+      "polarization": "phi",
+      "file": "TX3_PROBE04_phi.asc",
+      "sha256": "5a17622581fefdaba9a96ca5464ad799ba138b1b520b7168b1d4f79350cc0e3c"
+    },
+    {
+      "tx": 3,
+      "probe": 5,
+      "polarization": "theta",
+      "file": "TX3_PROBE05_theta.asc",
+      "sha256": "e0c5dbe453a7a308be6597aa153f539b244c8b2da0bfd40b44ea95472acb4de0"
+    },
+    {
+      "tx": 3,
+      "probe": 5,
+      "polarization": "phi",
+      "file": "TX3_PROBE05_phi.asc",
+      "sha256": "f64c8803ab4d46242549065cb38887a6b3c5b832dfbc360d14785b9ec929ccd3"
+    },
+    {
+      "tx": 3,
+      "probe": 6,
+      "polarization": "theta",
+      "file": "TX3_PROBE06_theta.asc",
+      "sha256": "2ee38522e17dd4b28ccdcae2ae693dec8b1577b3f8142d197ecae30d5b1ab0d6"
+    },
+    {
+      "tx": 3,
+      "probe": 6,
+      "polarization": "phi",
+      "file": "TX3_PROBE06_phi.asc",
+      "sha256": "d82262d94aeaa9783632de1f1ed628692abd9ae2d9cf62591742f21e20644e90"
+    },
+    {
+      "tx": 3,
+      "probe": 7,
+      "polarization": "theta",
+      "file": "TX3_PROBE07_theta.asc",
+      "sha256": "e93898fc7530ecd498e2df9b28932571ff691a99e638e2b2c439e6ae3f86ec57"
+    },
+    {
+      "tx": 3,
+      "probe": 7,
+      "polarization": "phi",
+      "file": "TX3_PROBE07_phi.asc",
+      "sha256": "732158eeb5625b87d31342e7ad01b1a4dbcb8cd66494d69f676b47e2c1fddc3f"
+    },
+    {
+      "tx": 3,
+      "probe": 8,
+      "polarization": "theta",
+      "file": "TX3_PROBE08_theta.asc",
+      "sha256": "a8a0b35df086dc75b145b16ab8d0780b2c69c63c9ccf946ce8eab3ec5b290575"
+    },
+    {
+      "tx": 3,
+      "probe": 8,
+      "polarization": "phi",
+      "file": "TX3_PROBE08_phi.asc",
+      "sha256": "60eb99dbab699e11ff44ef91878e55a247a04e797f77614271e9757314f03b25"
+    },
+    {
+      "tx": 3,
+      "probe": 9,
+      "polarization": "theta",
+      "file": "TX3_PROBE09_theta.asc",
+      "sha256": "02fe5f6f7472cb6edfddecbc2f2aee867a1c66357ef4832ea85c555aef5b9089"
+    },
+    {
+      "tx": 3,
+      "probe": 9,
+      "polarization": "phi",
+      "file": "TX3_PROBE09_phi.asc",
+      "sha256": "f7b3bea2ef222f14a8dbc746b0dbce8293777d0bd3fba0a29f99688b53976ef6"
+    },
+    {
+      "tx": 3,
+      "probe": 10,
+      "polarization": "theta",
+      "file": "TX3_PROBE10_theta.asc",
+      "sha256": "c5b10d3b2b7c49a54ec0e20041cca36d7e243b822bc697f50f0e6e359852d121"
+    },
+    {
+      "tx": 3,
+      "probe": 10,
+      "polarization": "phi",
+      "file": "TX3_PROBE10_phi.asc",
+      "sha256": "b35016514fa45e865b59a6fbd01091ba79d69f5b803d8328c268ac5130d79e1b"
+    },
+    {
+      "tx": 3,
+      "probe": 11,
+      "polarization": "theta",
+      "file": "TX3_PROBE11_theta.asc",
+      "sha256": "feba5f212de517788ac6013891dec77d92b70b585995cf6edfb092bb7256dd11"
+    },
+    {
+      "tx": 3,
+      "probe": 11,
+      "polarization": "phi",
+      "file": "TX3_PROBE11_phi.asc",
+      "sha256": "949e7b650c7c5ee35af23325759b898c3ba0b0fc1daf0e7eaa7cbd5df6e66f6f"
+    },
+    {
+      "tx": 3,
+      "probe": 12,
+      "polarization": "theta",
+      "file": "TX3_PROBE12_theta.asc",
+      "sha256": "57af80f5cdc6ad3c84cd7ece8723490dcba414e82aae6426e872a90d6066c081"
+    },
+    {
+      "tx": 3,
+      "probe": 12,
+      "polarization": "phi",
+      "file": "TX3_PROBE12_phi.asc",
+      "sha256": "be1121f4af53f9f14bbf8c7a6dd5448f895d1af94e3757a0dbae65c6f473e196"
+    },
+    {
+      "tx": 3,
+      "probe": 13,
+      "polarization": "theta",
+      "file": "TX3_PROBE13_theta.asc",
+      "sha256": "d8815a287a88aae5127550759b9b9923bd8888a95a2a5b074f7317e6fb8db4f0"
+    },
+    {
+      "tx": 3,
+      "probe": 13,
+      "polarization": "phi",
+      "file": "TX3_PROBE13_phi.asc",
+      "sha256": "3cde01e37ed59c4994ed755171b1c3705f1eb453556aef9813b6c255154130d7"
+    },
+    {
+      "tx": 3,
+      "probe": 14,
+      "polarization": "theta",
+      "file": "TX3_PROBE14_theta.asc",
+      "sha256": "4b387ca3b9a77fab0cef2a460a2ab9dbc041f4c7cc2e63e9e0295c308ddb7af1"
+    },
+    {
+      "tx": 3,
+      "probe": 14,
+      "polarization": "phi",
+      "file": "TX3_PROBE14_phi.asc",
+      "sha256": "2808683b40b4c0c90838c19fe1f831c08a0c384732097a727837ce42cd67163d"
+    },
+    {
+      "tx": 3,
+      "probe": 15,
+      "polarization": "theta",
+      "file": "TX3_PROBE15_theta.asc",
+      "sha256": "66a7b4b7fd998e55b3f528052818ab21dacf69e112525ff266ad17842a960b80"
+    },
+    {
+      "tx": 3,
+      "probe": 15,
+      "polarization": "phi",
+      "file": "TX3_PROBE15_phi.asc",
+      "sha256": "8518f01dff1b9df7ec5c1b82b391e5e097d10664f95ba213af8b44c536cdfc79"
+    }
+  ],
+  "time_step_phase": {
+    "compared": 791531,
+    "excluded": 1301,
+    "max_deg": 1.2104313380800004e-08
+  },
+  "port_phase": {
+    "0-1": {
+      "compared": 197992,
+      "excluded": 248,
+      "max_deg": 1.2488337183266327e-08
+    },
+    "0-2": {
+      "compared": 197920,
+      "excluded": 320,
+      "max_deg": 1.164225767133843e-08
+    },
+    "0-3": {
+      "compared": 197892,
+      "excluded": 348,
+      "max_deg": 1.0418568294062122e-08
+    },
+    "1-2": {
+      "compared": 197909,
+      "excluded": 331,
+      "max_deg": 1.096794198865045e-08
+    },
+    "1-3": {
+      "compared": 197883,
+      "excluded": 357,
+      "max_deg": 6.689322251950837e-09
+    },
+    "2-3": {
+      "compared": 198005,
+      "excluded": 235,
+      "max_deg": 1.1506355171381743e-08
+    }
+  },
+  "phase_scope": "载频处各抽头相加，逐样点与生成模型对照；低于各通道峰值万分之一的幅度排除。未验证实景逐射线相位。"
+}

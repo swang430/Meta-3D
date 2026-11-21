@@ -1,0 +1,69 @@
+{
+  "archive": "RT聚簇样本_2_MPDB.zip",
+  "archive_sha256": "556896d0787d7a7fad7379850a7343600c7b01dcdfb2885aef5008cec18c91b4",
+  "archive_members": [
+    "mpdb_manifest.json",
+    "R0B0S0D.mpdb",
+    "R0B0S0U.mpdb"
+  ],
+  "conducted_reference": [
+    {
+      "file": "R0B0S0D_TX0_RX0_H.asc",
+      "sha256": "e3a319cad4914ad533f2ccc41fb09f315effa1abf11162c2c8ac6fc278cfb515",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    },
+    {
+      "file": "R0B0S0D_TX0_RX1_H.asc",
+      "sha256": "a178c3ffd548074764f4ca636e171e0d35d98493d784aee475462df68d94f4b9",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    },
+    {
+      "file": "R0B0S0D_TX1_RX0_H.asc",
+      "sha256": "84d092b1e35e4f212c4a22100f0f90a55a1b26a33d6bf581794068bfa32fc415",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    },
+    {
+      "file": "R0B0S0D_TX1_RX1_H.asc",
+      "sha256": "8dfb4175342324130b7350036b36a4887935c00957eb2b8bf6126b665bde0be9",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    },
+    {
+      "file": "R0B0S0D_TX2_RX0_H.asc",
+      "sha256": "db47f58fe50398bfbf503711ecb127c704ac0b6ded3d3393abe4bf6a519a2dc5",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    },
+    {
+      "file": "R0B0S0D_TX2_RX1_H.asc",
+      "sha256": "2a77a3d23c9f5e2444dc2a07073cf6e2700735cb9ea510ba215196f0d55d765b",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    },
+    {
+      "file": "R0B0S0D_TX3_RX0_H.asc",
+      "sha256": "790ba497a9f3ac4a0f1ac82cdf61928945f2622f72146495ef6917c2f077ce41",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    },
+    {
+      "file": "R0B0S0D_TX3_RX1_H.asc",
+      "sha256": "d9138912729abc78b7fe56b6e106110c608bec2f22d6dc81ccb6b26113da588e",
+      "rows": 6188,
+      "rate_hz": 171.18765176762867,
+      "last_sample_s": 36.141625497604686
+    }
+  ],
+  "source_timestamps_verified": false,
+  "hardware_verified": false
+}
