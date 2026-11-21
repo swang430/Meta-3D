@@ -7,6 +7,7 @@ import {
   Group,
   Paper,
   SegmentedControl,
+  Select,
   Stack,
   Text,
   TextInput,
@@ -22,6 +23,9 @@ const root = '/channel-assets/mpdb-projects'
 export function MpdbProjectPanel() {
   const [file, setFile] = useState<File | null>(null)
   const [source, setSource] = useState('')
+  const [members, setMembers] = useState<File | null>(null)
+  const [choose, setChoose] = useState(false)
+  const [method, setMethod] = useState<string | null>(null)
   const [mode, setMode] = useState<ProjectMode>('conducted')
   const [speed, setSpeed] = useState('5')
   const [rate, setRate] = useState('171.18765176762867')
@@ -43,6 +47,7 @@ export function MpdbProjectPanel() {
       if (!id) {
         const form = new FormData()
         form.append('file', file)
+        if (members) form.append('members', members)
         const { data } = await client.post(root + '/import', form)
         if (typeof data?.source_id !== 'string' || !data.source_id.trim())
           throw Error('服务器未返回来源编号。')
@@ -53,7 +58,7 @@ export function MpdbProjectPanel() {
       setBusy(stage)
       const { data } = await client.post(
         root + '/' + encodeURIComponent(id) + '/build',
-        parameters,
+        mode === 'conducted' && choose && method ? { ...parameters, clustering_method: method } : parameters,
         { timeout: 0 },
       )
       const result = readProject(data, mode, window.location.origin)
@@ -68,6 +73,8 @@ export function MpdbProjectPanel() {
         },
       }))
     } catch (cause) {
+      if (mode === 'conducted' && stage === '生成工程' && axios.isAxiosError(cause)
+          && cause.response?.status === 409) setChoose(true)
       if (
         stage === '生成工程' &&
         axios.isAxiosError(cause) &&
@@ -104,6 +111,9 @@ export function MpdbProjectPanel() {
             setFile(next)
             setProjects({})
             setSource('')
+            setMembers(null)
+            setChoose(false)
+            setMethod(null)
             setError('')
           }}
         />
@@ -120,11 +130,21 @@ export function MpdbProjectPanel() {
           ]}
         />
         {mode === 'conducted' ? (
+          <>
+          <FileInput label="配套成员表（可选 NPZ）" description="有同源成员表就直接汇总；留空时先匹配已收录的成员表。"
+            accept=".npz" clearable disabled={!!busy} value={members} onChange={(next) => {
+              setMembers(next); setSource(''); setChoose(false); setMethod(null); setError(''); setProjects({})
+            }} />
+          {choose && <Select label="未找到成员表：选择聚簇方式" placeholder="请选择，不会自动调用 HyperRT"
+            data={[{ value: 'delay_bins', label: '按每帧共享的时延区间分组（最多 24 组，不按角度分组）' },
+              { value: 'hyperrt', label: 'HyperRT 时延和角度联合聚簇（需要可用的授权和运行环境）' }]}
+            value={method} disabled={!!busy} onChange={setMethod} />}
           <Text size="sm">
             四个发射端口和两个接收端口共用每帧的簇划分。八路 ASC
             各自保留复系数，每行对应一个原始帧。文件头的 1 Hz
             仅用于按序查看。生成后自动核对各簇。
           </Text>
+          </>
         ) : (
           <>
             <Text size="sm">以下数值仅用于播放，可按需要修改。</Text>
@@ -155,7 +175,7 @@ export function MpdbProjectPanel() {
         <Group>
           <Button
             loading={!!busy}
-            disabled={!file || !parameters}
+            disabled={!file || !parameters || (mode === 'conducted' && choose && !method)}
             onClick={build}
           >
             生成信道工程

@@ -14,11 +14,13 @@ from HyperRT.MiRT.Utils import cluster_rays
 src, out = map(Path, sys.argv[1:])
 # 这个版本的 cluster_rays 接受弧度；较新的版本在内部将度转换为弧度。
 implementation = Path(inspect.getfile(cluster_rays))
-if (
-    hashlib.sha256(implementation.read_bytes()).hexdigest()
-    != "5125f0d41d220cc5531419572613e15488d030dda52132d8ca8b36ee13e7921c"
-):
-    raise ValueError("本复算脚本需要记录在案的弧度接口版本")
+angle_scale = {
+    "5125f0d41d220cc5531419572613e15488d030dda52132d8ca8b36ee13e7921c": math.pi / 180,
+    # Lauraycs-source MiRT/Utils.py: cluster_rays internally applies _deg2rad.
+    "76d5edc4b8fd80699e1fc0567514560881343c88cb34f147be219ad1cde6c416": 1,
+}.get(hashlib.sha256(implementation.read_bytes()).hexdigest())
+if angle_scale is None:
+    raise ValueError("当前 HyperRT 版本的聚簇角度单位尚未核对")
 
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -48,7 +50,7 @@ for frame in np.unique(fr):
             if t == 0 and r == 0:
                 torch.manual_seed(20261121)
                 labels = cluster_rays(
-                    24, *v[:2], *[a * (math.pi / 180) for a in v[2:]]
+                    24, *v[:2], *[a * angle_scale for a in v[2:]]
                 )["assignments"]
                 ref = geom
                 membership = labels

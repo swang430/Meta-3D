@@ -48,8 +48,13 @@ def generate_ota(archive, output, speed, rate):
 if __name__ == "__main__":
     archive, output = map(Path, sys.argv[1:3])
     if sys.argv[3] == "conducted":
-        from mpdb_conducted_project import build
+        from mpdb_conducted_project import ChooseClustering, build
 
-        build(archive, output)
+        try:
+            build(archive, output, sys.argv[6] if len(sys.argv) > 6 else None,
+                  Path(sys.argv[7]) if len(sys.argv) > 7 else None)
+        except ChooseClustering as exc:
+            print(exc, file=sys.stderr)
+            sys.exit(3)
     else:
         generate_ota(archive, output, *map(float, sys.argv[4:6]))

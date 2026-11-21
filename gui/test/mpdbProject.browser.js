@@ -32,6 +32,7 @@
   const select = (name) =>
     pane
       .locator('input[type=file]')
+      .first()
       .setInputFiles({
         name,
         mimeType: 'application/zip',

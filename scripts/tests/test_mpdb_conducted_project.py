@@ -10,7 +10,7 @@ import zipfile
 
 import numpy as np
 
-from scripts.mpdb_conducted_project import build, hyperrt_executable
+from scripts.mpdb_conducted_project import ChooseClustering, build, hyperrt_executable
 
 
 def sample(path, links, change=None):
@@ -49,6 +49,24 @@ def sample(path, links, change=None):
 
 
 class ConductedProjectTest(unittest.TestCase):
+    def test_members_take_precedence_and_missing_members_require_choice(self):
+        with tempfile.TemporaryDirectory() as tmp, patch(
+                "scripts.mpdb_conducted_project.hyperrt_executable",
+                side_effect=AssertionError("不应启动 HyperRT")):
+            root = Path(tmp)
+            source = root / "source"
+            sample(source, 8)
+            with self.assertRaises(ChooseClustering):
+                build(source, root / "out")
+            labels = {f"L{i}": np.array([0, 1]) for i in range(8)}
+            members = root / "members.npz"
+            np.savez(members, source_sha256="wrong", **labels)
+            with self.assertRaisesRegex(ValueError, "与本次输入不符"):
+                build(source, root / "out", "hyperrt", members)
+            np.savez(members, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), **labels)
+            self.assertEqual(build(source, root / "out", "hyperrt", members)["clustering_method"], "supplied_members")
+            self.assertEqual(build(source, root / "bins", "delay_bins")["clustering_method"], "delay_bins")
+
     def test_runtime_lookup_and_guidance(self):
         with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"PATH": tmp}, clear=True):
             with self.assertRaisesRegex(FileNotFoundError, "HYPERRT_PATH.*PATH"):
@@ -129,7 +147,7 @@ class ConductedProjectTest(unittest.TestCase):
             sample(archive, 8)
             with zipfile.ZipFile(archive, "a") as outer:
                 outer.write(source, "R0B0S0D.mpdb")
-            manifest = build(archive, root / "out")
+            manifest = build(archive, root / "out", "hyperrt")
             self.assertEqual(manifest["source"]["mpdb"], hashlib.sha256(source.read_bytes()).hexdigest())
             self.assertEqual(manifest["frames"], [10, 13])
             self.assertEqual(len(manifest["links"]), 8)
