@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { readBundle } from '../src/features/ChannelWorkbench/imtBundle.ts'
+import {
+  readBundle,
+  verifyAscFile,
+} from '../src/features/ChannelWorkbench/imtBundle.ts'
 
 test('离线包不能冒充真机验收', () => {
   assert.throws(
@@ -47,5 +50,26 @@ test('文件名能区分阵元，禁止互换接收端口', () => {
         'conducted',
       ),
     /端口/,
+  )
+})
+
+test('实际字节和声明行数分别核对；文件内容或清单单独改变都应拒绝', async () => {
+  const parsed = readBundle(conducted, 'conducted')
+  const text =
+    '***** Header *****\n6188 CIRs\n24 Taps/CIR\n2565000000 Carrier_Frequency\n171 CIR_Update_Rate\n***** Tap data *****\n'
+  const file = new Blob([text])
+  const { createHash } = await import('node:crypto')
+  const link = {
+    ...parsed.links[0],
+    sha256: createHash('sha256').update(text).digest('hex'),
+  }
+  await verifyAscFile(file, parsed, link)
+  await assert.rejects(
+    verifyAscFile(new Blob([text, 'x']), parsed, link),
+    /文件校验失败/,
+  )
+  await assert.rejects(
+    verifyAscFile(file, { ...parsed, frames: 1 }, link),
+    /文件头与清单不符/,
   )
 })

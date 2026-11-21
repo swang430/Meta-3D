@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Button, Group, Paper, Select, Stack, Text, Title } from '@mantine/core'
-import { readBundle, verifyHeader, type Mode } from './imtBundle'
+import { readBundle, verifyAscFile, type Mode } from './imtBundle'
 
 export function ImtBundlePanel() {
   const [mode, setMode] = useState<Mode>('conducted')
@@ -36,19 +36,7 @@ export function ImtBundlePanel() {
         if (id !== generation.current) return
         const f = byName.get(link.file)
         if (!f) throw Error('缺少 ' + link.file)
-        const buffer = await f.arrayBuffer()
-        verifyHeader(
-          new TextDecoder().decode(buffer.slice(0, 4096)),
-          parsed,
-          link.file,
-        )
-        const bytes = new Uint8Array(
-          await crypto.subtle.digest('SHA-256', buffer),
-        )
-        const hash = Array.from(bytes, (b) =>
-          b.toString(16).padStart(2, '0'),
-        ).join('')
-        if (hash !== link.sha256) throw Error('文件校验失败：' + link.file)
+        await verifyAscFile(f, parsed, link)
       }
       const report = byName.get('宽带对照.txt')
       const notes =

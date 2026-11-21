@@ -148,3 +148,21 @@ export function verifyHeader(
       throw Error('文件头与清单不符：' + file + ' · ' + key)
   }
 }
+
+export async function verifyAscFile(
+  f: Blob,
+  parsed: ReturnType<typeof readBundle>,
+  link: Link,
+) {
+  const buffer = await f.arrayBuffer()
+  verifyHeader(
+    new TextDecoder().decode(buffer.slice(0, 4096)),
+    parsed,
+    link.file,
+  )
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', buffer))
+  const hash = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join(
+    '',
+  )
+  if (hash !== link.sha256) throw Error('文件校验失败：' + link.file)
+}
