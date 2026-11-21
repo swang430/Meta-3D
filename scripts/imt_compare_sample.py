@@ -57,9 +57,13 @@ offset = np.linspace(-50e6, 50e6, 101)
 def asc_at(t, r, position):
     # 源帧可能落在两行之间。沿用样本分析的最近时延配对和局部复相位外推。
     data = asc[t, r]
-    i = math.ceil(position - 1e-9)
-    if not (0 <= position and i + 1 < len(data)):
+    if not 0 <= position <= len(data) - 1:
         raise ValueError(f"帧坐标越界: {position}")
+    if position == int(position):
+        row = data[int(position)]
+        return row[:, 0] * 1e-9, row[:, 1] + 1j * row[:, 2]
+    # 紧靠末尾时以最后两行内插；其余沿用样本分析的向前外推。
+    i = min(math.ceil(position - 1e-9), len(data) - 2)
     first, second = data[i : i + 2]
     pairs = np.abs(first[:, 0, None] - second[:, 0]).argmin(axis=1)
     after = second[pairs]
