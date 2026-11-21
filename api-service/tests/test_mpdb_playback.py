@@ -12,20 +12,20 @@ def test_playback_preserves_dwell_and_nonuniform_times():
     resolve = getattr(workbench, "resolve_playback", None)
     assert resolve is not None
     timing = dict(
-        frame_ids=[0, 1, 2], distances_m=[0, 6], source_times_s=None, time_source=None
+        frame_ids=[0, 1, 2], max_abs_doppler_hz=8, distances_m=[0, 6], source_times_s=None, time_source=None
     )
-    result = resolve(timing, None, [2, 3], 20)
+    result = resolve(timing, None, [2, 3], "standard")
     assert result["source_times_s"] == [0, 2, 5]
     assert result["segment_average_speeds_m_s"] == [0, 2]
-    assert result["rate_source"] == "operator_supplied"
+    assert result["rate_source"] == "source_doppler_and_frame_intervals"
     with pytest.raises(ValueError):
-        resolve(timing, 5, None, 20)
+        resolve(timing, 5, None, "standard")
     with pytest.raises(ValueError):
-        resolve(timing, None, None, 20)
+        resolve(timing, None, None, "standard")
     timing.update(source_times_s=[17, 19, 20], time_source="MPDB")
-    assert resolve(timing, None, None, 20)["source_times_s"] == [0, 2, 3]
+    assert resolve(timing, None, None, "standard")["source_times_s"] == [0, 2, 3]
     with pytest.raises(ValueError):
-        resolve(timing, None, [1, 1], 20)
+        resolve(timing, None, [1, 1], "standard")
 
 
 def test_exact_output_endpoint_survives_float_roundoff_without_extrapolation():

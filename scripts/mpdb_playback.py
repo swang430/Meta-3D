@@ -1,6 +1,8 @@
 """明确区分源帧时间、操作员给出的播放假设与输出采样率。"""
 
 import math
+import hashlib
+import json
 from itertools import accumulate
 
 import numpy as np
@@ -38,7 +40,7 @@ def inspect_timing(db, desc):
         column(db, desc, "LINK", key).ravel()
         for key in ("FRAME_ID", "TX_ANT", "RX_ANT")
     ]
-    frames = np.unique(ids)
+    frames, counts = np.unique(ids, return_counts=True)
     if ids.dtype.kind not in "iu" or not len(frames) or frames[0] < 0:
         raise ValueError("源帧编号无效")
     distances = [None] * (len(frames) - 1)
@@ -107,10 +109,11 @@ def inspect_timing(db, desc):
             declarations.insert(0, ("FRAME." + key, t[order].tolist()))
     declarations.sort(key=lambda item: item[0].endswith(".rtSampleIntervalSeconds"))
     source, axis = declarations[0] if declarations else (None, None)
-    if declarations and any(
+    frame_only = any(
         obj.get("rtFrameClock", {}).get("mode") == "frame-only"
         for obj in (meta, meta["lauraycsPlatform"])
-    ):
+    )
+    if declarations and frame_only:
         raise ValueError("文件同时声明只有帧编号和物理时间")
     for name, times in declarations:
         if (
@@ -123,7 +126,15 @@ def inspect_timing(db, desc):
             )
         ):
             raise ValueError("原始文件中的时间声明无效或相互矛盾")
+    try:
+        doppler = column(db, desc, "CHANNEL", "DOPPLER")
+        peak = float(np.max(np.abs(doppler.astype(float)))) if doppler.dtype.kind in "iuf" and np.isfinite(doppler).all() else None
+    except (KeyError, ValueError, TypeError, OSError):
+        peak = None  # 传导源帧不需要这个字段；动态生成时必须拒绝未知值。
     return dict(
+        max_abs_doppler_hz=peak,
+        frame_only=frame_only,
+        frame_row_counts=counts.tolist(),
         frame_ids=frames.tolist(),
         distances_m=distances,
         source_times_s=axis,
@@ -131,11 +142,68 @@ def inspect_timing(db, desc):
     )
 
 
-def resolve_playback(timing, speed, segments, rate):
+def match_plan(raw, platform, timing):
+    if timing.get("frame_only"):
+        raise ValueError("下行文件明确声明只有帧编号，与清单物理时钟冲突")
+    doc = json.loads(raw)
+    if (doc.get("protocol") != "lauraycs-compute-link-plan" or type(doc.get("protocolVersion")) is not int
+            or doc["protocolVersion"] != 1 or doc.get("kind") != "compute-link-plan"):
+        raise ValueError("不是支持的 Lauraycs 链路计算清单")
+    if platform.get("direction") != "downlink" or platform.get("name") != "R0B0S0D.mpdb":
+        raise ValueError("下行文件名或方向与平台记录不符")
+    plans = [p for p in doc["plans"] if p.get("dataFile") == "R0B0S0D.arrow"
+             or p.get("planIndex") == platform.get("linkIndex")
+             or p.get("metadata", {}).get("linkKey") == platform.get("linkKey")]
+    if len(plans) != 1:
+        raise ValueError("清单中无法唯一对应下行链路")
+    plan = plans[0]
+    meta = plan["metadata"]
+    if plan.get("dataFile") != "R0B0S0D.arrow" or type(plan.get("planIndex")) is not int or plan["planIndex"] != platform["linkIndex"]:
+        raise ValueError("下行路径或计划索引不匹配")
+    datasets = [d for d in doc.get("datasets", []) if d.get("datasetId") == "links"]
+    if len(datasets) != 1:
+        raise ValueError("清单没有唯一的链路分片目录")
+    shards = [s for s in datasets[0]["shards"] if s.get("planIndex") == plan["planIndex"]
+              or s.get("path", "").rsplit("/", 1)[-1] == plan["dataFile"]]
+    if len(shards) != 1:
+        raise ValueError("未找到唯一的下行链路分片")
+    shard = shards[0]
+    if (shard.get("path","").rsplit("/",1)[-1] != plan["dataFile"]
+            or type(shard.get("planIndex")) is not int or shard["planIndex"] != plan["planIndex"]
+            or type(plan.get("rowOffset")) is not int or plan["rowOffset"] < 0
+            or type(shard.get("rowOffset")) is not int or shard["rowOffset"] != plan["rowOffset"]
+            or type(plan.get("rowsPerFrame")) is not int or plan["rowsPerFrame"] <= 0
+            or any(n != plan["rowsPerFrame"] for n in timing["frame_row_counts"])
+            or type(shard.get("rowCount")) is not int
+            or shard["rowCount"] != len(timing["frame_ids"]) * plan["rowsPerFrame"]):
+        raise ValueError("下行分片的路径、计划索引或帧行数不匹配")
+    for key in ("routeIndex","linkIndex","baseStationIndex","sectorIndex","transmitterIndex"):
+        if type(meta.get(key)) is not int or type(platform.get(key)) is not int or meta[key] != platform[key]:
+            raise ValueError("链路索引不匹配：" + key)
+    for key, value in (("direction","downlink"),("linkKey",platform.get("linkKey")),
+                       ("txNodeId",platform["transmitter"].get("nodeId")),
+                       ("rxNodeId",platform["receiver"].get("nodeId"))):
+        if not isinstance(value,str) or not value or meta.get(key) != value:
+            raise ValueError("链路方向或收发节点不匹配：" + key)
+    frames = timing["frame_ids"]
+    times = meta.get("rtSampleTimesSeconds")
+    clock = meta.get("rtFrameClock", {})
+    if (clock.get("mode") != "physical" or type(clock.get("version")) is not int or clock["version"] != 1
+            or any(type(x) is not int or x != len(frames) for x in (doc.get("frameCount"),plan.get("frameCount")))
+            or frames != list(range(len(frames))) or not isinstance(times,list) or len(times) != len(frames)
+            or not all(map(finite,times)) or any(b <= a for a,b in zip(times,times[1:]))):
+        raise ValueError("清单的物理时钟、帧号或逐帧时间不匹配")
+    if timing["source_times_s"] is not None and timing["source_times_s"] != times:
+        raise ValueError("清单时间与下行文件内时间冲突")
+    return {**timing,"source_times_s":times,"time_source":"compute-link-plan.manifest.json:rtSampleTimesSeconds",
+            "plan_sha256":hashlib.sha256(raw).hexdigest()}
+
+
+def resolve_playback(timing, speed, segments, quality):
     distances = timing["distances_m"]
     axis = timing["source_times_s"]
-    if not finite(rate) or rate <= 0 or not distances:
-        raise ValueError("动态播放需要至少两个源帧，并明确指定正的输出更新率")
+    if quality not in ("standard","dense") or not distances:
+        raise ValueError("动态播放需要至少两个源帧和有效的更新率档位")
     if axis is not None:
         if speed is not None or segments is not None:
             raise ValueError("文件已提供帧时间，不能另行覆盖")
@@ -164,13 +232,24 @@ def resolve_playback(timing, speed, segments, rate):
             if speed is not None
             else "operator_segment_durations"
         )
-    output_grid(times[-1], rate)
-    if any(b <= a for a, b in zip(times, times[1:])):
+    if not all(map(finite,times)) or any(b <= a for a, b in zip(times, times[1:])):
         raise ValueError("帧时间必须严格递增")
+    peak = timing.get("max_abs_doppler_hz")
+    if not finite(peak) or peak < 0:
+        raise ValueError("无法确认原始射线的最大多普勒频移，请检查源文件后重新导入")
+    shortest = min(b-a for a,b in zip(times,times[1:]))
+    bound = max(2*peak, 2/shortest)
+    if not math.isfinite(bound):
+        raise ValueError("所需更新率超出计算范围")
+    standard = math.floor(bound)+1
+    rate = standard * (2 if quality == "dense" else 1)
+    output_grid(times[-1], rate)
     return dict(
         source_times_s=times,
         time_source=source,
-        rate_source="operator_supplied",
+        rate_source="source_doppler_and_frame_intervals",
+        rate_quality=quality, max_abs_doppler_hz=peak, shortest_interval_s=shortest,
+        standard_rate_hz=standard, plan_sha256=timing.get("plan_sha256"),
         rate_hz=rate,
         speed_m_s=speed,
         frame_ids=timing["frame_ids"],

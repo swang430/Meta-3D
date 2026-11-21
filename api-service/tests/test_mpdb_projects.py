@@ -113,7 +113,7 @@ def test_same_import_can_build_twice_and_download_independent_archives(
             "mpdb.json",
             json.dumps(
                 {
-                    "records": {"LINK":cols},
+                    "records": {"LINK":cols, "CHANNEL":{"DOPPLER":cols["FRAME_ID"]}},
                     "meta": {
                         "lauraycsPlatform": {
                             "direction": "downlink",
@@ -173,8 +173,8 @@ def test_same_import_can_build_twice_and_download_independent_archives(
     build_url = f"{url}/{source['source_id']}/build"
     assert client.post(build_url,json={"mode":"ota"}).status_code == 422
     assert client.post(build_url,json={"mode":"ota","rate_hz":100}).status_code == 422
-    assert client.post(build_url,json={"mode":"ota","speed_m_s":5}).status_code == 422
-    explicit = {"speed_m_s":5,"rate_hz":100}
+    assert client.post(build_url,json={"mode":"ota","speed_m_s":5,"rate_hz":100}).status_code == 422
+    explicit = {"speed_m_s":5,"rate_quality":"dense"}
     for mode, count in [("conducted", 8), ("ota", 128)]:
         response = client.post(
             build_url, json={"mode": mode, **(explicit if mode == "ota" else {})}

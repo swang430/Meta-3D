@@ -45,6 +45,8 @@ def offline_modules():
 
 
 class SourceTiming(BaseModel):
+    max_abs_doppler_hz: float | None = None
+    plan_sha256: str | None = None
     frame_ids: list[int]
     distances_m: list[float | None]
     source_times_s: list[float] | None
@@ -66,10 +68,11 @@ class BuiltProject(BaseModel):
 
 
 class BuildParameters(BaseModel):
+    model_config = {"extra": "forbid"}
     mode: Literal["conducted", "ota"]
     clustering_method: Literal["delay_bins", "hyperrt"] | None = None
     speed_m_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
-    rate_hz: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    rate_quality: Literal["standard", "dense"] = "standard"
     segment_durations_s: list[float] | None = None
 
 
@@ -80,7 +83,8 @@ def storage():
 
 
 @router.post("/import", response_model=ImportedSource)
-def import_source(file: UploadFile = File(...), members: UploadFile | None = File(None)):
+def import_source(file: UploadFile = File(...), members: UploadFile | None = File(None),
+                  plan_manifest: UploadFile | None = File(None)):
     playback, conducted = offline_modules()
     base = storage()
     for old in base.iterdir():
@@ -123,6 +127,11 @@ def import_source(file: UploadFile = File(...), members: UploadFile | None = Fil
                         "当前支持采用全局角度坐标、单一载频的信道冲激响应数据"
                     )
                 timing = playback.inspect_timing(db, desc)
+                if plan_manifest is not None:
+                    plan_raw = plan_manifest.file.read(8 * 1024**2 + 1)
+                    if len(plan_raw) > 8 * 1024**2:
+                        raise ValueError("链路计算清单超过 8 MiB")
+                    timing = playback.match_plan(plan_raw, platform, timing)
                 if members is not None:
                     link_ids = conducted.column(db, desc, "LINK", "LINK_ID").ravel()
         (folder / "timing.json").write_text(json.dumps(timing, allow_nan=False))
@@ -257,7 +266,7 @@ def build_project(source_id: UUID, params: BuildParameters):
                 raise HTTPException(409, "此导入记录没有时间检查结果，请重新导入")
             try:
                 playback = clocks.resolve_playback(json.loads(timing_path.read_text()), params.speed_m_s,
-                                            params.segment_durations_s, params.rate_hz)
+                                            params.segment_durations_s, params.rate_quality)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc
             playback_path = stage / "playback.json"

@@ -114,6 +114,7 @@ export function readBundle(input: unknown, mode: Mode) {
     )
     const timeSource = m.time_source === 'operator_segment_durations' ? '操作员提供的逐段时长'
       : m.time_source === 'operator_constant_speed' ? '按操作员假定的恒速和区段位移计算'
+      : m.time_source === 'compute-link-plan.manifest.json:rtSampleTimesSeconds' ? '已核对链路计算清单中的逐帧物理时间'
       : typeof m.time_source === 'string' ? m.time_source : '未记录'
     phaseSummary =
       '播放时间来源：'+timeSource+'。载频处与生成模型对照，逐样点相位增量最大误差 ' +
@@ -162,7 +163,7 @@ export function readBundle(input: unknown, mode: Mode) {
     referenceRx: Number.isSafeInteger(m.reference_rx)
       ? String(m.reference_rx)
       : '未记录',
-    rateSource: m.rate_source === 'operator_supplied' ? '操作人员指定'
+    rateSource: m.rate_source === 'source_doppler_and_frame_intervals' ? '系统按原始射线最大频移和最短帧间隔计算' : m.rate_source === 'operator_supplied' ? '操作人员指定'
       : m.rate_source === 'source_frame_viewer_placeholder' ? '仅用于按序查看源帧，不代表原始帧率'
       : dynamic ? '动态文件头已记录数值，选择依据未记录' : '未记录',
   }

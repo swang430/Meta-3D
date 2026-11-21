@@ -3595,6 +3595,8 @@ export interface components {
             file: string;
             /** Members */
             members?: string | null;
+            /** Plan Manifest */
+            plan_manifest?: string | null;
         };
         /** BuildParameters */
         BuildParameters: {
@@ -3607,8 +3609,12 @@ export interface components {
             clustering_method?: ("delay_bins" | "hyperrt") | null;
             /** Speed M S */
             speed_m_s?: number | null;
-            /** Rate Hz */
-            rate_hz?: number | null;
+            /**
+             * Rate Quality
+             * @default standard
+             * @enum {string}
+             */
+            rate_quality: "standard" | "dense";
             /** Segment Durations S */
             segment_durations_s?: number[] | null;
         };
@@ -3649,6 +3655,10 @@ export interface components {
         };
         /** SourceTiming */
         SourceTiming: {
+            /** Max Abs Doppler Hz */
+            max_abs_doppler_hz?: number | null;
+            /** Plan Sha256 */
+            plan_sha256?: string | null;
             /** Frame Ids */
             frame_ids: number[];
             /** Distances M */

@@ -18,15 +18,15 @@ export function projectParameters(
 ) {
   if (mode === 'conducted') return { mode }
   const positive = (value: number) => Number.isFinite(value) && value > 0
-  const rate_hz = Number(rate)
-  if (!positive(rate_hz)) return null
-  if (timing === 'original') return {mode, rate_hz}
+  if (rate !== "standard" && rate !== "dense") return null
+  const rate_quality = rate
+  if (timing === 'original') return {mode, rate_quality}
   if (timing === 'segments') {
     const values = durations(segmentText)
     return count > 0 && values.length === count && values.every(positive)
-      ? {mode, rate_hz, segment_durations_s:values} : null
+      ? {mode, rate_quality, segment_durations_s:values} : null
   }
-  return timing === 'constant' && positive(Number(speed)) ? {mode, rate_hz, speed_m_s:Number(speed)} : null
+  return timing === 'constant' && positive(Number(speed)) ? {mode, rate_quality, speed_m_s:Number(speed)} : null
 }
 
 export function readProject(
