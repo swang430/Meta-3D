@@ -161,7 +161,7 @@ export function MpdbProjectPanel() {
           </>
         ) : (
           <>
-            <Text size="sm">{!timing ? '请先选择文件，检查是否记录了帧时间。' : timing.plan_sha256 ? '已核对清单中的下行收发节点、路径和全部源帧，使用清单记录的原始时间，无需填写车速。' : timing.time_source ? '原始文件时间来源：'+timing.time_source : '原始文件未记录可确认的帧时间，帧编号不代表秒。请明确选择播放假设。'}</Text>
+            <Text size="sm">{!timing ? '请先选择文件，检查是否记录了帧时间。' : timing.plan_sha256 ? '已核对清单中的下行收发节点、路径和全部源帧，使用清单记录的原始时间，无需填写车速。这些信息不能验证原始文件未记录的运行编号。' : timing.time_source ? '原始文件时间来源：'+timing.time_source : '原始文件未记录可确认的帧时间，帧编号不代表秒。请明确选择播放假设。'}</Text>
             {timing && !timing.source_times_s && <Select label="播放时间的依据" value={choice || null} disabled={!!busy}
               placeholder="请选择" onChange={(v)=>{setChoice((v || '') as TimingMode);setProjects({})}}
               data={[{value:'constant',label:'假定恒速，由各段位移推算时长'},{value:'segments',label:'逐段输入时长，支持变速或停车'}]}/>}

@@ -19,9 +19,9 @@ def test_pair_and_rate_follow_physical_axis_not_speed():
                 rtSampleTimesSeconds=[7,7.25,9])
     plan = dict(planIndex=0, dataFile="R0B0S0D.arrow", frameCount=3, metadata=meta,
                 rowOffset=0, rowsPerFrame=8)
-    shard = dict(planIndex=0,path="s3://project/runs/source/R0B0S0D.arrow",rowCount=24,rowOffset=0)
+    shard = dict(planIndex=0,sequence=0,path="s3://project/runs/source/R0B0S0D.arrow",rowCount=24,rowOffset=0)
     doc = dict(protocol="lauraycs-compute-link-plan",protocolVersion=1,kind="compute-link-plan",
-               frameCount=3,plans=[plan],datasets=[dict(datasetId="links", shards=[shard])])
+               frameCount=3,plans=[plan],datasets=[dict(datasetId="links",rowCount=24, shards=[shard])])
     timing = dict(source_times_s=None, frame_ids=[0,1,2], distances_m=[None,None],
                   max_abs_doppler_hz=0, time_source=None, frame_row_counts=[8,8,8])
     raw = json.dumps(doc).encode()
@@ -34,13 +34,17 @@ def test_pair_and_rate_follow_physical_axis_not_speed():
     assert clocks.resolve_playback(matched,None,None,"dense")["rate_hz"] == 2*standard["rate_hz"]
     assert clocks.resolve_playback({**matched,"max_abs_doppler_hz":27},None,None,"standard")["rate_hz"] > 54
     for changes in (dict(frame_ids=[0,1,4]),dict(source_times_s=[0,1,2]),
-                    dict(frame_only=True),dict(frame_row_counts=[8,7,9])):
+                    dict(frame_only=True),dict(frame_row_counts=[8,7,9]),dict(embedded_axis_lengths=[4])):
         with pytest.raises(ValueError):
             clocks.match_plan(raw,platform,{**timing,**changes})
     for change in (dict(txNodeId="rx"),dict(routeIndex=1),dict(rtFrameClock={"version":1,"mode":"frame-only"}),
-                   dict(rtSampleTimesSeconds=[7,8,8])):
+                   dict(rtSampleTimesSeconds=[7,8,8]),dict(rtSampleTimesSeconds=[7,8,10**400])):
         with pytest.raises(ValueError):
             clocks.match_plan(json.dumps({**doc,"plans":[{**plan,"metadata":{**meta,**change}}]}).encode(),platform,timing)
-    for change in (dict(planIndex=1),dict(path="s3://project/R0B0S0U.arrow"),dict(rowCount=23)):
+    for change in (dict(path="unrelated-run/R0B0S0D.arrow"),dict(path="https://bucket/R0B0S0D.arrow"),
+                   dict(path="s3:///R0B0S0D.arrow"),dict(sequence=1),
+                   dict(planIndex=1),dict(path="s3://project/R0B0S0U.arrow"),dict(rowCount=23)):
         with pytest.raises(ValueError):
-            clocks.match_plan(json.dumps({**doc,"datasets":[dict(datasetId="links",shards=[{**shard,**change}])]}).encode(),platform,timing)
+            clocks.match_plan(json.dumps({**doc,"datasets":[dict(datasetId="links",rowCount=24,shards=[{**shard,**change}])]}).encode(),platform,timing)
+    shard["path"] = "R0B0S0D.arrow"
+    assert clocks.match_plan(json.dumps(doc).encode(),platform,timing)["source_times_s"] == [7,7.25,9]

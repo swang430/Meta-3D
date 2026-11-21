@@ -4,6 +4,7 @@ import math
 import hashlib
 import json
 from itertools import accumulate
+from urllib.parse import urlsplit
 
 import numpy as np
 
@@ -14,7 +15,10 @@ else:
 
 
 def finite(value):
-    return type(value) in (int, float) and math.isfinite(value)
+    try:
+        return type(value) in (int, float) and math.isfinite(value)
+    except OverflowError:
+        return False
 
 
 def output_grid(end, rate):
@@ -56,6 +60,7 @@ def inspect_timing(db, desc):
     # LauraycsUtils/rt_timing.py: rtSampleTimesSeconds 以原始 FRAME_ID 索引；
     # 并非所有 MPDB 写端都透传这些字段。只读有明确秒单位的声明。
     declarations = []
+    axis_lengths = []
     meta = desc["meta"]
     for label, obj in (
         ("meta", meta),
@@ -84,6 +89,7 @@ def inspect_timing(db, desc):
             declarations.append(
                 (label + ".rtSampleTimesSeconds", [axis[f] for f in frames])
             )
+            axis_lengths.append(len(axis))
         if "rtSampleIntervalSeconds" in obj:
             dt = obj["rtSampleIntervalSeconds"]
             if not finite(dt) or dt <= 0:
@@ -134,6 +140,7 @@ def inspect_timing(db, desc):
     return dict(
         max_abs_doppler_hz=peak,
         frame_only=frame_only,
+        embedded_axis_lengths=axis_lengths,
         frame_row_counts=counts.tolist(),
         frame_ids=frames.tolist(),
         distances_m=distances,
@@ -163,20 +170,34 @@ def match_plan(raw, platform, timing):
     datasets = [d for d in doc.get("datasets", []) if d.get("datasetId") == "links"]
     if len(datasets) != 1:
         raise ValueError("清单没有唯一的链路分片目录")
-    shards = [s for s in datasets[0]["shards"] if s.get("planIndex") == plan["planIndex"]
-              or s.get("path", "").rsplit("/", 1)[-1] == plan["dataFile"]]
-    if len(shards) != 1:
-        raise ValueError("未找到唯一的下行链路分片")
-    shard = shards[0]
-    if (shard.get("path","").rsplit("/",1)[-1] != plan["dataFile"]
-            or type(shard.get("planIndex")) is not int or shard["planIndex"] != plan["planIndex"]
-            or type(plan.get("rowOffset")) is not int or plan["rowOffset"] < 0
-            or type(shard.get("rowOffset")) is not int or shard["rowOffset"] != plan["rowOffset"]
-            or type(plan.get("rowsPerFrame")) is not int or plan["rowsPerFrame"] <= 0
-            or any(n != plan["rowsPerFrame"] for n in timing["frame_row_counts"])
-            or type(shard.get("rowCount")) is not int
-            or shard["rowCount"] != len(timing["frame_ids"]) * plan["rowsPerFrame"]):
-        raise ValueError("下行分片的路径、计划索引或帧行数不匹配")
+    shards = datasets[0]["shards"]
+    if not isinstance(shards, list) or len(shards) != len(doc["plans"]):
+        raise ValueError("链路计划和分片未逐项对应")
+    offset = 0
+    # LauraycsUtils/compute_link_plan_protocol.py 的 plan Arrow file identity：
+    # 仅核对清单自身声明，不下载对象，也不据路径推断 MPDB 的运行编号。
+    for index, (entry, shard) in enumerate(zip(doc["plans"], shards)):
+        path, name = shard.get("path"), entry.get("dataFile")
+        if not isinstance(path,str) or not isinstance(name,str) or not name:
+            raise ValueError("缺少计划的分片路径")
+        uri = urlsplit(path)
+        same_file = path == name or (
+            "/" not in name and "\\" not in name and uri.scheme == "s3" and uri.netloc
+            and uri.path.rsplit("/",1)[-1] == name
+        )
+        per_frame = entry.get("rowsPerFrame")
+        count = entry.get("frameCount")
+        if (not same_file or type(per_frame) is not int or per_frame < 1
+                or type(count) is not int or count != len(timing["frame_ids"])
+                or any(type(value) is not int or value != expected for value, expected in (
+                    (entry.get("planIndex"),index), (shard.get("planIndex"),index),
+                    (shard.get("sequence"),index), (shard.get("rowOffset"),offset),
+                    (entry.get("rowOffset"),offset), (shard.get("rowCount"),count*per_frame)))):
+            raise ValueError("链路分片的路径、顺序、计划索引或帧行数不匹配")
+        offset += count*per_frame
+    if (type(datasets[0].get("rowCount")) is not int or datasets[0]["rowCount"] != offset
+            or any(n != plan["rowsPerFrame"] for n in timing["frame_row_counts"])):
+        raise ValueError("链路分片行数与计划或实际帧不匹配")
     for key in ("routeIndex","linkIndex","baseStationIndex","sectorIndex","transmitterIndex"):
         if type(meta.get(key)) is not int or type(platform.get(key)) is not int or meta[key] != platform[key]:
             raise ValueError("链路索引不匹配：" + key)
@@ -186,6 +207,8 @@ def match_plan(raw, platform, timing):
         if not isinstance(value,str) or not value or meta.get(key) != value:
             raise ValueError("链路方向或收发节点不匹配：" + key)
     frames = timing["frame_ids"]
+    if any(n != len(frames) for n in timing.get("embedded_axis_lengths", [])):
+        raise ValueError("下行文件内时间轴的长度与清单完整帧范围不一致")
     times = meta.get("rtSampleTimesSeconds")
     clock = meta.get("rtFrameClock", {})
     if (clock.get("mode") != "physical" or type(clock.get("version")) is not int or clock["version"] != 1
