@@ -84,11 +84,13 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
   // rt_dynamic: snapshots[].rays (多快照, 每快照一组原始射线)
   const [raySnapshots, setRaySnapshots] = useState<RtSnapshot[]>([])
   const [formError, setFormError] = useState<string | null>(null)
+  const [rtScene, setRtScene] = useState(false)
 
   // 打开时按 asset 回填 (或清空新建)
   useEffect(() => {
     if (!opened) return
     setFormError(null)
+    setRtScene(asset?.payload?.rt_scene === true)
     if (asset) {
       setSourceType(asset.source_type)
       setName(asset.name)
@@ -167,7 +169,7 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
       const bandwidth = numOrNull(scd.bandwidth_mhz)
       const version = numOrNull(scd.version)
       if (channelNumber == null || bandwidth == null || version == null) return null
-      return { scd_config: buildVendorSCDConfig({
+      return { ...(rtScene && /\.smu$/i.test(filePath.trim()) ? { rt_scene: true } : {}), scd_config: buildVendorSCDConfig({
         radioTechnology: scd.radioTechnology,
         band: scd.band, channelNumber, bandwidthMhz: bandwidth,
         model: scd.model, scenario: scd.scenario, mimo: scd.mimo,
@@ -305,6 +307,9 @@ export function ChannelAssetForm({ opened, asset, onClose }: Props) {
         {sourceType === 'vendor_file' && (
           <>
             <Divider label="SCD 配置 (scd_config)" labelPosition="left" />
+            <Checkbox label="列为 RT 场景" description="仅对关联的 .smu 工程生效；引用本条记录，不另建资产，也不改变执行资格。"
+              checked={rtScene} disabled={!/\.smu$/i.test(filePath.trim())}
+              onChange={(e) => setRtScene(e.currentTarget.checked)} />
             <SimpleGrid cols={2}>
               <Select label="无线制式" data={[{ value: 'nr5g', label: '5G NR' }, { value: 'lte', label: 'LTE' }]}
                 value={scd.radioTechnology} allowDeselect={false}
