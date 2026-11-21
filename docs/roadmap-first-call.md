@@ -99,6 +99,8 @@ S5a/b/c是原P2-16 S5的子项，不另建重复父功能；开工仍需设计�
 - **S5b-R4 缺失值来源风险**：核MPDB缺DOPPLER时的写入、读取与导出全部入口。已见采集器缺channel.doppler时写零，以及ASC按时延变化估计的分支；须核实际可达条件，区分真实零、缺失和估计。不能仅凭存在兜底就宣布所有输出错误，也不能以零代未知。
 - **S5c-I1 精度改进评估**：Lauraycs聚簇相干合并复系数，ChannelEgine统计路累加功率且另有确定性相位路；按用途比较时延/角度分布、多普勒谱、复频响、相位和跨帧误差。相干相消不是天然bug；真实MPDB的密时间采样结果只作相对保真参考，不能证明RT绝对准确。误差容限须在评估前按用途确定，不补虚构阈值。
 
+本批已完成[八路传导三方多普勒谱离线对照](evidence/imt-three/README.md)，覆盖 38 帧、三个频点，采用共同分簇和逐端口代表多普勒。现场传播谱仍待独立验证。
+
 **源码定位（本轮本机版本，非最新远程或部署证明）**：Lauraycs 805feea0的web/src/utils/asc-timing.ts、web/src/assembly/asc.ts、webService/app/services/channel_analysis/asc_export.py、HyperRT/PyHyperRT/HyperRT/MiRT/MiRT.py；ChannelEgine 9190f92的mimo_ota_simulator/geometric_native_fit.py、spatiotemporal_tracking.py、phase_continuous.py、exporters.py；Meta-3D api-service/app/services/mimo_ota/channel_asset_resolver.py与channel-engine-service/app/api/endpoints/b2_cluster.py、hardware_pipeline.py。职责是Lauraycs供传播数据，ChannelEgine做信道合成/设备适配，Meta-3D管理配置校准及执行；不宣称等价替代厂商GCM工具。
 
 ### 2026-11-10 CTIA验证结果与工具能力核查
