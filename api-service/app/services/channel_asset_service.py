@@ -682,8 +682,23 @@ def _locked_vendor_asset(db: Session, asset: ChannelAsset) -> ChannelAsset:
 
 
 def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
+    caller_sent_payload = "payload" in fields
     asset = get_channel_asset(db, asset_id)
     asset = _locked_vendor_asset(db, asset)
+    if "rt_scene" in fields:
+        if (set(fields) != {"rt_scene"} or type(fields["rt_scene"]) is not bool
+                or asset.source_type != "vendor_file"
+                or not (asset.associated_file_path or "").lower().endswith(".smu")):
+            raise ChannelAssetError("RT 场景分类只适用于已关联 .smu 的厂商文件，且须单独提交")
+        payload = dict(asset.payload)
+        if fields["rt_scene"]:
+            payload["rt_scene"] = True
+        else:
+            payload.pop("rt_scene", None)
+        asset.payload = payload
+        db.commit()
+        db.refresh(asset)
+        return asset
     if asset.source_type == "vendor_file" and (
         "instrument_connection_id" in fields or "instrument_model_id" in fields
     ):
@@ -720,6 +735,11 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
             pass
         elif isinstance(incoming_payload, dict):
             incoming_payload = deepcopy(incoming_payload)
+            # 普通编辑不改变场景分类；换文件时须重新确认来源。
+            incoming_payload.pop("rt_scene", None)
+            if (existing_payload.get("rt_scene") is True and
+                    fields.get("associated_file_path", asset.associated_file_path) == asset.associated_file_path):
+                incoming_payload["rt_scene"] = True
             supplied_truth = incoming_payload.get(_SMU_PROJECT_TRUTH_KEY)
             if (_SMU_PROJECT_TRUTH_KEY in incoming_payload
                     and supplied_truth != existing_truth):
@@ -756,7 +776,10 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
                 incoming_payload[_SMU_PROJECT_TRUTH_KEY] = deepcopy(existing_truth)
             else:
                 incoming_payload.pop(_SMU_PROJECT_TRUTH_KEY, None)
-            if "payload" in fields or (existing_truth is not None and not truth_inputs_unchanged):
+            clear_scene = existing_payload.get("rt_scene") is True and fields.get("associated_file_path", asset.associated_file_path) != asset.associated_file_path
+            if clear_scene:
+                incoming_payload.pop("rt_scene", None)
+            if "payload" in fields or clear_scene or (existing_truth is not None and not truth_inputs_unchanged):
                 fields["payload"] = incoming_payload
     # payload 改了 → 用现有 source_type 重新 dispatch 校验 (source_type 不可改, 形态稳定)
     if "payload" in fields:
@@ -785,7 +808,7 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
         # 只改一边也要撞另一边的现值, 不然"只 PATCH 顶层频率"绕过校验)
         _check_vendor_declared_freq(
             _scd, _vsf["center_frequency_hz"], _vsf["bandwidth_mhz"])
-        if "payload" in fields and "canonical_name" not in fields:
+        if caller_sent_payload and "canonical_name" not in fields:
             new_canon = _scd_to_standard_name(_scd)
             if new_canon != asset.canonical_name and db.query(ChannelAsset).filter(
                     ChannelAsset.canonical_name == new_canon,

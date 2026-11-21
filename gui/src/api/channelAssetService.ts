@@ -158,6 +158,7 @@ export type ChannelAssetUpdatePayload = Partial<
   Omit<ChannelAssetCreatePayload, 'source_type' | 'created_by'>
 > & {
   is_active?: boolean
+  rt_scene?: boolean
 }
 
 export async function fetchChannelAssets(

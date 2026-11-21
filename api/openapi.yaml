@@ -2564,6 +2564,7 @@ components:
     ChannelAssetUpdate:
       type: object
       properties:
+        rt_scene: { type: boolean, description: "只改变关联 SMU 的 RT 场景分类，须单独提交。" }
         name: { type: string, nullable: true }
         payload: { type: object, additionalProperties: true, nullable: true }
         description: { type: string, nullable: true }

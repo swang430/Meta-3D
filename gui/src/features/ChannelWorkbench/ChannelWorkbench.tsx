@@ -22,6 +22,7 @@ import {
   deleteChannelAsset,
   confirmChannelAssetOwnership,
   fetchChannelAssets,
+  updateChannelAsset,
   scanSMUProjects,
   syncSMUProjects,
   type ChannelAsset,
@@ -32,6 +33,7 @@ import { MpdbProjectPanel } from './MpdbProjectPanel'
 import { ImtBundlePanel } from './ImtBundlePanel'
 import { ClusterVerificationPanel } from './ClusterVerificationPanel'
 import { ClusterResponsePanel } from './ClusterResponsePanel'
+import { isRtScene } from './rtScenes'
 import { ChannelAssetForm } from './ChannelAssetForm'
 import { fetchInstrumentCatalog } from '../../api/service'
 import { savedChannelAssetOwner, ownershipConfirmationPayload, type SavedChannelAssetOwner } from './channelAssetOwnership'
@@ -78,12 +80,17 @@ export function ChannelWorkbench() {
     queryKey: ['channel-assets', filter, includeInactive, ownerKey],
     queryFn: () =>
       fetchChannelAssets({
-        sourceType: filter === 'all' ? undefined : filter,
+        sourceType: filter === 'all' || filter === 'rt_dynamic' ? undefined : filter,
         includeInactive,
       }),
   })
   // 前缀失效 (covers ['channel-assets', filter, includeInactive] 各变体)
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['channel-assets'] })
+  const sceneMutation = useMutation({
+    mutationFn: (a: ChannelAsset) => updateChannelAsset(a.id, { rt_scene: !isRtScene(a) }),
+    onSuccess: invalidate,
+    onError: (e: unknown) => notifyError('RT 场景分类保存失败', e),
+  })
   const ownershipMutation = useMutation({
     mutationFn: confirmChannelAssetOwnership,
     onSuccess: () => {
@@ -152,11 +159,10 @@ export function ChannelWorkbench() {
       onConfirm: () => deleteMutation.mutate(a.id),
     })
 
-  const assets = assetsQuery.data ?? []
+  const assets = (assetsQuery.data ?? []).filter(a => filter !== 'rt_dynamic' || isRtScene(a))
 
   return (
     <Stack gap="md">
-      <MpdbProjectPanel />
       <details>
         <summary>查看或核验已有工程</summary>
         <Stack mt="sm">
@@ -212,9 +218,14 @@ export function ChannelWorkbench() {
         ]}
       />
 
+      {filter === 'rt_dynamic' && <>
+        <Title order={4}>RT 场景</Title>
+        <Text size="sm">这里引用信道库中的原记录。已有 .smu 可在「厂商文件」中选择「列为 RT 场景」。离线生成的工程包不是已编辑的 .smu。</Text>
+      </>}
+      {assetsQuery.isError && <Alert color="red">信道资产读取失败，请刷新后重试。</Alert>}
       <Paper withBorder pos="relative">
         <LoadingOverlay visible={assetsQuery.isLoading} />
-        {assets.length === 0 && !assetsQuery.isLoading ? (
+        {assets.length === 0 && !assetsQuery.isLoading && !assetsQuery.isError ? (
           <Box p="xl" ta="center">
             <Text c="dimmed">
               {filter === 'all'
@@ -253,7 +264,9 @@ export function ChannelWorkbench() {
                       {SOURCE_LABEL[a.source_type]}
                     </Badge>
                   </Table.Td>
-                  <Table.Td><Text size="sm" c="dimmed">{a.canonical_name ?? '—'}</Text></Table.Td>
+                  <Table.Td><Text size="sm" c="dimmed">{a.canonical_name ?? '—'}</Text>
+                    {filter === 'rt_dynamic' && a.associated_file_path && <Text size="xs">{a.associated_file_path}</Text>}
+                  </Table.Td>
                   <Table.Td>
                     <Group gap={4}>
                       {a.allowed_targets.map((t) => (
@@ -275,6 +288,10 @@ export function ChannelWorkbench() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap={4} justify="flex-end">
+                      {a.source_type === 'vendor_file' && /\.smu$/i.test(a.associated_file_path ?? '') &&
+                        <Button size="xs" variant="light" disabled={sceneMutation.isPending} onClick={() => sceneMutation.mutate(a)}>
+                          {isRtScene(a) ? '移出 RT 场景' : '列为 RT 场景'}
+                        </Button>}
                       {a.source_type === 'vendor_file' && !a.instrument_model_id && a.is_active &&
                         <Button size="xs" variant="light" disabled={!owner} onClick={() => owner && confirmOwnership([a], owner)}>
                           确认归属
@@ -312,10 +329,13 @@ export function ChannelWorkbench() {
         {viewing && <AssetDetail asset={viewing} />}
       </Modal>
 
+      <div hidden={filter !== 'rt_dynamic'}>
+      <MpdbProjectPanel />
       <details>
-        <summary>轨迹工具：计算逐帧频率响应</summary>
+        <summary>逐帧频率响应分析（可选）</summary>
         <ClusterResponsePanel />
       </details>
+      </div>
       <ChannelAssetForm opened={formOpen} asset={editingAsset} onClose={() => setFormOpen(false)} />
 
       <Modal
