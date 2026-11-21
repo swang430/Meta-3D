@@ -28,6 +28,7 @@ import {
   type ChannelSourceType,
   type SMUProjectSyncPreview,
 } from '../../api/channelAssetService'
+import { ImtBundlePanel } from './ImtBundlePanel'
 import { ClusterResponsePanel } from './ClusterResponsePanel'
 import { ChannelAssetForm } from './ChannelAssetForm'
 import { fetchInstrumentCatalog } from '../../api/service'
@@ -153,6 +154,7 @@ export function ChannelWorkbench() {
   return (
     <Stack gap="md">
       <ClusterResponsePanel />
+      <ImtBundlePanel />
       <Group justify="space-between" align="flex-end">
         <div>
           <Title order={3}>
