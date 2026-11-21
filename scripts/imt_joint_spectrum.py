@@ -4,6 +4,7 @@ import argparse
 import hashlib
 import io
 import json
+import math
 import zipfile
 from pathlib import Path
 
@@ -19,7 +20,7 @@ from imt_conducted_spectrum import (
 )
 
 
-def compare(source, members):
+def compare(source, members, verification_dir=None):
     audit = json.loads((EVIDENCE / "timeline-audit.json").read_text())
     archive = source / audit["archive"]
     if hashlib.sha256(archive.read_bytes()).hexdigest() != audit["archive_sha256"]:
@@ -46,6 +47,8 @@ def compare(source, members):
             for k in ("LINK_ID", "H", "DELAY", "AOA", "DOPPLER")
         ]
     results = []
+    exported = []
+    evidence = []
     with np.load(members, allow_pickle=False) as member:
         if str(member["source_sha256"]) != hashlib.sha256(raw).hexdigest():
             raise ValueError("成员表与实际 MPDB 不符")
@@ -59,6 +62,35 @@ def compare(source, members):
                     clusters = reduce_link(
                         member[f"L{ident}"], h[m], delay[m], ao[m], fd[m]
                     )
+                    if verification_dir is not None:
+                        labels = member[f"L{ident}"]
+                        values = h[m].astype(complex)
+                        frequencies = fd[m].astype(float)
+                        for cid, c in clusters.items():
+                            key = dict(frame=k, tx=t, rx=r, cluster=cid)
+                            exported.append(
+                                dict(
+                                    **key,
+                                    real=c["coefficient"].real,
+                                    imag=c["coefficient"].imag,
+                                    doppler=c["doppler_mean_hz"],
+                                )
+                            )
+                        for cid in np.unique(labels):
+                            key = dict(frame=k, tx=t, rx=r, cluster=int(cid))
+                            mask = labels == cid
+                            rays = values[mask]
+                            evidence.append(
+                                dict(
+                                    **key,
+                                    count=len(rays),
+                                    sumReal=math.fsum(rays.real),
+                                    sumImag=math.fsum(rays.imag),
+                                    sumAbs=math.fsum(abs(rays)),
+                                    minHz=float(frequencies[mask].min()),
+                                    maxHz=float(frequencies[mask].max()),
+                                )
+                            )
                     counts.append(len(clusters))
                     anchors.append(
                         tuple(
@@ -100,6 +132,19 @@ def compare(source, members):
                             psd_joint=joint.tolist(),
                         )
                     )
+    if verification_dir is not None:
+        verification_dir.mkdir(parents=True, exist_ok=False)
+        identity = dict(
+            mpdb=hashlib.sha256(raw).hexdigest(),
+            members=hashlib.sha256(members.read_bytes()).hexdigest(),
+        )
+        for name, rows in (("results", exported), ("evidence", evidence)):
+            (verification_dir / (name + ".json")).write_text(
+                json.dumps(
+                    dict(schema=f"joint-{name}/1", source=identity, rows=rows),
+                    allow_nan=False,
+                )
+            )
     return dict(
         common_samples=len(grid),
         rate_hz=rate,
@@ -113,7 +158,11 @@ if __name__ == "__main__":
     p = argparse.ArgumentParser(description=__doc__)
     for name in ("source", "members", "output"):
         p.add_argument(name, type=Path)
+    p.add_argument("--verification-dir", type=Path)
     args = p.parse_args()
     args.output.write_text(
-        json.dumps(compare(args.source, args.members), allow_nan=False) + "\n"
+        json.dumps(
+            compare(args.source, args.members, args.verification_dir), allow_nan=False
+        )
+        + "\n"
     )
