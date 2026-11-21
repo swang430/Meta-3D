@@ -117,6 +117,7 @@ export function ImtBundlePanel() {
               {data.links.length} 份 ASC 文件校验一致 · {data.frames} 行 · 每行{' '}
               {data.taps} 个抽头 · {data.carrier / 1e6} MHz · {data.rate} Hz
             </Text>
+            {data.phaseSummary && <Text>{data.phaseSummary}</Text>}
             {mode === 'ota' && (
               <Text size="sm">
                 发射极化 {data.txMode} · 参考接收端口 {data.referenceRx} ·
@@ -132,7 +133,7 @@ export function ImtBundlePanel() {
                 allowDeselect={false}
                 onChange={(v) => setTx(v ?? '0')}
               />
-              {mode === 'ota' && (
+              {data.metrics.length > 0 && (
                 <Select
                   label="相对中心频率"
                   data={[-50, 0, 50].map((n) => ({
@@ -167,7 +168,7 @@ export function ImtBundlePanel() {
               ) : (
                 <Text size="sm">目录中没有宽带对照记录。</Text>
               ))}
-            {mode === 'ota' && (
+            {data.metrics.length > 0 && (
               <>
                 <Text size="sm">
                   按源帧核对理想探头场。场误差取误差能量与目标场能量之比，功率比
