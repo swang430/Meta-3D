@@ -24,13 +24,24 @@ from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/channel-assets/mpdb-projects", tags=["Channel Asset"])
 ROOT = Path(__file__).resolve().parents[3]
-# 同一套分片校验器与时间解析供 API 及离线脚本使用。
-sys.path.append(str(ROOT / "scripts"))
-from mpdb_playback import inspect_timing, resolve_playback
-from mpdb_conducted_project import validate_members_container
-from imt_conducted_spectrum import column
 LIMIT = 256 * 1024**2
 logger = logging.getLogger(__name__)
+
+
+def offline_modules():
+    # 只有离线工作台依赖仓库顶层的脚本；独立 API 镜像仍能启动和使用其他功能。
+    scripts = ROOT / "scripts"
+    if not (scripts / "mpdb_workbench.py").is_file():
+        raise HTTPException(503, "当前服务未安装 MPDB 离线计算脚本，请使用配有离线工作台的部署。")
+    if str(scripts) not in sys.path:
+        sys.path.append(str(scripts))
+    try:
+        import mpdb_playback
+        import mpdb_conducted_project
+    except ImportError as exc:
+        logger.warning("无法加载 MPDB 离线脚本：%s", exc)
+        raise HTTPException(503, "当前服务的 MPDB 离线计算组件不完整，请检查部署。") from exc
+    return mpdb_playback, mpdb_conducted_project
 
 
 class SourceTiming(BaseModel):
@@ -70,6 +81,7 @@ def storage():
 
 @router.post("/import", response_model=ImportedSource)
 def import_source(file: UploadFile = File(...), members: UploadFile | None = File(None)):
+    playback, conducted = offline_modules()
     base = storage()
     for old in base.iterdir():
         if old.is_dir() and old.stat().st_mtime < time.time() - 86400:
@@ -110,9 +122,9 @@ def import_source(file: UploadFile = File(...), members: UploadFile | None = Fil
                     raise ValueError(
                         "当前支持采用全局角度坐标、单一载频的信道冲激响应数据"
                     )
-                timing = inspect_timing(db, desc)
+                timing = playback.inspect_timing(db, desc)
                 if members is not None:
-                    link_ids = column(db, desc, "LINK", "LINK_ID").ravel()
+                    link_ids = conducted.column(db, desc, "LINK", "LINK_ID").ravel()
         (folder / "timing.json").write_text(json.dumps(timing, allow_nan=False))
         known = ROOT / "docs/evidence/imt-three/members.npz"
         clustering = "missing"
@@ -126,7 +138,7 @@ def import_source(file: UploadFile = File(...), members: UploadFile | None = Fil
                     if dest.tell() + len(chunk) > 32 * 1024**2:
                         raise ValueError("成员表超过 32 MiB")
                     dest.write(chunk)
-            validate_members_container(dest.name, link_ids)
+            conducted.validate_members_container(dest.name, link_ids)
             with np.load(dest.name, allow_pickle=False) as data:
                 if str(data["source_sha256"]) != digest:
                     raise ValueError("上传的聚簇结果不属于这份下行数据")
@@ -230,6 +242,7 @@ def build_project(source_id: UUID, params: BuildParameters):
     archive = folder / "source.zip"
     if not archive.is_file():
         raise HTTPException(404, "导入记录已过期，请重新选择原始文件")
+    clocks, _ = offline_modules()
     os.utime(folder, None)
     ident = uuid4()
     engine_python = ROOT / "channel-engine-service/.venv/bin/python"
@@ -243,7 +256,7 @@ def build_project(source_id: UUID, params: BuildParameters):
             if not timing_path.is_file():
                 raise HTTPException(409, "此导入记录没有时间检查结果，请重新导入")
             try:
-                playback = resolve_playback(json.loads(timing_path.read_text()), params.speed_m_s,
+                playback = clocks.resolve_playback(json.loads(timing_path.read_text()), params.speed_m_s,
                                             params.segment_durations_s, params.rate_hz)
             except ValueError as exc:
                 raise HTTPException(422, str(exc)) from exc

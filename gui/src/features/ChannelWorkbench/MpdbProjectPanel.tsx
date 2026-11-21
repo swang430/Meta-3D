@@ -142,7 +142,7 @@ export function MpdbProjectPanel() {
         />
         {mode === 'conducted' ? (
           <>
-          {source && !choose && <Text>{source.clustering === 'supplied' ? '已核对您提供的射线分组文件。' : '已找到这份原始数据此前离线聚簇保存的射线分组。'}这不是 MPDB 中的原始字段。系统核对原文件内容后，复用每条射线属于哪一组的记录来汇总八条通路，不需要另行制作文件。</Text>}
+          {source && !choose && <Text>{source.clustering === 'supplied' ? '已核对您提供的分组文件来源；每条通路的射线数量和组号将在生成时核对。' : '已找到这份原始数据此前离线聚簇保存的射线分组。'}这不是 MPDB 中的原始字段。系统核对原文件内容后，复用每条射线属于哪一组的记录来汇总八条通路，不需要另行制作文件。</Text>}
           {(choose || supplied) && <details><summary>使用已有的射线分组文件（可选）</summary>
             <FileInput label="此前保存的分组文件" description="仅在已有同一份原数据的离线分组结果时使用。选择后会重新核对来源；没有文件时直接选择分组方式即可。"
               accept=".npz" clearable disabled={!!busy} value={supplied} onChange={(next)=>inspectFile(file,next)}/></details>}

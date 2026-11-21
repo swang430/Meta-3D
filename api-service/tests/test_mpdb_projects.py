@@ -7,6 +7,37 @@ from fastapi.testclient import TestClient
 from app.api.mpdb_projects import router
 
 
+def test_isolated_api_image_imports_without_optional_workspace_scripts(tmp_path):
+    import os
+    from pathlib import Path
+    import shutil
+    import subprocess
+    import sys
+    from app.api import mpdb_projects
+
+    copied = tmp_path / "image/app/api/mpdb_projects.py"
+    copied.parent.mkdir(parents=True)
+    shutil.copyfile(mpdb_projects.__file__, copied)
+    probe = """
+import runpy
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+module = runpy.run_path('app/api/mpdb_projects.py')
+app = FastAPI()
+app.include_router(module['router'])
+client = TestClient(app)
+assert client.get('/openapi.json').status_code == 200
+result = client.post('/channel-assets/mpdb-projects/import', files={'file':('input.zip', b'input')})
+assert result.status_code == 503, result.text
+assert '离线' in result.json()['detail']
+"""
+    env = {**os.environ, "TMPDIR":str(tmp_path)}
+    out = subprocess.run([sys.executable,"-I","-c",probe],cwd=copied.parents[2],
+                         env=env,text=True,capture_output=True)
+    assert out.returncode == 0, out.stderr
+    assert not (tmp_path/"meta3d-mpdb-projects").exists()
+
+
 def test_rejects_archive_without_downlink_and_unknown_source():
     app = FastAPI()
     app.include_router(router)
