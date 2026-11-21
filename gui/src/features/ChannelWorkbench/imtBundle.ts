@@ -1,4 +1,6 @@
 export type Mode = 'conducted' | 'ota'
+export const dynamicEvidence = (evidence: unknown) =>
+  evidence === 'offline_distance_doppler' || evidence === 'offline_timeline_doppler'
 export type Metric = {
   frame: number
   tx: number
@@ -36,7 +38,7 @@ export function readBundle(input: unknown, mode: Mode) {
   if (m.mode !== mode || m.direction !== 'downlink')
     throw Error('清单的测试方式或上下行方向与所选方式不符')
   const ota = mode === 'ota'
-  const dynamic = ota && m.evidence === 'offline_distance_doppler'
+  const dynamic = ota && dynamicEvidence(m.evidence)
   if (
     !dynamic &&
     m.evidence !== (ota ? 'offline_ideal_plane_wave' : 'offline_asc_validation')
@@ -110,8 +112,11 @@ export function readBundle(input: unknown, mode: Mode) {
     const ports = ['0-1', '0-2', '0-3', '1-2', '1-3', '2-3'].map((k) =>
       stats(pairs[k], frames * n * 2),
     )
+    const timeSource = m.time_source === 'operator_segment_durations' ? '操作员提供的逐段时长'
+      : m.time_source === 'operator_constant_speed' ? '按操作员假定的恒速和区段位移计算'
+      : typeof m.time_source === 'string' ? m.time_source : '未记录'
     phaseSummary =
-      '时间由帧间距离和速度估算。载频处与生成模型对照，逐样点相位增量最大误差 ' +
+      '播放时间来源：'+timeSource+'。载频处与生成模型对照，逐样点相位增量最大误差 ' +
       step.angle.toExponential(2) +
       '°，六组发射端口相对相位最大误差 ' +
       Math.max(...ports.map((v) => v.angle)).toExponential(2) +
@@ -157,11 +162,9 @@ export function readBundle(input: unknown, mode: Mode) {
     referenceRx: Number.isSafeInteger(m.reference_rx)
       ? String(m.reference_rx)
       : '未记录',
-    rateSource: dynamic
-      ? '动态文件头指定'
-      : m.rate_source === 'operator_supplied'
-        ? '操作人员指定'
-        : '未记录',
+    rateSource: m.rate_source === 'operator_supplied' ? '操作人员指定'
+      : m.rate_source === 'source_frame_viewer_placeholder' ? '仅用于按序查看源帧，不代表原始帧率'
+      : dynamic ? '动态文件头已记录数值，选择依据未记录' : '未记录',
   }
 }
 

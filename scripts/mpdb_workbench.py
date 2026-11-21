@@ -1,15 +1,23 @@
 """用同一份上传数据构建传导或 OTA 工程，计算在独立进程运行。"""
 
 import os
+import json
 import sys
 from pathlib import Path
 
 import numpy as np
+if __package__:
+    from .mpdb_playback import resolve_playback
+else:
+    from mpdb_playback import resolve_playback
 
 
-def generate_ota(archive, output, speed, rate):
+def generate_ota(archive, output, playback):
     from mimo_ota_simulator.imt_probe_bundle import read_columns, run
-    from mimo_ota_simulator.imt_dynamic_probe import generate
+    if __package__:
+        from .mpdb_dynamic_timeline import generate
+    else:
+        from mpdb_dynamic_timeline import generate
 
     data, _ = read_columns(archive, dynamic=True)
     frame, tx, rx = [
@@ -27,22 +35,22 @@ def generate_ota(archive, output, speed, rate):
         raise ValueError("需要每一帧都有完整的四发两收数据")
     if not np.array_equal(frames, np.arange(len(frames))):
         raise ValueError("当前探头生成器要求源帧从 0 连续编号，请核对原始工程的帧范围")
-    anchor = (tx == 0) & (rx == 0)
-    pos = data["LINK", "RX_ANT_POSITION"][anchor][np.argsort(frame[anchor])].reshape(
-        -1, 3
-    )
-    samples = (
-        np.linalg.norm(np.diff(pos.astype(float), axis=0), axis=1).sum() / speed * rate
-    )
-    if not 1 <= samples < 20000:
-        raise ValueError("按距离和速度估算，输出须在 2 至 20000 个时刻之间")
+    if frames.tolist() != playback["frame_ids"]:
+        raise ValueError("源帧编号与已检查的时间轴不符")
+    if playback["rate_hz"] <= 2 * np.max(np.abs(data["CHANNEL", "DOPPLER"])):
+        raise ValueError("输出更新率必须高于原始射线最大绝对多普勒频移的两倍")
     del data
     geometry = (
         Path(os.environ["CHANNEL_ENGINE_PATH"]) / "examples/imt_16probe_geometry.json"
     )
     output.mkdir()
     run(archive, geometry, output / "baseline", 1.0)
-    generate(archive, geometry, output / "baseline", output / "dynamic", speed, rate)
+    # 上游 CLI 将所有调用参数都标为操作员输入；此处的 1 Hz 只用于源帧顺序浏览。
+    manifest_path = output / "baseline/manifest.json"
+    baseline = json.loads(manifest_path.read_text())
+    baseline["rate_source"] = "source_frame_viewer_placeholder"
+    manifest_path.write_text(json.dumps(baseline, ensure_ascii=False, indent=2))
+    generate(archive, geometry, output / "baseline", output / "dynamic", playback)
 
 
 if __name__ == "__main__":
@@ -57,4 +65,4 @@ if __name__ == "__main__":
             print(exc, file=sys.stderr)
             sys.exit(3)
     else:
-        generate_ota(archive, output, *map(float, sys.argv[4:6]))
+        generate_ota(archive, output, json.loads(Path(sys.argv[4]).read_text()))

@@ -3605,16 +3605,12 @@ export interface components {
             mode: "conducted" | "ota";
             /** Clustering Method */
             clustering_method?: ("delay_bins" | "hyperrt") | null;
-            /**
-             * Speed M S
-             * @default 5
-             */
-            speed_m_s: number;
-            /**
-             * Rate Hz
-             * @default 171.18765176762867
-             */
-            rate_hz: number;
+            /** Speed M S */
+            speed_m_s?: number | null;
+            /** Rate Hz */
+            rate_hz?: number | null;
+            /** Segment Durations S */
+            segment_durations_s?: number[] | null;
         };
         /** BuiltProject */
         BuiltProject: {
@@ -3644,6 +3640,23 @@ export interface components {
              * Format: uuid
              */
             source_id: string;
+            timing: components["schemas"]["SourceTiming"];
+            /**
+             * Clustering
+             * @enum {string}
+             */
+            clustering: "matched" | "missing" | "supplied";
+        };
+        /** SourceTiming */
+        SourceTiming: {
+            /** Frame Ids */
+            frame_ids: number[];
+            /** Distances M */
+            distances_m: (number | null)[];
+            /** Source Times S */
+            source_times_s: number[] | null;
+            /** Time Source */
+            time_source: string | null;
         };
         /** Body_import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post */
         Body_import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post: {

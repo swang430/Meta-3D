@@ -11,53 +11,74 @@ import {
   Stack,
   Text,
   TextInput,
+  Textarea,
   Title,
 } from '@mantine/core'
 import client from '../../api/client'
 import { ClusterReport } from './ClusterVerificationPanel'
-import { projectParameters, readProject, type ProjectMode } from './mpdbProject'
+import { durations, projectParameters, readProject, type ProjectMode, type TimingMode } from './mpdbProject'
+import type { components } from '../../types/api.generated'
 
 type Project = ReturnType<typeof readProject> & { description: string }
 const root = '/channel-assets/mpdb-projects'
 
 export function MpdbProjectPanel() {
   const [file, setFile] = useState<File | null>(null)
-  const [source, setSource] = useState('')
-  const [members, setMembers] = useState<File | null>(null)
-  const [choose, setChoose] = useState(false)
+  const [source, setSource] = useState<components['schemas']['ImportedSource'] | null>(null)
   const [method, setMethod] = useState<string | null>(null)
+  const [supplied, setSupplied] = useState<File | null>(null)
   const [mode, setMode] = useState<ProjectMode>('conducted')
-  const [speed, setSpeed] = useState('5')
-  const [rate, setRate] = useState('171.18765176762867')
+  const [speed, setSpeed] = useState('')
+  const [rate, setRate] = useState('')
+  const [choice, setChoice] = useState<TimingMode>('')
+  const [segmentText, setSegmentText] = useState('')
   const [busy, setBusy] = useState('')
   const [error, setError] = useState('')
   const [projects, setProjects] = useState<
     Partial<Record<ProjectMode, Project>>
   >({})
-  const parameters = projectParameters(mode, speed, rate)
+  const timing = source?.timing
+  const selected = timing?.source_times_s ? 'original' : choice
+  const distances = timing?.distances_m ?? []
+  const choose = source?.clustering === 'missing'
+  const parameters = projectParameters(mode, speed, rate, selected, segmentText, distances.length)
+  const sections = durations(segmentText)
+  const duration = (i: number, d: number | null): number | null => {
+    if (timing?.source_times_s) return timing.source_times_s[i+1]-timing.source_times_s[i]
+    if (selected === 'segments' && sections.length === distances.length && Number.isFinite(sections[i]) && sections[i]>0) return sections[i]
+    if (selected === 'constant' && d !== null && d>0 && Number.isFinite(Number(speed)) && Number(speed)>0) return d/Number(speed)
+    return null
+  }
+  const valid = parameters && (mode === 'conducted' || (distances.length > 0 && distances.every((d,i)=>duration(i,d)! > 0)))
   const project = projects[mode]
 
+  async function inspectFile(next: File | null, groups: File | null = null) {
+    setFile(next); setSource(null); setProjects({}); setMethod(null); setError('')
+    setSupplied(groups)
+    setSpeed(''); setRate(''); setChoice(''); setSegmentText('')
+    if (!next) return
+    setBusy('检查原始文件')
+    try {
+      const form = new FormData()
+      form.append('file', next)
+      if (groups) form.append('members', groups)
+      const {data} = await client.post(root+'/import', form)
+      if (!data?.source_id || !Array.isArray(data.timing?.frame_ids) || !['matched','missing','supplied'].includes(data.clustering)) throw Error('服务器未返回完整的来源检查结果。')
+      setSource(data)
+    } catch(cause) {
+      const detail = axios.isAxiosError(cause) && cause.response?.data?.detail
+      setError((groups?'检查上传的射线分组失败：':'检查文件失败：')+(typeof detail === 'string' ? detail : cause instanceof Error ? cause.message : '请求失败'))
+    } finally { setBusy('') }
+  }
+
   async function build() {
-    if (!file || !parameters || busy) return
-    let stage = '上传文件'
+    if (!file || !source || !valid || busy) return
+    const stage = '生成工程'
     setError('')
     setBusy(stage)
     try {
-      let id = source
-      if (!id) {
-        const form = new FormData()
-        form.append('file', file)
-        if (members) form.append('members', members)
-        const { data } = await client.post(root + '/import', form)
-        if (typeof data?.source_id !== 'string' || !data.source_id.trim())
-          throw Error('服务器未返回来源编号。')
-        id = data.source_id
-        setSource(id)
-      }
-      stage = '生成工程'
-      setBusy(stage)
       const { data } = await client.post(
-        root + '/' + encodeURIComponent(id) + '/build',
+        root + '/' + encodeURIComponent(source.source_id) + '/build',
         mode === 'conducted' && choose && method ? { ...parameters, clustering_method: method } : parameters,
         { timeout: 0 },
       )
@@ -69,18 +90,16 @@ export function MpdbProjectPanel() {
           description:
             mode === 'conducted'
               ? file.name + ' · 源帧版'
-              : file.name + ' · ' + speed + ' m/s · ' + rate + ' Hz',
+              : file.name + ' · '+(selected==='original'?'原始帧时间':selected==='segments'?'操作员给出的逐段时长':'操作员假定恒速 '+speed+' m/s')+' · 操作员指定输出 '+rate+' Hz',
         },
       }))
     } catch (cause) {
-      if (mode === 'conducted' && stage === '生成工程' && axios.isAxiosError(cause)
-          && cause.response?.status === 409) setChoose(true)
       if (
         stage === '生成工程' &&
         axios.isAxiosError(cause) &&
         cause.response?.status === 404
       )
-        setSource('')
+        setSource(null)
       const detail = axios.isAxiosError(cause) && cause.response?.data?.detail
       setError(
         stage +
@@ -107,15 +126,7 @@ export function MpdbProjectPanel() {
           value={file}
           clearable
           disabled={!!busy}
-          onChange={(next) => {
-            setFile(next)
-            setProjects({})
-            setSource('')
-            setMembers(null)
-            setChoose(false)
-            setMethod(null)
-            setError('')
-          }}
+          onChange={inspectFile}
         />
         <SegmentedControl
           disabled={!!busy}
@@ -131,11 +142,11 @@ export function MpdbProjectPanel() {
         />
         {mode === 'conducted' ? (
           <>
-          <FileInput label="配套成员表（可选 NPZ）" description="有同源成员表就直接汇总；留空时先匹配已收录的成员表。"
-            accept=".npz" clearable disabled={!!busy} value={members} onChange={(next) => {
-              setMembers(next); setSource(''); setChoose(false); setMethod(null); setError(''); setProjects({})
-            }} />
-          {choose && <Select label="未找到成员表：选择聚簇方式" placeholder="请选择，不会自动调用 HyperRT"
+          {source && !choose && <Text>{source.clustering === 'supplied' ? '已核对您提供的射线分组文件。' : '已找到这份原始数据此前离线聚簇保存的射线分组。'}这不是 MPDB 中的原始字段。系统核对原文件内容后，复用每条射线属于哪一组的记录来汇总八条通路，不需要另行制作文件。</Text>}
+          {(choose || supplied) && <details><summary>使用已有的射线分组文件（可选）</summary>
+            <FileInput label="此前保存的分组文件" description="仅在已有同一份原数据的离线分组结果时使用。选择后会重新核对来源；没有文件时直接选择分组方式即可。"
+              accept=".npz" clearable disabled={!!busy} value={supplied} onChange={(next)=>inspectFile(file,next)}/></details>}
+          {choose && <Select label="这份数据没有已收录的射线分组，请选择分组方式" placeholder="请选择，不会自动调用 HyperRT"
             data={[{ value: 'delay_bins', label: '按每帧共享的时延区间分组（最多 24 组，不按角度分组）' },
               { value: 'hyperrt', label: 'HyperRT 时延和角度联合聚簇（需要可用的授权和运行环境）' }]}
             value={method} disabled={!!busy} onChange={setMethod} />}
@@ -147,39 +158,48 @@ export function MpdbProjectPanel() {
           </>
         ) : (
           <>
-            <Text size="sm">以下数值仅用于播放，可按需要修改。</Text>
+            <Text size="sm">{!timing ? '请先选择文件，检查是否记录了帧时间。' : timing.time_source ? '原始文件时间来源：'+timing.time_source : '原始文件未记录可确认的帧时间，帧编号不代表秒。请明确选择播放假设。'}</Text>
+            {timing && !timing.source_times_s && <Select label="播放时间的依据" value={choice || null} disabled={!!busy}
+              placeholder="请选择" onChange={(v)=>setChoice((v || '') as TimingMode)}
+              data={[{value:'constant',label:'假定恒速，由各段位移推算时长'},{value:'segments',label:'逐段输入时长，支持变速或停车'}]}/>}
             <Group grow>
-              <TextInput
-                label="播放速度（m/s）"
+              {selected==='constant' && <TextInput
+                label="操作员假定的恒定速度（m/s）"
                 value={speed}
                 disabled={!!busy}
                 onChange={(e) => setSpeed(e.currentTarget.value)}
-              />
+              />}
+              {selected==='segments' && <Textarea label="各段时长（秒）" description={'依帧序输入 '+distances.length+' 个正数，用空格、逗号或换行分隔。停车也要填写经过的时间。'}
+                value={segmentText} disabled={!!busy} onChange={(e)=>setSegmentText(e.currentTarget.value)}/>}
+            </Group>
+            {timing && <details open><summary>各段经过时间和区段平均速度（不是瞬时速度）</summary>
+              <div style={{maxHeight:240,overflow:'auto'}}><table><thead><tr><th>源帧区段</th><th>位移（m）</th><th>时长（s）</th><th>区段平均速度（m/s）</th></tr></thead><tbody>
+              {distances.map((d,i)=>{const dt=duration(i,d);return <tr key={i}><td>{timing.frame_ids[i]} → {timing.frame_ids[i+1]}</td><td>{d?.toFixed(3) ?? '未知'}</td>
+                <td>{dt?.toFixed(3) ?? '未知'}</td><td>{d!==null && dt ? (d/dt).toFixed(3) : '未知'}</td></tr>})}
+              </tbody></table></div></details>}
               <TextInput
-                label="播放更新频率（Hz）"
+                label="输出更新率（Hz）"
+                description="来源：操作员指定。它决定每秒输出多少个时刻，不代表原始帧率或车速。"
                 value={rate}
                 disabled={!!busy}
                 onChange={(e) => setRate(e.currentTarget.value)}
               />
-            </Group>
-            {!parameters && (
-              <Text c="red">速度和更新频率均须为大于零的有限数值。</Text>
-            )}
             <Alert color="yellow">
               将生成含 128 个 ASC
               文件的动态工程，以及供比较的基线工程。计算假设使用 16
-              个水平布置的理想双极化探头，将轨迹距离按米解释，并按恒定速度推算播放时间。探头布局和播放效果待现场验证。
+              个水平布置的理想双极化探头。生成计算采用所选时间轴，保留原始位置和射线多普勒频移，不按假定速度重算。探头布局和播放效果待现场验证。
             </Alert>
           </>
         )}
         <Group>
           <Button
             loading={!!busy}
-            disabled={!file || !parameters || (mode === 'conducted' && choose && !method)}
+            disabled={!source || !valid || (mode === 'conducted' && choose && !method)}
             onClick={build}
           >
             生成信道工程
           </Button>
+          {file && !source && !busy && <Button variant="light" onClick={()=>inspectFile(file)}>重新检查文件</Button>}
           {busy && <Text role="status">正在{busy}，请稍候。</Text>}
         </Group>
         {error && (

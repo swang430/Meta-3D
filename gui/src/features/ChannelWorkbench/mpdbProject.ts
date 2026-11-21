@@ -2,16 +2,31 @@ import { readBundle } from './imtBundle.ts'
 import { verifyClusters } from './clusterVerification.ts'
 
 export type ProjectMode = 'conducted' | 'ota'
+export type TimingMode = '' | 'constant' | 'segments' | 'original'
+
+export function durations(text: string) {
+  return text.trim().split(/[\s,，;；]+/).map(Number)
+}
 
 export function projectParameters(
   mode: ProjectMode,
   speed: string,
   rate: string,
+  timing: TimingMode = 'constant',
+  segmentText = '',
+  count = 0,
 ) {
   if (mode === 'conducted') return { mode }
-  const values = [speed, rate].map(Number)
-  if (!values.every((value) => Number.isFinite(value) && value > 0)) return null
-  return { mode, speed_m_s: values[0], rate_hz: values[1] }
+  const positive = (value: number) => Number.isFinite(value) && value > 0
+  const rate_hz = Number(rate)
+  if (!positive(rate_hz)) return null
+  if (timing === 'original') return {mode, rate_hz}
+  if (timing === 'segments') {
+    const values = durations(segmentText)
+    return count > 0 && values.length === count && values.every(positive)
+      ? {mode, rate_hz, segment_durations_s:values} : null
+  }
+  return timing === 'constant' && positive(Number(speed)) ? {mode, rate_hz, speed_m_s:Number(speed)} : null
 }
 
 export function readProject(
@@ -61,7 +76,7 @@ export function readProject(
       if (role !== 'baseline' && bundle.links.length !== data.asc_count)
         throw Error('清单与生成的文件数量不符')
       const summary = label + '清单：' + bundle.links.length + ' 个 ASC 文件，' +
-        bundle.frames + ' 帧，每帧 ' + bundle.taps + ' 个抽头，文件头更新率 ' + bundle.rate + ' Hz。'
+        bundle.frames + ' 帧，每帧 ' + bundle.taps + ' 个抽头，文件头更新率 ' + bundle.rate + ' Hz。更新率依据：'+bundle.rateSource+'。'
       if (role === 'baseline') {
         const usable = bundle.metrics.filter(m => m.field_nmse !== null && m.power_ratio !== null)
         const maximum = usable.reduce((max, row) => Math.max(max, row.field_nmse!), 0)
