@@ -26,3 +26,9 @@ python3 scripts/imt_joint_spectrum.py RT-IMT-2030 docs/evidence/imt-three/member
 ```
 
 成员表由脚本 scripts/imt_joint_members.py 从原始下行 MPDB 生成，使用 RT_22 发布版的 HyperRT 运行环境及其弧度接口，种子 20261121。复算频谱可直接使用保存的成员表。
+
+### 工作台聚簇核验
+
+在上面的复算命令末尾追加 `--verification-dir 新目录`，导出 results.json（实际归并结果）及 evidence.json（直接从成员射线复算的对照值）。在信道工作台“聚簇结果核验”中依次选择这两个文件。每项证据用 MPDB、成员表指纹和簇坐标对应。结果相干相消、合法少于 24 簇、谱宽或谱重叠差异本身均不会触发异常。证据缺失时保留未核验状态；文件结构错误仍提示读取失败。
+
+本批包含 38 帧、八条链路、7296 个簇。作为负对照，仅在结果副本中将第 3 帧 TX1 → RX0 的簇 7 的代表多普勒设为成员最大值加 10 Hz，证据文件保留原值。
