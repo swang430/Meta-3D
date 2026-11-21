@@ -17,6 +17,33 @@ from scripts.mpdb_playback import inspect_timing, resolve_playback
     os.getenv("IMT_MPDB_TEST_ARCHIVE"), "需要指定四发两收原始 MPDB 压缩包"
 )
 class ProbeProjectTest(unittest.TestCase):
+    def test_physical_clock_can_generate_without_receiver_positions(self):
+        archive = Path(os.environ["IMT_MPDB_TEST_ARCHIVE"])
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            variant = root / "no-positions.zip"
+            repacked = io.BytesIO()
+            with zipfile.ZipFile(archive) as original, zipfile.ZipFile(
+                io.BytesIO(original.read("R0B0S0D.mpdb"))
+            ) as db, zipfile.ZipFile(repacked, "w") as changed:
+                desc = json.loads(db.read("mpdb.json"))
+                removed = {s["entry"] for s in desc["records"]["LINK"].pop("RX_ANT_POSITION")["shards"]}
+                desc["meta"]["rtSampleIntervalSeconds"] = 0.02
+                for name in db.namelist():
+                    if name not in removed and name != "mpdb.json":
+                        changed.writestr(name, db.read(name))
+                changed.writestr("mpdb.json", json.dumps(desc))
+            with zipfile.ZipFile(variant,"w") as outer:
+                outer.writestr("R0B0S0D.mpdb", repacked.getvalue())
+            with zipfile.ZipFile(repacked) as db:
+                timing = inspect_timing(db, json.loads(db.read("mpdb.json")))
+            playback = resolve_playback(timing,None,None,100)
+            generate_ota(variant, root/"project", playback)
+            report=json.loads((root/"project/dynamic/manifest.json").read_text())
+            self.assertEqual(report["segment_average_speeds_m_s"],[None]*37)
+            self.assertEqual(report["header"]["cir_count"],75)
+            self.assertEqual(len(report["links"]),128)
+
     def test_same_constant_speed_preserves_upstream_complex_coefficients(self):
         from mimo_ota_simulator.imt_dynamic_probe import generate as upstream
 

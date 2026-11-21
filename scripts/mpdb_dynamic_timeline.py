@@ -7,18 +7,17 @@ from pathlib import Path
 
 import numpy as np
 
-from mimo_ota_simulator.imt_probe_bundle import C, directions, polar_basis, read_columns
+from mimo_ota_simulator.imt_probe_bundle import C, directions, polar_basis
 if __package__:
     from .mpdb_playback import output_grid
 else:
     from mpdb_playback import output_grid
 
 
-def generate(archive, geometry, baseline, output, playback):
+def generate(raw, digest, geometry, baseline, output, playback):
     rate = playback["rate_hz"]
     if output.exists():
         raise ValueError("需要新目录")
-    raw, digest = read_columns(archive, dynamic=True)
     manifest = json.loads((baseline / "manifest.json").read_text())
     g = json.loads(geometry.read_text())
     if (
