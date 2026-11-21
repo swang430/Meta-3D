@@ -53,7 +53,8 @@
   await pane.getByLabel('播放时间的依据').click()
   await page.getByRole('option',{name:'假定恒速，由各段位移推算时长'}).click()
   await speed.fill('7')
-  await pane.getByLabel('输出更新率（Hz）').fill('100')
+  await pane.getByLabel('输出时间采样').click()
+  await page.getByRole('option',{name:'加密（两倍更新率）'}).click()
   rejectBuild = true
   await build.click()
   await pane.getByText('生成工程失败：样本不足').waitFor()
@@ -61,7 +62,7 @@
   await build.click()
   await download.waitFor()
   check(
-    uploads === 1 && builds.at(-1).speed_m_s === 7,
+    uploads === 1 && builds.at(-1).speed_m_s === 7 && builds.at(-1).rate_quality === 'dense',
     '重复上传或播放参数错误',
   )
   const review = page.getByText('查看或核验已有工程', { exact: true })

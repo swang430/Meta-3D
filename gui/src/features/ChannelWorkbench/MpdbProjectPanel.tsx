@@ -29,7 +29,8 @@ export function MpdbProjectPanel() {
   const [supplied, setSupplied] = useState<File | null>(null)
   const [mode, setMode] = useState<ProjectMode>('conducted')
   const [speed, setSpeed] = useState('')
-  const [rate, setRate] = useState('')
+  const [rate, setRate] = useState('standard')
+  const [plan, setPlan] = useState<File | null>(null)
   const [choice, setChoice] = useState<TimingMode>('')
   const [segmentText, setSegmentText] = useState('')
   const [busy, setBusy] = useState('')
@@ -52,15 +53,16 @@ export function MpdbProjectPanel() {
   const valid = parameters && (mode === 'conducted' || (distances.length > 0 && distances.every((d,i)=>duration(i,d)! > 0)))
   const project = projects[mode]
 
-  async function inspectFile(next: File | null, groups: File | null = null) {
+  async function inspectFile(next: File | null, groups: File | null = supplied, nextPlan: File | null = plan) {
     setFile(next); setSource(null); setProjects({}); setMethod(null); setError('')
-    setSupplied(groups)
-    setSpeed(''); setRate(''); setChoice(''); setSegmentText('')
+    setSupplied(groups); setPlan(nextPlan)
+    setSpeed(''); setRate('standard'); setChoice(''); setSegmentText('')
     if (!next) return
     setBusy('检查原始文件')
     try {
       const form = new FormData()
       form.append('file', next)
+      if (nextPlan) form.append('plan_manifest', nextPlan)
       if (groups) form.append('members', groups)
       const {data} = await client.post(root+'/import', form)
       if (!data?.source_id || !Array.isArray(data.timing?.frame_ids) || !['matched','missing','supplied'].includes(data.clustering)) throw Error('服务器未返回完整的来源检查结果。')
@@ -90,7 +92,7 @@ export function MpdbProjectPanel() {
           description:
             mode === 'conducted'
               ? file.name + ' · 源帧版'
-              : file.name + ' · '+(selected==='original'?'原始帧时间':selected==='segments'?'操作员给出的逐段时长':'操作员假定恒速 '+speed+' m/s')+' · 操作员指定输出 '+rate+' Hz',
+              : file.name + ' · '+(selected==='original'?'原始帧时间':selected==='segments'?'操作员给出的逐段时长':'操作员假定恒速 '+speed+' m/s')+' · 系统计算更新率（'+(rate==='dense'?'加密':'标准')+'）',
         },
       }))
     } catch (cause) {
@@ -126,8 +128,9 @@ export function MpdbProjectPanel() {
           value={file}
           clearable
           disabled={!!busy}
-          onChange={inspectFile}
+          onChange={(next)=>inspectFile(next,null,plan)}
         />
+        <FileInput label="Lauraycs 链路计算清单（可选）" description="选择配套的 compute-link-plan.manifest.json。核对链路和帧号后，直接使用原始时间。" accept=".json" clearable disabled={!!busy} value={plan} onChange={(next)=>inspectFile(file,supplied,next)}/>
         <SegmentedControl
           disabled={!!busy}
           value={mode}
@@ -149,7 +152,7 @@ export function MpdbProjectPanel() {
           {choose && <Select label="这份数据没有已收录的射线分组，请选择分组方式" placeholder="请选择，不会自动调用 HyperRT"
             data={[{ value: 'delay_bins', label: '按每帧共享的时延区间分组（最多 24 组，不按角度分组）' },
               { value: 'hyperrt', label: 'HyperRT 时延和角度联合聚簇（需要可用的授权和运行环境）' }]}
-            value={method} disabled={!!busy} onChange={setMethod} />}
+            value={method} disabled={!!busy} onChange={(v)=>{setMethod(v);setProjects({})}} />}
           <Text size="sm">
             四个发射端口和两个接收端口共用每帧的簇划分。八路 ASC
             各自保留复系数，每行对应一个原始帧。文件头的 1 Hz
@@ -158,32 +161,28 @@ export function MpdbProjectPanel() {
           </>
         ) : (
           <>
-            <Text size="sm">{!timing ? '请先选择文件，检查是否记录了帧时间。' : timing.time_source ? '原始文件时间来源：'+timing.time_source : '原始文件未记录可确认的帧时间，帧编号不代表秒。请明确选择播放假设。'}</Text>
+            <Text size="sm">{!timing ? '请先选择文件，检查是否记录了帧时间。' : timing.plan_sha256 ? '已核对清单中的下行收发节点、路径和全部源帧，使用清单记录的原始时间，无需填写车速。这些信息不能验证原始文件未记录的运行编号。' : timing.time_source ? '原始文件时间来源：'+timing.time_source : '原始文件未记录可确认的帧时间，帧编号不代表秒。请明确选择播放假设。'}</Text>
             {timing && !timing.source_times_s && <Select label="播放时间的依据" value={choice || null} disabled={!!busy}
-              placeholder="请选择" onChange={(v)=>setChoice((v || '') as TimingMode)}
+              placeholder="请选择" onChange={(v)=>{setChoice((v || '') as TimingMode);setProjects({})}}
               data={[{value:'constant',label:'假定恒速，由各段位移推算时长'},{value:'segments',label:'逐段输入时长，支持变速或停车'}]}/>}
             <Group grow>
               {selected==='constant' && <TextInput
                 label="操作员假定的恒定速度（m/s）"
                 value={speed}
                 disabled={!!busy}
-                onChange={(e) => setSpeed(e.currentTarget.value)}
+                onChange={(e) => {setSpeed(e.currentTarget.value);setProjects({})}}
               />}
               {selected==='segments' && <Textarea label="各段时长（秒）" description={'依帧序输入 '+distances.length+' 个正数，用空格、逗号或换行分隔。停车也要填写经过的时间。'}
-                value={segmentText} disabled={!!busy} onChange={(e)=>setSegmentText(e.currentTarget.value)}/>}
+                value={segmentText} disabled={!!busy} onChange={(e)=>{setSegmentText(e.currentTarget.value);setProjects({})}}/>}
             </Group>
             {timing && <details open><summary>各段经过时间和区段平均速度（不是瞬时速度）</summary>
               <div style={{maxHeight:240,overflow:'auto'}}><table><thead><tr><th>源帧区段</th><th>位移（m）</th><th>时长（s）</th><th>区段平均速度（m/s）</th></tr></thead><tbody>
               {distances.map((d,i)=>{const dt=duration(i,d);return <tr key={i}><td>{timing.frame_ids[i]} → {timing.frame_ids[i+1]}</td><td>{d?.toFixed(3) ?? '未知'}</td>
                 <td>{dt?.toFixed(3) ?? '未知'}</td><td>{d!==null && dt ? (d/dt).toFixed(3) : '未知'}</td></tr>})}
               </tbody></table></div></details>}
-              <TextInput
-                label="输出更新率（Hz）"
-                description="来源：操作员指定。它决定每秒输出多少个时刻，不代表原始帧率或车速。"
-                value={rate}
-                disabled={!!busy}
-                onChange={(e) => setRate(e.currentTarget.value)}
-              />
+              <Select label="输出时间采样" description="系统按原始射线的最大频移和最短帧间隔计算标准更新率。加密档将标准率翻倍，不会恢复缺失的实测信息。"
+                value={rate} disabled={!!busy} allowDeselect={false} onChange={(v)=>{setRate(v || 'standard');setProjects({})}}
+                data={[{value:'standard',label:'标准'},{value:'dense',label:'加密（两倍更新率）'}]}/>
             <Alert color="yellow">
               将生成含 128 个 ASC
               文件的动态工程，以及供比较的基线工程。计算假设使用 16

@@ -37,11 +37,11 @@ class ProbeProjectTest(unittest.TestCase):
                 outer.writestr("R0B0S0D.mpdb", repacked.getvalue())
             with zipfile.ZipFile(repacked) as db:
                 timing = inspect_timing(db, json.loads(db.read("mpdb.json")))
-            playback = resolve_playback(timing,None,None,100)
+            playback = resolve_playback(timing,None,None,"standard")
             generate_ota(variant, root/"project", playback)
             report=json.loads((root/"project/dynamic/manifest.json").read_text())
             self.assertEqual(report["segment_average_speeds_m_s"],[None]*37)
-            self.assertEqual(report["header"]["cir_count"],75)
+            self.assertEqual(report["header"]["cir_count"],int(0.74 * playback["rate_hz"])+1)
             self.assertEqual(len(report["links"]),128)
 
     def test_same_constant_speed_preserves_upstream_complex_coefficients(self):
@@ -51,7 +51,7 @@ class ProbeProjectTest(unittest.TestCase):
         with zipfile.ZipFile(archive) as outer:
             with zipfile.ZipFile(io.BytesIO(outer.read("R0B0S0D.mpdb"))) as db:
                 timing = inspect_timing(db, json.loads(db.read("mpdb.json")))
-        playback = resolve_playback(timing, 100, None, 100)
+        playback = resolve_playback(timing, 100, None, "standard")
         geometry = (
             Path(os.environ["CHANNEL_ENGINE_PATH"])
             / "examples/imt_16probe_geometry.json"
@@ -60,7 +60,7 @@ class ProbeProjectTest(unittest.TestCase):
             root = Path(tmp)
             generate_ota(archive, root / "new", playback)
             upstream(
-                archive, geometry, root / "new/baseline", root / "reference", 100, 100
+                archive, geometry, root / "new/baseline", root / "reference", 100, playback["rate_hz"]
             )
             read = lambda path: json.loads(path.read_text())["links"]
             self.assertEqual(
@@ -76,11 +76,11 @@ class ProbeProjectTest(unittest.TestCase):
             with zipfile.ZipFile(io.BytesIO(inner)) as db:
                 timing = inspect_timing(db, json.loads(db.read("mpdb.json")))
         segments = [0.04, 0.06] * 18 + [0.04]
-        playback = resolve_playback(timing, None, segments, 100)
+        playback = resolve_playback(timing, None, segments, "standard")
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "project"
             generate_ota(archive, output, playback)
-            for name, frames in (("baseline", 38), ("dynamic", 185)):
+            for name, frames in (("baseline", 38), ("dynamic", int(1.84 * playback["rate_hz"])+1)):
                 folder = output / name
                 manifest = json.loads((folder / "manifest.json").read_text())
                 self.assertEqual(manifest["source_sha256"], source_digest)

@@ -9,22 +9,22 @@ const origin = 'https://example.test'
 const project = { asc_count: 8, download_url: '/project.zip' }
 
 test('逐段时长按源帧数校验，原始时间不提交假定速度', () => {
-  assert.deepEqual(projectParameters('ota', '', '100', 'segments', '0.8, 1.2', 2),
-    {mode:'ota', rate_hz:100, segment_durations_s:[0.8,1.2]})
-  assert.equal(projectParameters('ota','','100','segments','1,',2),null)
-  assert.deepEqual(projectParameters('ota','','100','original','',2),{mode:'ota',rate_hz:100})
+  assert.deepEqual(projectParameters('ota', '', 'standard', 'segments', '0.8, 1.2', 2),
+    {mode:'ota', rate_quality:'standard', segment_durations_s:[0.8,1.2]})
+  assert.equal(projectParameters('ota','','standard','segments','1,',2),null)
+  assert.deepEqual(projectParameters('ota','','standard','original','',2),{mode:'ota',rate_quality:'standard'})
 })
 
 test('保留播放参数精度，拒绝空值、非正数和无穷值', () => {
-  assert.deepEqual(projectParameters('ota', '5', '171.18765176762867'), {
+  assert.deepEqual(projectParameters('ota', '5', 'dense'), {
     mode: 'ota',
     speed_m_s: 5,
-    rate_hz: 171.18765176762867,
+    rate_quality: 'dense',
   })
   assert.deepEqual(projectParameters('conducted', '', '-1'), {
     mode: 'conducted',
   })
-  for (const value of ['', '0', '-2', 'Infinity', '未知'])
+  for (const value of ['', '0', '-2', 'Infinity', '未知','100'])
     assert.equal(projectParameters('ota', '5', value), null)
 })
 
