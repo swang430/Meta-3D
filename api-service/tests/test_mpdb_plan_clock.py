@@ -31,6 +31,14 @@ def test_pair_and_rate_follow_physical_axis_not_speed():
     standard = clocks.resolve_playback(matched,None,None,"standard")
     assert standard["rate_hz"] >= 4
     assert standard["source_times_s"] == [0,.25,2]
+    regular = json.dumps({**doc,"plans":[{**plan,"metadata":{**meta,"rtSampleTimesSeconds":[7,8,9]}}]}).encode()
+    interval_only = {**timing,"source_times_s":[0,1,2],"time_source":"meta.rtSampleIntervalSeconds"}
+    assert clocks.match_plan(regular,platform,interval_only)["source_times_s"] == [7,8,9]
+    approx = {**timing,"source_times_s":[7.0000001,7.25,9],"time_source":"FRAME.TIME_S"}
+    assert clocks.match_plan(raw,platform,approx)["source_times_s"] == [7,7.25,9]
+    for bad in ({**interval_only,"source_times_s":[0,.5,2]}, {**approx,"source_times_s":[7.001,7.25,9]}):
+        with pytest.raises(ValueError):
+            clocks.match_plan(raw,platform,bad)
     assert clocks.resolve_playback(matched,None,None,"dense")["rate_hz"] == 2*standard["rate_hz"]
     assert clocks.resolve_playback({**matched,"max_abs_doppler_hz":27},None,None,"standard")["rate_hz"] > 54
     for changes in (dict(frame_ids=[0,1,4]),dict(source_times_s=[0,1,2]),

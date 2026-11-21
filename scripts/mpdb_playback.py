@@ -36,7 +36,7 @@ def output_grid(end, rate):
     return grid
 
 
-def inspect_timing(db, desc):
+def inspect_timing(db, desc, plan_raw=None):
     records = desc.get("records", {})
     if "LINK" not in records:
         raise ValueError("缺少源帧链路记录")
@@ -137,7 +137,7 @@ def inspect_timing(db, desc):
         peak = float(np.max(np.abs(doppler.astype(float)))) if doppler.dtype.kind in "iuf" and np.isfinite(doppler).all() else None
     except (KeyError, ValueError, TypeError, OSError):
         peak = None  # 此处不以能否计算最大频移决定传导导入；传导生成器仍独立校验所需射线列。
-    return dict(
+    timing = dict(
         max_abs_doppler_hz=peak,
         frame_only=frame_only,
         embedded_axis_lengths=axis_lengths,
@@ -147,9 +147,10 @@ def inspect_timing(db, desc):
         source_times_s=axis,
         time_source=source,
     )
+    return match_plan(plan_raw, meta["lauraycsPlatform"], timing, declarations) if plan_raw is not None else timing
 
 
-def match_plan(raw, platform, timing):
+def match_plan(raw, platform, timing, declarations=None):
     if timing.get("frame_only"):
         raise ValueError("下行文件明确声明只有帧编号，与清单物理时钟冲突")
     doc = json.loads(raw)
@@ -225,8 +226,14 @@ def match_plan(raw, platform, timing):
             or frames != list(range(len(frames))) or not isinstance(times,list) or len(times) != len(frames)
             or not all(map(finite,times)) or any(b <= a for a,b in zip(times,times[1:]))):
         raise ValueError("清单的物理时钟、帧号或逐帧时间不匹配")
-    if timing["source_times_s"] is not None and timing["source_times_s"] != times:
-        raise ValueError("清单时间与下行文件内时间冲突")
+    if declarations is None:
+        declarations = [(timing["time_source"] or "", timing["source_times_s"])] if timing["source_times_s"] is not None else []
+    for name, embedded in declarations:
+        # 间隔没有起始时刻；绝对时间有。逐一对照可避免多个来源经容差累积而被误认一致。
+        if (not np.allclose(np.diff(embedded), np.diff(times), rtol=0, atol=1e-6)
+                or (not name.endswith(".rtSampleIntervalSeconds")
+                    and not np.allclose(embedded, times, rtol=0, atol=1e-6))):
+            raise ValueError("清单时间与下行文件内时间冲突")
     return {**timing,"source_times_s":times,"time_source":"compute-link-plan.manifest.json:rtSampleTimesSeconds",
             "plan_sha256":hashlib.sha256(raw).hexdigest()}
 

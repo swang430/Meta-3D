@@ -126,12 +126,12 @@ def import_source(file: UploadFile = File(...), members: UploadFile | None = Fil
                     raise ValueError(
                         "当前支持采用全局角度坐标、单一载频的信道冲激响应数据"
                     )
-                timing = playback.inspect_timing(db, desc)
+                plan_raw = None
                 if plan_manifest is not None:
                     plan_raw = plan_manifest.file.read(8 * 1024**2 + 1)
                     if len(plan_raw) > 8 * 1024**2:
                         raise ValueError("链路计算清单超过 8 MiB")
-                    timing = playback.match_plan(plan_raw, platform, timing)
+                timing = playback.inspect_timing(db, desc, plan_raw)
                 if members is not None:
                     link_ids = conducted.column(db, desc, "LINK", "LINK_ID").ravel()
         (folder / "timing.json").write_text(json.dumps(timing, allow_nan=False))
