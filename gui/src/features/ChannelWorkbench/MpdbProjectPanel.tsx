@@ -181,6 +181,8 @@ export function MpdbProjectPanel() {
                 下载工程
               </Button>
             </Group>
+            {project.summaries.map((summary) => <Text key={summary}>{summary}</Text>)}
+            <Text>以上为离线生成结果，仪器播放效果待现场核验。</Text>
             {project.notice && <Alert color="yellow">{project.notice}</Alert>}
             {project.report && <ClusterReport report={project.report} />}
           </Stack>

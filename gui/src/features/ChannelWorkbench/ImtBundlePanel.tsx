@@ -2,8 +2,14 @@ import { useRef, useState } from 'react'
 import { Button, Group, Paper, Select, Stack, Text, Title } from '@mantine/core'
 import { readBundle, verifyAscFile, type Mode } from './imtBundle'
 
+import { imtProjectDirectories } from './imtProjectDirectories'
+
 export function ImtBundlePanel() {
-  const [mode, setMode] = useState<Mode>('conducted')
+  const [mode, setMode] = useState<Mode | null>(null)
+  const [projects, setProjects] = useState<
+    ReturnType<typeof imtProjectDirectories>
+  >([])
+  const [selected, setSelected] = useState('')
   const [data, setData] = useState<ReturnType<typeof readBundle> | null>(null)
   const [error, setError] = useState(''),
     [tx, setTx] = useState('0'),
@@ -12,26 +18,37 @@ export function ImtBundlePanel() {
   const [busy, setBusy] = useState(false)
   const generation = useRef(0),
     input = useRef<HTMLInputElement>(null)
-  async function load(files: File[]) {
+  async function load(files: File[], path: string) {
+    setSelected(path)
+    setMode(null)
+    setTx('0')
+    setFreq('0')
     const id = ++generation.current
     setData(null)
     setError('')
     setComparison('')
     setBusy(true)
     try {
+      if (!globalThis.crypto?.subtle)
+        throw Error('浏览器需要 HTTPS 或本机地址才能核对文件校验值')
       const list = files.filter((f) => f.name === 'manifest.json')
       if (list.length !== 1)
         throw Error('请选择一个工程目录，其中须有 manifest.json 和 ASC 文件')
-      const parsed = readBundle(JSON.parse(await list[0].text()), mode)
-      const directory = list[0].webkitRelativePath
-        .split('/')
-        .slice(0, -1)
-        .join('/')
-      const siblings = files.filter(
-        (f) =>
-          f.webkitRelativePath.split('/').slice(0, -1).join('/') === directory,
+      const manifest = JSON.parse(await list[0].text())
+      const mode = manifest?.mode
+      if (mode !== 'conducted' && mode !== 'ota')
+        throw Error('清单未注明可识别的测试方式')
+      if (
+        path &&
+        (mode !== 'ota' ||
+          manifest.evidence !==
+            (path === 'baseline'
+              ? 'offline_ideal_plane_wave'
+              : 'offline_distance_doppler'))
       )
-      const byName = new Map(siblings.map((f) => [f.name, f]))
+        throw Error('清单记录的工程类型与子目录不符：' + path)
+      const parsed = readBundle(manifest, mode)
+      const byName = new Map(files.map((f) => [f.name, f]))
       for (const link of parsed.links) {
         if (id !== generation.current) return
         const f = byName.get(link.file)
@@ -44,6 +61,7 @@ export function ImtBundlePanel() {
           ? await report.text()
           : ''
       if (id === generation.current) {
+        setMode(mode)
         setComparison(notes)
         setData(parsed)
       }
@@ -63,28 +81,8 @@ export function ImtBundlePanel() {
       <Stack gap="sm">
         <Title order={4}>查看下行信道工程</Title>
         <Group align="end">
-          <Select
-            label="测试方式"
-            value={mode}
-            allowDeselect={false}
-            data={[
-              { value: 'conducted', label: '电缆传导' },
-              { value: 'ota', label: '暗室 OTA' },
-            ]}
-            onChange={(v) => {
-              generation.current++
-              setMode(v as Mode)
-              setData(null)
-              setError('')
-              setBusy(false)
-            }}
-          />
           <Button
             onClick={() => {
-              if (!globalThis.crypto?.subtle) {
-                setError('浏览器需要 HTTPS 或本机地址才能核对文件校验值')
-                return
-              }
               input.current?.click()
             }}
           >
@@ -101,10 +99,47 @@ export function ImtBundlePanel() {
             onChange={(e) => {
               const files = Array.from(e.target.files ?? [])
               e.target.value = ''
-              if (files.length) void load(files)
+              if (!files.length) return
+              try {
+                const next = imtProjectDirectories(files)
+                setProjects(next)
+                void load(next[0][1], next[0][0])
+              } catch (error) {
+                generation.current++
+                setProjects([])
+                setData(null)
+                setBusy(false)
+                setMode(null)
+                setComparison('')
+                setError(
+                  error instanceof Error ? error.message : '读取目录失败',
+                )
+              }
             }}
           />
         </Group>
+        <Text size="sm">
+          选择含清单和 ASC
+          文件的目录，系统会根据清单识别测试方式。也可选择解压后的 OTA 总目录。
+        </Text>
+        {projects.some(([path]) => path) && (
+          <Select
+            label="查看子工程"
+            value={selected}
+            allowDeselect={false}
+            data={projects.map(([path]) => ({
+              value: path,
+              label:
+                path === 'baseline'
+                  ? '基准工程（baseline）'
+                  : '动态工程（dynamic）',
+            }))}
+            onChange={(value) => {
+              const project = projects.find(([path]) => path === value)
+              if (project) void load(project[1], project[0])
+            }}
+          />
+        )}
         {busy && <Text>正在核对工程清单和 ASC 文件…</Text>}
         {error && (
           <Text c="red" role="alert">
@@ -114,6 +149,7 @@ export function ImtBundlePanel() {
         {data && (
           <>
             <Text>
+              {mode === 'conducted' ? '电缆传导' : '暗室 OTA'} ·{' '}
               {data.links.length} 份 ASC 文件校验一致 · {data.frames} 行 · 每行{' '}
               {data.taps} 个抽头 · {data.carrier / 1e6} MHz · {data.rate} Hz
             </Text>

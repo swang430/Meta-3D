@@ -3621,6 +3621,12 @@ export interface components {
             download_url: string;
             /** Asc Count */
             asc_count: number;
+            /** Manifests */
+            manifests: {
+                [key: string]: {
+                    [key: string]: unknown;
+                };
+            };
             /** Results */
             results?: {
                 [key: string]: unknown;

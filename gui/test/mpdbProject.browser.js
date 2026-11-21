@@ -59,16 +59,22 @@
     uploads === 1 && builds.at(-1).speed_m_s === 7,
     '重复上传或播放参数错误',
   )
-  await page.getByText('导入已有结果', { exact: true }).click()
+  const review = page.getByText('查看或核验已有工程', { exact: true })
+  const history = review.locator('..')
+  check(!(await history.getByText('选择工程目录').isVisible()), '已有工程默认展开')
+  await review.click()
+  await history.getByText('选择工程目录').waitFor()
+  check(!(await history.getByText('从原始文件导入轨迹').count()), '计算工具混入工程复查')
+  await page.getByText('核验聚簇结果', { exact: true }).first().click()
   await page.getByRole('heading', { name: '聚簇结果核验' }).waitFor()
-  await page.getByText('从 MPDB 创建信道工程', { exact: true }).first().click()
+  await review.click()
   check(
     (await download.isVisible()) && (await speed.inputValue()) === '7',
     '切换入口丢失工程',
   )
   await mode('传导')
   await download.waitFor()
-  check(!(await pane.innerText()).includes('Hz'), '传导结果包含播放频率')
+  check(!(await speed.isVisible()), '传导显示了空口播放参数')
   await select('second.zip')
   check(!(await download.isVisible()), '传导结果串批')
   await mode('空口（OTA）')
