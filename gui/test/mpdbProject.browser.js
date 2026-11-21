@@ -24,6 +24,7 @@
     })
   })
   await page.getByText('信道工作台', { exact: true }).first().click()
+  await page.locator('label').filter({hasText: /^RT 动态$/}).click()
   const pane = page
     .getByRole('heading', { name: '从 MPDB 创建信道工程' })
     .locator('xpath=../..')

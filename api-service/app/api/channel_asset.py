@@ -70,6 +70,7 @@ class ChannelAssetCreate(ChannelAssetBase):
 
 
 class ChannelAssetUpdate(ChannelAssetBase):
+    rt_scene: Optional[bool] = Field(None, strict=True, description="仅改变既有 SMU 在 RT 场景列表的显示，须单独提交")
     name: Optional[str] = None
     payload: Optional[Dict[str, Any]] = None
     is_active: Optional[bool] = None

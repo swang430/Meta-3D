@@ -6937,6 +6937,8 @@ export interface components {
             created_by?: string | null;
         };
         ChannelAssetUpdate: {
+            /** @description 只改变关联 SMU 的 RT 场景分类，须单独提交。 */
+            rt_scene?: boolean;
             name?: string | null;
             payload?: {
                 [key: string]: unknown;
