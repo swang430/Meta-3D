@@ -136,7 +136,7 @@ def inspect_timing(db, desc):
         doppler = column(db, desc, "CHANNEL", "DOPPLER")
         peak = float(np.max(np.abs(doppler.astype(float)))) if doppler.dtype.kind in "iuf" and np.isfinite(doppler).all() else None
     except (KeyError, ValueError, TypeError, OSError):
-        peak = None  # 传导源帧不需要这个字段；动态生成时必须拒绝未知值。
+        peak = None  # 此处不以能否计算最大频移决定传导导入；传导生成器仍独立校验所需射线列。
     return dict(
         max_abs_doppler_hz=peak,
         frame_only=frame_only,
@@ -201,6 +201,15 @@ def match_plan(raw, platform, timing):
     for key in ("routeIndex","linkIndex","baseStationIndex","sectorIndex","transmitterIndex"):
         if type(meta.get(key)) is not int or type(platform.get(key)) is not int or meta[key] != platform[key]:
             raise ValueError("链路索引不匹配：" + key)
+    for endpoint, field, key in (("receiver","terminalIndex","terminalIndex"),
+                                 ("receiver","routeIndex","routeIndex"),
+                                 ("transmitter","index","transmitterIndex"),
+                                 ("baseStation","index","baseStationIndex"),
+                                 ("sector","index","sectorIndex")):
+        node = platform.get(endpoint, {})
+        if field in node and (type(node[field]) is not int or type(meta.get(key)) is not int
+                              or node[field] != meta[key]):
+            raise ValueError("链路端点索引不匹配：" + key)
     for key, value in (("direction","downlink"),("linkKey",platform.get("linkKey")),
                        ("txNodeId",platform["transmitter"].get("nodeId")),
                        ("rxNodeId",platform["receiver"].get("nodeId"))):

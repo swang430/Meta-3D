@@ -12,10 +12,10 @@ import mpdb_playback as clocks
 def test_pair_and_rate_follow_physical_axis_not_speed():
     platform = dict(name="R0B0S0D.mpdb", direction="downlink", linkIndex=0, routeIndex=0,
                     sectorIndex=0, baseStationIndex=0, transmitterIndex=0, linkKey="link",
-                    transmitter={"nodeId":"tx"}, receiver={"nodeId":"rx"})
+                    transmitter={"nodeId":"tx","index":0}, receiver={"nodeId":"rx","terminalIndex":0,"routeIndex":0})
     meta = {k:platform[k] for k in ("direction","linkIndex","routeIndex","sectorIndex",
                                       "baseStationIndex","transmitterIndex","linkKey")}
-    meta.update(txNodeId="tx", rxNodeId="rx", rtFrameClock={"version":1,"mode":"physical"},
+    meta.update(txNodeId="tx", rxNodeId="rx", terminalIndex=0, rtFrameClock={"version":1,"mode":"physical"},
                 rtSampleTimesSeconds=[7,7.25,9])
     plan = dict(planIndex=0, dataFile="R0B0S0D.arrow", frameCount=3, metadata=meta,
                 rowOffset=0, rowsPerFrame=8)
@@ -37,7 +37,7 @@ def test_pair_and_rate_follow_physical_axis_not_speed():
                     dict(frame_only=True),dict(frame_row_counts=[8,7,9]),dict(embedded_axis_lengths=[4])):
         with pytest.raises(ValueError):
             clocks.match_plan(raw,platform,{**timing,**changes})
-    for change in (dict(txNodeId="rx"),dict(routeIndex=1),dict(rtFrameClock={"version":1,"mode":"frame-only"}),
+    for change in (dict(terminalIndex=99),dict(terminalIndex=False),dict(txNodeId="rx"),dict(routeIndex=1),dict(rtFrameClock={"version":1,"mode":"frame-only"}),
                    dict(rtSampleTimesSeconds=[7,8,8]),dict(rtSampleTimesSeconds=[7,8,10**400])):
         with pytest.raises(ValueError):
             clocks.match_plan(json.dumps({**doc,"plans":[{**plan,"metadata":{**meta,**change}}]}).encode(),platform,timing)
