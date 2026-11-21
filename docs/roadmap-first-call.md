@@ -1,8 +1,23 @@
 # MIMO-First — First-Call Roadmap
 
+### 2026-11-20 下一步：不连仪器的开发队列
+
+沿用 P2-16 的编号，同一时间只做一项。以下是开发计划，不是已实现功能。已有[三种簇数的离线对照](plans/s5c-budget-comparison.md)和[工作台逐帧计算记录](plans/2026-11-19-s5-formal-integration.md)，不重复开发聚簇导入器；DEL-01 和 DEL-02 已完成的离线工作也不重开。
+
+| 顺序 | 待办 | 做到什么算完成 |
+|---|---|---|
+| 1，优先 | **P2-16 S5c / S6：离线核对设备文件** | 先盘点现有检查，用 RT-IMT-2030 作首例。将源轨迹、聚簇结果与 ASC 对照，列出方向、时间轴、更新率、时长、抽头时延及末帧的核对结果和依据。文件本身没有保存的来源或参数标为无法核对；换入不匹配的文件不能报通过。交付可供其他客户文件复用的核对结果，不要求重复现场加载。 |
+| 2，其后 | **P2-16 S5c：测试用例关联信道资产** | 复用资产库与测试用例，核对实际执行会选哪个文件、版本和方向；用正确文件及错配文件分别验证。不得把模型计算 JSON 当作设备文件，也不放宽正式多快照执行条件。 |
+| 3，等资料 | **P2-16 S5c：按探头和极化通道合成** | 先取得与轨迹匹配的天线姿态、极化分量和探头映射，再核对各通道权重、不等间隔采样点之间的相位连续性及末帧。资料不足时不以默认值补齐。 |
+
+单天线工程能在 F64 启停，不等于已验证多通道逐帧输出、实测功率或现场校准；这些结论不由离线开发签收。
+
 ### 2026-11-20 现场核对：已验证范围与剩余待办
 
-- P2-96：三轮正常诊断从 93° 出发，经相对 +90° 后返回并停稳，最终编码器分别为 93°、92.999714°、92.999714°。不关闭异常中断分支，也不作为机械回零证据。P1-4：两轮相同配置下每轮六个 1000 子帧窗口均为 18.736 Mbps；这是诊断重复性，不替代正式指标。
+2026-11-20 用户决定：V6 / NEW-2、P2-85、P2-4、P1-6 的非 UXM 空闲连接与重连部分、P2-10 的非校准部分、P2-12 退出现场阻塞队列。关闭表示不再排复测，不为未执行的场景补记通过。P1-6 的 UXM 部分和 P2-10 的内部校准状态不变。
+
+- [x] **P1-4 已关闭（2026-11-20，用户决定）**：两轮独立执行 `650cb845-ba7c-4cd3-84d0-816d167d0bad`、`04e2713f-719b-4785-993c-120f2145ea82` 配置相同，各在 93°、183° 分别取得三个 1000 子帧窗口；12 个吞吐读数均为 18.736 Mbps。不再安排重复验证；未测的 RSRP、SINR 和校准精度不记为通过。
+- P2-96：三轮正常诊断从 93° 出发，经相对 +90° 后返回并停稳，最终编码器分别为 93°、92.999714°、92.999714°。不关闭异常中断分支，也不作为机械回零证据。
 - NEW-1：诊断记录 `bedfd71a-b3b8-4b20-952b-5dee3e0e91a1` 中，16 个活动输出均在检查范围内；不代表整条射频链已校准。V2：固定位置诊断 `c1a989e4-2f6a-4e99-9482-34ab62c06b25` 已接入，三个 5000 子帧窗口均为 18.736 Mbps；不是正式验收。
 - NEW-2：软件释放连接后，操作员点击面板 Local Mode，蓝色指示和水印消失。手动接管已验证；不要求面板自行切回。P2-85：STOPPED 下重复 GOS 一次返回 -200，随后两次读到 STOPPED，错误队列清空；不推断 CLOSED 状态、射频关断或回卷。
 - RT-IMT-2030：由 ASC 生成的单天线工程已通过 Meta-3D 加载，设置并回读 −35 dBm，观察到 RUNNING 后停止至 STOPPED；这是设置回读，不是实测输出功率，也不是 B41 吞吐用例验收。
@@ -501,7 +516,7 @@ P3-20/P3-21 仍不得自动启动。
    与逐方位双坐标证据的本地半，两者当前
    等待真机只读复验。这些修复不能伪造现场通过，完成后状态仍是“待现场复验”。P2-42～P2-45
    的上一轮架构收敛已经全部合并（队列现状见上一条，不在此重复）。
-3. **First-call / on-site 队列按当前分类排期**：P0-5、P1-2、P1-4、P2-4，以及
+3. **First-call / on-site 队列按当前分类排期**：P0-5、P1-2、P2-4，以及
    P1-17 / P2-9 / P2-10 / P2-12 / P2-13 的现场半；P1-5 已退出当前 PFS power-only 队列，P1-6 继续 HOLD。
    到场后按「现场验证分类与执行顺序」推进；非现场只能准备载体，不能把本地测试或文档更新记成现场完成。
 
@@ -1177,21 +1192,21 @@ UXM 与 CE 认证按相应设备/手册和前置证据就绪情况另排。以�
 | P0-5 | DUT attach → bearer → PDSCH on UXM 5G NR | 2026-07-21 物理 attach + 转台四方向已跑通；P1-47C 已完成本地同次执行证据机制。2026-08-27 诊断已证明 Aerotech degree 单位和 +90° MOVEABS↔PFBK 偏置，P0-9B-3 已把该合同冻结进 execution 并接入 evidence。当前阻塞为：现场复验同一 TestCase 方位、独立证明 HOME 最终 PFBK、补 Aerotech 实时型号/固件依据，以及 on-site real DUT 的正式 TestCase 复验 | ✅ 诊断：[`baseStation_attach_check`](../api-service/app/diagnostics/sequences/baseStation_attach_check.py)；正式关闭：MIMO_OTA TestCase。只有受支持环境下同一 execution 的 mandatory E0–E4 全部成立才可关闭；`uxm_config_mode=inherit`、ASC/B2 模型加载和未冻结进 execution 的转台真值会按设计保持 unknown，**现场已观察事实不等于正式通过** |
 | ~~P0-8~~ ✅ **2026-09-16 现场完成** | ~~F64 driver 现场修复落地~~ —— real F64 上 load→run→改参全 0 error + 输入口变绿 + DL 不失真 | **P0-8b ✅**：执行 `dbd53e6f` 在 SCME UMa 衰落下 DL ACK 100 % / BLER 0 %，吞吐 45.82 Mbps，且 NACK 0 % / DTX 0 % —— 调度的传输块全部被确认，即该调度下的满额（原始回复见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) §3）；最难的衰落态已满额，bypass 半不再单独要求。✅ **2026-08-27 P0-8a 历史现场证据已通过**：LTE UMa 20 MHz SMU 加载/运行，输入侧测到 CMW500 信号，配置链正常。仅余 P0-8b：DUT Attach 后证明 DL 非 0% ACK/不失真 | ✅ [`propsim_f64_p08_gate`](../api-service/app/diagnostics/sequences/propsim_f64_p08_gate.py) 已由 P2-73 收紧为服务器权威的 UXM-only 诊断载体：CMW500、Mock、缺少/漂移在 Remote/F64 I/O 前 fail-closed；`uxm_dl_confirmed` 只是物理满 RB DL 确认。CMW500 复验仍用 P0-9 同一 LTE MIMO_OTA TestCase，不使用本序列 |
 | P1-2 | F64 license probe SCPI 现场验证 | ⚠️ **2026-09-16 现场发现阻塞，不能关闭**：同机连续两次运行 `e916b910` / `c3a445a2` 均在第一轮已排空队列后复现同一 `-200 No simulation opened` + `-100 ATE command not supported`。许可真值 `SYSTem:INFO?` 已确认且与驱动 `INT-GEN` 对账一致，但当前校准有效性与用户对齐状态未确认。**P1-80 软件半已完成**：空回复不再脱离错误队列显示为绿色 | ✅ 载体仍为 [`propsim_f64_license_truth`](../api-service/app/diagnostics/sequences/propsim_f64_license_truth.py)：开场 residue 归档、逐查询错误归属、命令值域 fail-closed、license/calibration/user-alignment 分判均已落地且未新增/猜测 SCPI。仍须在同一 F8800A 上从干净队列复验；只有有效子判决 + 终态零残留才关闭。现场原始证据见 [`guides/2026-09-16-cmw500-f64-onsite-runbook.md`](guides/2026-09-16-cmw500-f64-onsite-runbook.md#propsim_f64_license_truth-%E6%8A%8A%E9%94%99%E8%AF%AF%E7%A9%BA%E5%9B%9E%E5%A4%8D%E6%98%BE%E7%A4%BA%E4%B8%BA%E6%88%90%E5%8A%9F) |
-| P1-4 | first-call repeatability test | on-site 全链路 | ✅ **软件载体已由 P1-72 / #396 补齐**：同一 MIMO_OTA TestCase 两次 execution，使用 execution 级 ReportComparison 与 repeatability_tests 对齐；现场实际重复执行及对比证据仍未关闭。不再把旧 plan_id 契约当待开发缺口 |
+| ~~P1-4~~ ✅ 已关闭 | 同配置两次独立运行的吞吐重复性 | 2026-11-20 用户确认关闭 | ✅ **软件载体已由 P1-72 / #396 补齐**：同一 MIMO_OTA TestCase 两次 execution，使用 execution 级 ReportComparison 与 repeatability_tests 对齐；现场吞吐对照见页首，不再列为阻塞。不再把旧 plan_id 契约当待开发缺口 |
 | P1-5 **退出当前现场队列** | CAL-04 phase calibration | 不作为 PFS power-only 测试前置 | 当前 [`POST /api/v1/calibration/probe/phase/start`](../api-service/app/api/probe_calibration.py) 已受控拒绝，旧 mock 落库入口已关闭；PFS power-only 不需要相位校准。不安排现场执行、不以关闭旧入口冒充真校准完成；未来确有相位需求时另立项。 |
 | P1-17 **现场半** | UXM fresh-start 配置落地 | on-site real UXM | ⚠️ **部分载体**：[`uxm_config_truth_probe`](../api-service/app/diagnostics/sequences/uxm_config_truth_probe.py) 只在已 ON 小区扰动/恢复 ARFCN；不触发 fresh-start/HAL reload、`default_state_file` recall、默认 profile/state 自动应用、全配置/MIMO 对齐或 `.state` 盘点。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_fresh_start_truth`](../api-service/app/diagnostics/sequences/uxm_fresh_start_truth.py) —— 手册 `SYSTem:SCPI:IMPort` 系列只读真值 + 显式确认后导入。**✅ 驱动侧收口（P1-67 #383）**：`STATE_LOAD/STATE_SAVE` 已换 `SYSTem:SCPI:IMPort/EXPort`（写后 STATus? + 错误队列复核），`STATE_LIST=None`（手册无文件列表命令） |
-| P2-4 | NAT/firewall idle-drop 假设验证 | on-site 现场网络 | ❌ **无载体**：C 类长连接放置后观察。保留 Blocked，待独立 triage；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：[`connection_idle_hold_probe`](../api-service/app/diagnostics/sequences/connection_idle_hold_probe.py) —— 空置 ≤900 s 后 `*IDN?`，重连迹象按真驱动属性派生；caveat：runner 租约默认开监控 |
+| P2-4 | NAT/firewall idle-drop 假设验证 | 现场项已关闭 | 2026-11-20 用户决定；关闭范围见页首。 |
 | P2-9 **现场半** | EMCenter switch bring-up | **2026-08-28 本地分类已收口，安全真值仍待现场**：VXI-11、机箱身份与继电器回读已于 08-27 人工接受；序列只对系统软件 2.5.1 的完整 `ERROR 3;(INTLK? SAFETYRELAY);` 原始回复精确归类为 `known_unsupported`，并保持 `UNDETERMINED`；其他近似值仍 BLOCKER | ✅ 载体：[`emcenter_switch_health`](../api-service/app/diagnostics/sequences/emcenter_switch_health.py)。现场若仍为已知不支持，只能留 UNKNOWN 证据；取得权威互锁 0 或独立可审计的安全状态证据后才关闭。TopologyEditor mapping 与真机切换仍是独立未完成项 |
-| P2-10 **现场半** | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | on-site real F64 | ⚠️ **部分载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) / [`propsim_f64_state_machine`](../api-service/app/diagnostics/sequences/propsim_f64_state_machine.py) 只覆盖公共能力与状态语义，配置资产/外部输出/内部 cal 仍须在 P2-10 内逐项拆；不并入 P1-46 |
+| P2-10 | F64 工程精细化（配置资产 / 外部输出 / 内部 cal） | 工程配置与外部输出已关闭；仅内部校准待验 | 2026-11-20 用户决定；关闭范围见页首。 |
 | **P2-71（设备半）** | **F64 `.smu` 常态发布、设备侧版本/字节验约与回滚** | 2024 通用 User Reference §20.4.13–14 列有 `MMEM` 文件命令，但 CAICT F8800A 历史实测 `MMEM:CDIR?` / `CAT?` 为 `-100`，FTP(21) 关闭；当前冻结/加载证明不了设备字节。原因未定，不能按通用手册上线自动发布；详见[调研结论](plans/2026-09-13-p2-71-f64-file-provisioning-research.md) | ⚠️ **能力分类半载体**：[`propsim_f64_health`](../api-service/app/diagnostics/sequences/propsim_f64_health.py) 的 `MMEM_CDIR/CAT` 可在独占维护窗口复核支持分类；现会把目标 query raw/异常与错误队列 raw 一并保存在 `extra.scpi_observations`，但序列仍发送 `*CLS`、消耗错误队列。运行前必须保全已有错误证据，执行中禁用。**文件取回/写入/替换、设备字节摘要、版本验约和回滚仍无受控载体**，不得在临时脚本或正式 TestCase 试探；本地/文档调研不关闭本行 |
 | **P2-77（现场半）** | **F64 vendor asset 有界调频与全组回读证明** | 软件依 PROPSIM User Reference Rev 10.2 §20.4.6.1 / §20.4.6.2（pp.280–281）及 §20.4.6.8（p.282）实现「全组限值预检 → 写入/错误门 → 全组精确回读」，但 fake transport 不能证明真实 F8800A 的范围形态、自动钳位和逐组回读行为 | ⚠️ **正式 TestCase 现场验收**：在同一真实 F8800A、同一 vendor `.smu` 工程上保存两个合法中心频点的逐组 limits / requested / applied / 错误队列原始证据，再验一个越界频点在首个写入前拒绝；工程若返回多区间，再保存一个多区间样本。本地测试、Mock 或手工改资产登记都不关闭本行 |
-| P2-12 **现场半** | 标准信道文件定义 | on-site real F64 | ❌ **无事项级载体**：F64 公共序列只能验健康/状态，不能证明标准信道文件定义端到端正确。保留 P2-12，跟 P2-10 同批拆；不并入 P1-46 |
+| P2-10 | 标准信道文件定义 | 工程配置与外部输出已关闭；仅内部校准待验 | 2026-11-20 用户决定；关闭范围见页首。 |
 | P2-13 **现场半** | SIMProfile + SIM↔UXM 一致性 | on-site 真 SIM | ⚠️ **正式 TestCase 半覆盖**：[`MIMOOTAConfiguration.sim_profile_id`](../api-service/app/schemas/mimo_ota/config.py) 已由 [`precheck`](../api-service/app/services/mimo_ota/executors/precheck.py) 核对 SIMProfile；但 UXM 实测 IMSI 当前多数仍回退 attach 手填值，不能证明真卡身份闭环。保留 Blocked；不并入 P1-46 **✅ 载体补全（P1-65 #380）**：[`uxm_sim_identity_truth`](../api-service/app/diagnostics/sequences/uxm_sim_identity_truth.py) —— `UEReported:IMSI?` 与 SIMProfile 对账，四出口脱敏 |
 | **NEW-1** 现场半 | **F64 各输出口的电平合法窗口** —— `OUTP:LEV:AMP:LIM? <out>` 逐口读上下限 | **2026-08-28 本地半完成，现场 SUCCESS 仍待复验**：序列不再采信人工 `outputs`、驱动旧缓存或 `SYSTem:INFO?` 通道数；每次按手册实时读取 `MODEL:INFO?` 与各组 `GROUP:OUTPUTS:GET?` 并交叉核对，只查询当前活动物理输出口。未进入活动集合的硬件口不探测、不阻塞；两个拓扑来源矛盾时保持 UNDETERMINED | ✅ 载体：[`propsim_f64_output_level_windows`](../api-service/app/diagnostics/sequences/propsim_f64_output_level_windows.py)；回现场加载同一场景后重跑并取得 SUCCESS 才关闭 |
-| **NEW-2** 现场半 | **关掉 ATE socket 后 F64 前面板 Local 是否真的可用** | 2026-08-27 仍只有人工面板理解，数据库中没有可核对的 SUCCESS；代码只可确认 `ate_socket_released`，不得替仪器宣称前面板已 Local | ✅ 载体：[`propsim_f64_local_handback_check`](../api-service/app/diagnostics/sequences/propsim_f64_local_handback_check.py) 两段式人工确认；release 后先观察面板，confirm 时显式选择 `local` / `remote` 并填写原文。留空保持 UNDETERMINED，不再由 GUI 默认为否；人工观察仍不授予正式资格 |
+| NEW-2 | **关掉 ATE socket 后 F64 前面板 Local 是否真的可用** | 现场项已关闭 | 2026-11-20 用户决定；关闭范围见页首。 |
 | **NEW-3** 现场半 | **`OffsetToCarrier` 要不要一并下发 102** | on-site real UXM。⚠ `nr_band_baselines.json:11-20` 有 `offset_to_carrier: 102` 但**全仓零写方**；而 `1bb0acc` **第一次**在 IRAT 上真正打开了 PointA 下发（改动前 `CELL_DL_POINTA=None`，从不发）。PointA 632946 只有配 OffsetToCarrier=102 才与 ARFCN 636666 / BW40 自洽，仪器上为 0 或残留值时载波栅格错位 —— 是 2026-08-07 后两轮 **attach 60s 超时**的候选解释之一（未证实） | ❌ **待建**：属「下发 + 回读 + 看 attach」的剧本式序列 **✅ 载体（P1-65 #380）**：[`uxm_offset_to_carrier_probe`](../api-service/app/diagnostics/sequences/uxm_offset_to_carrier_probe.py) —— 只读采集，显式确认 + 小区 OFF 才写，不 APPLY |
 | **NEW-4 / P1-56 现场半** | **转台收到 `MOVEABS X 0` 为什么不动** | **2026-09-16 新事件**：`MOVEABS X -90` 途中连接被 reset → 非幂等命令结局未知 → ABORT 读 `VFBK(X)` 得空串 → 急停（零速度确认），见[现场总结](site-debug/2026-09-16-cmw500-f64-onsite-summary.md) D8；运动真值序列当日未跑。 on-site real Aerotech。⚠ 2026-08-07 实测：14:23–17:44 共 **6 个 execution / 15 次** `MOVEABS X 0.0000`，编码器 `PFBK(X)` 一个计数都没动，而 `move_to` 仍返回成功并打印「Arrived: Az=90.00°」。**最危险的一条**：功率问题一旦修好走进方位循环，四个方位测的是同一个物理位置，产出一份看不出破绽的假数据，现有的门一个都不会红。⚠ 仓内厂商文档对象是 **Ensemble**，而驱动文件头写 **A3200**，型号不符待确认 | ✅ **本地载体已由 P1-56 / PR #350 收口**：[`aerotech_positioner_motion_truth`](../api-service/app/diagnostics/sequences/aerotech_positioner_motion_truth.py) 只在站点显式确认 degree user-units 与安全坐标范围后，使用仓内指南有出处的 `MOVEABS ... XF...` 做小步前进/返回，每 200ms 连采 `VFBK + PFBK` 最多 10s 并落 raw；ABORT 后只以全部实际轴有限 VFBK 精确为零保守确认停止。[补充 Codex 结论](https://github.com/swang430/Meta-3D/pull/350#issuecomment-5327846839)明确 reviewed commit `0f981339c5`（包含尾修 `bd71879`）且无重大问题。**2026-08-28 更新**：P0-9B-3 已把 degree、固定 +90° 偏置及来源/时间冻结进 execution，正式 writer 同源消费；同一 TestCase 方位与 HOME 终点仍须现场独立复验，故正式关闭继续 Blocked。 |
-| P1-6 **（HOLD 行）** | FS16 / UXM / ENA silent-reconnect 集成测试 | 需真 idle-close 证据 | ❌ **无 C 类载体**：[`propsim_fs16_health`](../api-service/app/diagnostics/sequences/propsim_fs16_health.py) / [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py) / [`vna_ena_health`](../api-service/app/diagnostics/sequences/vna_ena_health.py) 都不会制造 idle-close。继续 HOLD；不并入 P1-46 **✅ C 类载体（P1-65 #380）**：同 P2-4 的 `connection_idle_hold_probe` |
+| P2-4 | FS16 / UXM / ENA silent-reconnect 集成测试 | 现场项已关闭 | 2026-11-20 用户决定；关闭范围见页首。 |
 | ~~P1-33 **现场半**~~ ✅ **2026-08-07 现场完成** | ~~验证按手册重写的 MAC 配置命令在真机上被接受~~ —— **实测：14 条全部被仪器接受、0 条被拒**（execution `ea016f0f`，17:38:18 与 17:41:29 两轮一致；逐组 `SYST:ERR?` 回读为证）。唯一的 `-113` 来自一条**只读探测** `UL:IMCS:FIXed?`，不在那 14 条之内 —— 那正是本项要问的「IRAT 认不认」的实测答案：DL 侧 `RRESource:APOLicy?` 回读 `FIX`（认），UL 侧那条不认。⚠ 由此产生的**新**现场待验见下方新增行。原描述（本地半可先做，见 `### P1-33`） | on-site real UXM。⚠️ **不再 gate 在 P1-31 上**（Codex #276 P2 抓出错误依赖）：P1-31 只跑那 9 项 KPI 对账、且限定「手册有依据 + 驱动已在用」的命令，**产不出 MAC 配置命令的形式**；而 2026-08-03 查手册发现**这 8 组命令 `BSE:` 形式手册里全都有** —— 卡点不是「不知道命令」，是「没在真机上验过」 | ⚠️ **半覆盖** [`uxm_scpi_compatibility`](../api-service/app/diagnostics/sequences/uxm_scpi_compatibility.py)：命令被枚举，但判定集错（`TDD_PATTERN` 恒 `None` 仍在 critical；`MAC_CFG_MANDATORY` 多数未进 critical）。这是表内唯一并入 P1-46 的缺口，见其第 2 件交付物 |
 
 ### 现场验证分类与执行顺序
@@ -1216,9 +1231,9 @@ P2-74 / P2-85 / P2-86 / P2-32B / P1-79E 共 24 条。P1-5 撤出后当时为 **2
 
 - [ ] V1：活动 RF 路径、安全与逐口电平窗（P2-9 / NEW-1）；未知安全不放行。
 - [ ] V2：当前 main 固定方位 LTE baseline（现有 TestCase，伴随 P2-85）；保留真实 Attach/吞吐/cleanup。P0-9 等已关闭项不重开。
-- [ ] V6：停止→释放→面板 Local→第二次执行（P2-85 / NEW-2 / P1-4 运行子项）。
+- [x] V6 / NEW-2：软件释放与面板手动接管已有现场记录；按用户决定关闭，不再要求补跑第二次执行。
 - [ ] V3：无输入/缺一路/正常输入三类 Cell-ready 测量语义（P2-86）；有功率异常时提前到 V2 前排查，不能证明 LTE 信号有效。
-- [x] V4：两合法统计长度连续执行（P1-74），2026-11-20 真机 1000 → 5000 已验证。P1-4 正式重复性单独跟踪。
+- [x] V4：两合法统计长度连续执行（P1-74），2026-11-20 真机 1000 → 5000 已验证。P1-4 已另按用户决定关闭。
 - [ ] V5：安全小步→多方位/长运动与 offset-aware 返回（NEW-4/P1-56 / P2-74）；可信多方位测试必须完成，不可仅测固定位置。独立 HOME 是剩余阻塞子项：当前非零偏置下无批准载体，GUI HOME 在 I/O 前拒绝，cleanup MOVEABS(0) 不能补真，另行批准方案后才排。
 
 详细前置、GUI 调试序列/单阶段分工、raw 证据及局部解除条件见
@@ -1851,7 +1866,9 @@ decision needs its own scoped change.
 
 **Status**: ✅ Done
 
-### P1-4 — first-call repeatability test
+### P1-4 — first-call repeatability test ✅ 已关闭
+
+2026-11-20 按用户决定关闭；实际覆盖见页首。以下为原计划，不作为待执行事项。
 
 **What**: Run first-call 3x back-to-back on the same config. Plot RSRP /
 SINR / Throughput variance. Establish the noise floor for "this is the
@@ -1859,7 +1876,7 @@ same lab".
 
 **Acceptance**: variance documented; outliers explained.
 
-**Status**: `[ ]` not started — depends on P0-3..P0-5 being on site
+**Status**: `[x]` 已关闭（按现场吞吐重复性收口）。
 **Estimate**: on-site 1 day
 
 ### P1-5 — CAL-04 phase calibration
@@ -1894,7 +1911,9 @@ vs uncalibrated baseline.
 on-site SCPI workflow still pending real-chamber measurement
 **Estimate**: 0.5 day local (this PR), 0.5 day on-site (next trip)
 
-### P1-6 — FS16 / UXM / ENA silent-reconnect integration tests
+### P1-6 — FS16 / UXM / ENA silent-reconnect integration tests（FS16、ENA 空闲连接与重连已关闭；UXM 仍暂缓）
+
+2026-11-20 按用户决定更新；下列原验收要求与历史状态不覆盖本节最新决定。
 
 **What**: F64 has 12 integration tests for the silent-reconnect pattern
 (PR #15). FS16, UXM, ENA inherit the pattern but don't have driver-
@@ -4247,7 +4266,9 @@ above.
 commit (contract sync: openapi.yaml + regen TS types) both in main.
 **Estimate**: 1.5 days (actual: ~3 hours)
 
-### P2-4 — NAT/firewall idle-drop hypothesis verification
+### P2-4 — NAT/firewall idle-drop hypothesis verification（现场项已关闭）
+
+2026-11-20 按用户决定更新；下列原验收要求与历史状态不覆盖本节最新决定。
 
 **What**: TCP keepalive on Aerotech was added on the *assumption* that
 CAICT's NAT/firewall drops idle TCP entries. Never verified. Run an
@@ -4504,7 +4525,9 @@ TopologyEditor mapping 与真机切换仍按原 P2-9 范围另行完成，不阻
 
 ---
 
-### P2-10 — F64 工程精细化 (配置文件资产 + 外部输出 + 内部 cal 打磨) 🔄 in-progress (本地框架 done, 现场补真值)
+### P2-10 — F64 工程精细化 (配置文件资产 + 外部输出 + 内部 cal 打磨)（工程配置与外部输出已关闭；仅内部校准待验）
+
+2026-11-20 按用户决定更新；下列原验收要求与历史状态不覆盖本节最新决定。
 
 **What**: P0-8 让 F64 first-call 链路通 (端口 / 输入参考 / 默认 .smu / 加载 gate) 之后, F64 还有一系列工程精细应用没接: remote .smu 配置文件资产的盘点/管理、外部输出端口的精细配置、内部 user alignment cal 的刷新策略。
 
@@ -4533,7 +4556,9 @@ TopologyEditor mapping 与真机切换仍按原 P2-9 范围另行完成，不阻
 
 ---
 
-### P2-12 — 标准信道文件定义 (Standard Channel Definition) — 软件掌控 .smu 命名 🔄 本地收口 (slice 1-4 + 扩展门 done, slice 5 现场 blocked)
+### P2-12 — 标准信道文件定义 (Standard Channel Definition) — 软件掌控 .smu 命名（现场项已关闭）
+
+2026-11-20 按用户决定更新；下列原验收要求与历史状态不覆盖本节最新决定。
 
 **What**: 用户 2026-06-01 确立: **命名标准是我们软件的, 不是 F64 的**。软件里有一个 SCD 实体 (规范配置 `FrequencyIdentity`+CDL+MIMO+scenario + 我们掌控的标准名), 是真值; 实际 .smu 用三路之一满足: **(a) SCPI 驱动 Channel Studio 自动生成** (现场/vendor 调研) / **(b) 指导操作员手工按标准名生成** / **(c) 关联已有 .smu 到 SCD**。完整设计见 [`docs/architecture/testcase-driven-instrument-config.md`](architecture/testcase-driven-instrument-config.md) §9。
 
@@ -5861,7 +5886,9 @@ B/C批准设计见[生效状态与受控操作](design/2026-10-06-p2-83bc-effect
 
 **验收关系**：仪器抽屉 → 当前 HAL 的真实 F64 类型/模拟白名单 → 纯内存投影 → 仅诊断卡片；没有正式消费者。运行三管线共用既有缓存，不改任一控制路径；FS16/其他 adapter 显式不支持本页快照，Mock不展示真实值。成功/拒绝/异常/取消的缓存复位仍由原驱动生命周期负责，本片不写缓存。memory已查；本片不新增仪器语义，NotebookLM不适用。
 
-### P2-85 — F64 STOP 幂等语义与终态证据
+### P2-85 — F64 STOP 幂等语义与终态证据（现场项已关闭）
+
+2026-11-20 按用户决定更新；下列原验收要求与历史状态不覆盖本节最新决定。
 
 **状态与顺序**：2026-10-06 用户批准取证后的 A 方案实施，软件已由 PR #510 合并（merge `5f58c266`）并同步 main，现场复验未完成。[设计](design/2026-10-06-p2-85-f64-stop-evidence.md)与[实施计划](plans/2026-10-06-p2-85-f64-stop-evidence.md)保存取证与验证边界。
 
