@@ -3591,11 +3591,10 @@ export interface components {
     schemas: {
         /** Body_import_source_api_v1_channel_assets_mpdb_projects_import_post */
         Body_import_source_api_v1_channel_assets_mpdb_projects_import_post: {
-            /**
-             * File
-             * Format: binary
-             */
+            /** File */
             file: string;
+            /** Members */
+            members?: string | null;
         };
         /** BuildParameters */
         BuildParameters: {
@@ -3604,6 +3603,8 @@ export interface components {
              * @enum {string}
              */
             mode: "conducted" | "ota";
+            /** Clustering Method */
+            clustering_method?: ("delay_bins" | "hyperrt") | null;
             /**
              * Speed M S
              * @default 5

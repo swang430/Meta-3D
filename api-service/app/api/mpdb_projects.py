@@ -40,6 +40,7 @@ class BuiltProject(BaseModel):
 
 class BuildParameters(BaseModel):
     mode: Literal["conducted", "ota"]
+    clustering_method: Literal["delay_bins", "hyperrt"] | None = None
     speed_m_s: float = Field(default=5, gt=0, allow_inf_nan=False)
     rate_hz: float = Field(default=171.18765176762867, gt=0, allow_inf_nan=False)
 
@@ -51,7 +52,7 @@ def storage():
 
 
 @router.post("/import", response_model=ImportedSource)
-def import_source(file: UploadFile = File(...)):
+def import_source(file: UploadFile = File(...), members: UploadFile | None = File(None)):
     base = storage()
     for old in base.iterdir():
         if old.is_dir() and old.stat().st_mtime < time.time() - 86400:
@@ -89,6 +90,12 @@ def import_source(file: UploadFile = File(...)):
                     raise ValueError(
                         "当前支持采用全局角度坐标、单一载频的信道冲激响应数据"
                     )
+        if members is not None:
+            with (folder / "members.npz").open("xb") as dest:
+                while chunk := members.file.read(1024**2):
+                    if dest.tell() + len(chunk) > 32 * 1024**2:
+                        raise ValueError("成员表超过 32 MiB")
+                    dest.write(chunk)
         return {"source_id": str(ident)}
     except (
         OSError,
@@ -204,9 +211,14 @@ def build_project(source_id: UUID, params: BuildParameters):
                     params.mode,
                     str(params.speed_m_s),
                     str(params.rate_hz),
+                    *([params.clustering_method or "auto"] if params.mode == "conducted" else []),
+                    *([str(folder / "members.npz")] if params.mode == "conducted" and
+                      (folder / "members.npz").is_file() else []),
                 ],
                 env=env,
             )
+            if code == 3 and params.mode == "conducted":
+                raise HTTPException(409, "未找到同源成员表，请选择聚簇方式。")
             if code:
                 logger.warning("信道工程生成失败：%s", message[-2000:])
                 message = message.strip().splitlines()
