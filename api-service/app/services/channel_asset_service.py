@@ -682,6 +682,7 @@ def _locked_vendor_asset(db: Session, asset: ChannelAsset) -> ChannelAsset:
 
 
 def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
+    caller_sent_payload = "payload" in fields
     asset = get_channel_asset(db, asset_id)
     asset = _locked_vendor_asset(db, asset)
     if "rt_scene" in fields:
@@ -807,7 +808,7 @@ def update_channel_asset(db: Session, asset_id: UUID, **fields) -> ChannelAsset:
         # 只改一边也要撞另一边的现值, 不然"只 PATCH 顶层频率"绕过校验)
         _check_vendor_declared_freq(
             _scd, _vsf["center_frequency_hz"], _vsf["bandwidth_mhz"])
-        if "payload" in fields and "canonical_name" not in fields:
+        if caller_sent_payload and "canonical_name" not in fields:
             new_canon = _scd_to_standard_name(_scd)
             if new_canon != asset.canonical_name and db.query(ChannelAsset).filter(
                     ChannelAsset.canonical_name == new_canon,

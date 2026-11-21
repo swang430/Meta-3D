@@ -99,6 +99,9 @@ def test_rt_scene_membership_only_updates_original_record(db, client):
         expected = {**before, "payload": {**before["payload"], **({"rt_scene": True} if enabled else {})}}
         assert res.json() == expected
     assert client.put(url, json={"rt_scene": True, "name": "wrong"}).status_code == 400
+    assert client.put(url, json={"rt_scene": True}).status_code == 200
+    moved = client.put(url, json={"associated_file_path": "D:/another.smu"}).json()
+    assert moved["canonical_name"] == "operator-name" and "rt_scene" not in moved["payload"]
     assert db.query(ChannelAsset).count() == 1
 
 
