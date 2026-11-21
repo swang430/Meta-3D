@@ -4,6 +4,77 @@
  */
 
 export interface paths {
+    "/api/v1/channel-assets/mpdb-projects/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Source */
+        post: operations["import_source_api_v1_channel_assets_mpdb_projects_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/mpdb-projects/{source_id}/build": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Build Project */
+        post: operations["build_project_api_v1_channel_assets_mpdb_projects__source_id__build_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/mpdb-projects/{source_id}/{project_id}.zip": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Download Project */
+        get: operations["download_project_api_v1_channel_assets_mpdb_projects__source_id___project_id__zip_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/trajectory/import": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Import Cluster Trajectory
+         * @description 用操作员确认的恒速、米制位置及上下行原始文件还原单个方向的时间轴。
+         */
+        post: operations["import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/calibration/channel/eis/start": {
         parameters: {
             query?: never;
@@ -3518,6 +3589,78 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_import_source_api_v1_channel_assets_mpdb_projects_import_post */
+        Body_import_source_api_v1_channel_assets_mpdb_projects_import_post: {
+            /**
+             * File
+             * Format: binary
+             */
+            file: string;
+        };
+        /** BuildParameters */
+        BuildParameters: {
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "conducted" | "ota";
+            /**
+             * Speed M S
+             * @default 5
+             */
+            speed_m_s: number;
+            /**
+             * Rate Hz
+             * @default 171.18765176762867
+             */
+            rate_hz: number;
+        };
+        /** BuiltProject */
+        BuiltProject: {
+            /** Download Url */
+            download_url: string;
+            /** Asc Count */
+            asc_count: number;
+            /** Results */
+            results?: {
+                [key: string]: unknown;
+            } | null;
+            /** Evidence */
+            evidence?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** ImportedSource */
+        ImportedSource: {
+            /**
+             * Source Id
+             * Format: uuid
+             */
+            source_id: string;
+        };
+        /** Body_import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post */
+        Body_import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post: {
+            /** Archive */
+            archive: string;
+            /** Clusters */
+            clusters: string;
+            /** Quality */
+            quality: string;
+            /**
+             * Direction
+             * @enum {string}
+             */
+            direction: "downlink" | "uplink";
+            /** Speed M S */
+            speed_m_s: number;
+            /**
+             * Coordinate Units
+             * @constant
+             */
+            coordinate_units: "metres";
+            /** Manifest */
+            manifest?: string | null;
+        };
         /**
          * DUTTypeEnum
          * @description 被测设备类型
@@ -7813,6 +7956,139 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    import_source_api_v1_channel_assets_mpdb_projects_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_source_api_v1_channel_assets_mpdb_projects_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportedSource"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    build_project_api_v1_channel_assets_mpdb_projects__source_id__build_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BuildParameters"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BuiltProject"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    download_project_api_v1_channel_assets_mpdb_projects__source_id___project_id__zip_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/zip": string;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     start_eis_validation_api_v1_calibration_channel_eis_start_post: {
         parameters: {
             query?: never;

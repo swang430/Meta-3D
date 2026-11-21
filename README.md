@@ -321,3 +321,9 @@ Simon - 乾径团队
 - [CTIA Test Plan](https://api.ctia.org/test-plans) - 行业标准测试计划
 - [Mantine UI](https://mantine.dev/) - 组件库文档
 - [TanStack Query](https://tanstack.com/query) - 数据获取库文档
+
+### 从 MPDB 创建信道工程
+
+在信道工作台选择包含下行 `R0B0S0D.mpdb` 的原始 ZIP 包。一次导入后可切换传导和空口两种工程，分别下载。服务端临时保留输入和输出，超过一天的旧记录在后续导入时清理。生成厂商工程、加载仪器和暗室验收属于现场步骤。
+
+运行 API 服务时需要设置 `CHANNEL_ENGINE_PATH`。计算使用本仓库信道引擎服务的 Python 环境，找不到该环境时使用 API 的 Python 环境。传导联合聚簇还需要将 `HYPERRT_PATH` 指向含有效授权、与成员分配脚本兼容的 HyperRT 可执行文件。传导 ASC 每行对应一个源帧，文件头的 1 Hz 用于顺序查看源帧。动态 OTA 按米制轨迹距离与输入速度推算时间，播放更新率可单独指定。随附的 16 个双极化探头采用理想水平布置。

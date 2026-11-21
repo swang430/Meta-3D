@@ -28,6 +28,7 @@ import {
   type ChannelSourceType,
   type SMUProjectSyncPreview,
 } from '../../api/channelAssetService'
+import { MpdbProjectPanel } from './MpdbProjectPanel'
 import { ImtBundlePanel } from './ImtBundlePanel'
 import { ClusterVerificationPanel } from './ClusterVerificationPanel'
 import { ClusterResponsePanel } from './ClusterResponsePanel'
@@ -56,6 +57,7 @@ const TARGET_LABEL: Record<string, string> = {
 type SourceFilter = 'all' | ChannelSourceType
 
 export function ChannelWorkbench() {
+  const [section, setSection] = useState("create")
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [includeInactive, setIncludeInactive] = useState(false)
@@ -154,9 +156,14 @@ export function ChannelWorkbench() {
 
   return (
     <Stack gap="md">
-      <ClusterResponsePanel />
-      <ClusterVerificationPanel />
-      <ImtBundlePanel />
+      <SegmentedControl value={section} onChange={setSection} data={[
+        { value: 'create', label: '从 MPDB 创建信道工程' },
+        { value: 'import', label: '导入已有结果' },
+      ]} />
+      <div hidden={section !== 'create'}><MpdbProjectPanel /></div>
+      <div hidden={section !== 'import'}>
+        <Stack><ClusterResponsePanel /><ClusterVerificationPanel /><ImtBundlePanel /></Stack>
+      </div>
       <Group justify="space-between" align="flex-end">
         <div>
           <Title order={3}>
