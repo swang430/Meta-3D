@@ -64,6 +64,29 @@ class ChooseClustering(ValueError):
     pass
 
 
+def validate_members_container(members, lid):
+    with zipfile.ZipFile(members) as container:
+        entries = container.infolist()
+        names = {"source_sha256.npy", *(f"L{i}.npy" for i in lid)}
+        if (len(entries) != len(names) or sum(e.file_size for e in entries) > 128 * 1024**2
+                or {e.filename for e in entries} != names):
+            raise ValueError("成员表条目数量、大小或唯一性不符")
+        # 在 numpy 分配数组前核对声明长度和实际条目大小。
+        for entry in entries:
+            with container.open(entry) as stream:
+                if np.lib.format.read_magic(stream) != (1, 0):
+                    raise ValueError("成员表数组格式不受支持")
+                shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
+                if entry.filename == "source_sha256.npy":
+                    valid = shape == () and dtype.kind == "U" and dtype.itemsize <= 256
+                    count = 1
+                else:
+                    valid = len(shape) == 1 and dtype.kind in "iu"
+                    count = shape[0] if valid else 0
+                if not valid or stream.tell() + count * dtype.itemsize != entry.file_size:
+                    raise ValueError("成员表数组类型或声明长度与文件不符")
+
+
 def assemble(dbpath, stage, method=None, supplied=None):
     with zipfile.ZipFile(dbpath) as db:
         desc = json.loads(db.read("mpdb.json"))
@@ -128,26 +151,7 @@ def assemble(dbpath, stage, method=None, supplied=None):
         origin = method
     else:
         raise ChooseClustering("未找到与下行 MPDB 匹配的成员表，请选择聚簇方式。")
-    with zipfile.ZipFile(members) as container:
-        entries = container.infolist()
-        names = {"source_sha256.npy", *(f"L{i}.npy" for i in lid)}
-        if (len(entries) != len(names) or sum(e.file_size for e in entries) > 128 * 1024**2
-                or {e.filename for e in entries} != names):
-            raise ValueError("成员表条目数量、大小或唯一性不符")
-        # 在 numpy 分配数组前核对声明长度和实际条目大小。
-        for entry in entries:
-            with container.open(entry) as stream:
-                if np.lib.format.read_magic(stream) != (1, 0):
-                    raise ValueError("成员表数组格式不受支持")
-                shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
-                if entry.filename == "source_sha256.npy":
-                    valid = shape == () and dtype.kind == "U" and dtype.itemsize <= 256
-                    count = 1
-                else:
-                    valid = len(shape) == 1 and dtype.kind in "iu"
-                    count = shape[0] if valid else 0
-                if not valid or stream.tell() + count * dtype.itemsize != entry.file_size:
-                    raise ValueError("成员表数组类型或声明长度与文件不符")
+    validate_members_container(members, lid)
     if engine := os.environ.get("CHANNEL_ENGINE_PATH"):
         sys.path.insert(0, engine)
     from mimo_ota_simulator.joint_cluster_response import reduce_link
@@ -197,10 +201,11 @@ def assemble(dbpath, stage, method=None, supplied=None):
         header = write_asc(path, groups, width, float(fc[0]))
         links.append(dict(tx=t, rx=r, file=path.name, sha256=digest(path)))
     return dict(source=source, clustering_method=origin, direction="downlink", mode="conducted", frames=frames, links=links,
-                time_axis="每行对应一个源帧。文件头的 1 Hz 仅用于按序查看，实际帧间隔未经确认。"
+                time_axis="每行对应一个源帧。文件头的 1 Hz 仅用于按序查看，不代表原始帧率。"
                           "未生成帧间多普勒相位演进，簇编号仅在同一帧内共用。",
                 software=dict(asc_files_checked=len(links), cluster_rows=len(results)),
-                header=header, evidence="offline_asc_validation", smu_built=False, hardware_verified=False)
+                header=header, rate_source="source_frame_viewer_placeholder",
+                evidence="offline_asc_validation", smu_built=False, hardware_verified=False)
 
 
 def build(archive: Path, output: Path, method=None, supplied=None):

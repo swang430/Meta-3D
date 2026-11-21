@@ -7,6 +7,37 @@ from fastapi.testclient import TestClient
 from app.api.mpdb_projects import router
 
 
+def test_isolated_api_image_imports_without_optional_workspace_scripts(tmp_path):
+    import os
+    from pathlib import Path
+    import shutil
+    import subprocess
+    import sys
+    from app.api import mpdb_projects
+
+    copied = tmp_path / "image/app/api/mpdb_projects.py"
+    copied.parent.mkdir(parents=True)
+    shutil.copyfile(mpdb_projects.__file__, copied)
+    probe = """
+import runpy
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+module = runpy.run_path('app/api/mpdb_projects.py')
+app = FastAPI()
+app.include_router(module['router'])
+client = TestClient(app)
+assert client.get('/openapi.json').status_code == 200
+result = client.post('/channel-assets/mpdb-projects/import', files={'file':('input.zip', b'input')})
+assert result.status_code == 503, result.text
+assert '离线' in result.json()['detail']
+"""
+    env = {**os.environ, "TMPDIR":str(tmp_path)}
+    out = subprocess.run([sys.executable,"-I","-c",probe],cwd=copied.parents[2],
+                         env=env,text=True,capture_output=True)
+    assert out.returncode == 0, out.stderr
+    assert not (tmp_path/"meta3d-mpdb-projects").exists()
+
+
 def test_rejects_archive_without_downlink_and_unknown_source():
     app = FastAPI()
     app.include_router(router)
@@ -66,12 +97,23 @@ def test_same_import_can_build_twice_and_download_independent_archives(
     app = FastAPI()
     app.include_router(router, prefix="/api/v1")
     client = TestClient(app)
+    import numpy as np
     inner = io.BytesIO()
     with zipfile.ZipFile(inner, "w") as db:
+        cols = {}
+        for key, values in dict(FRAME_ID=[0,1], LINK_ID=[0,1], TX_ANT=[0,0], RX_ANT=[0,0],
+                                RX_ANT_POSITION=[[0,0,0],[3,4,0]]).items():
+            arr = np.array(values, dtype="<i4")
+            header = json.dumps({"data":{"dtype":"I32","shape":list(arr.shape),
+                                        "data_offsets":[0,arr.nbytes]}}).encode()
+            db.writestr(key, len(header).to_bytes(8,"little")+header+arr.tobytes())
+            cols[key] = dict(dtype="torch.int32",shape=list(arr.shape),rowCount=2,
+                             shards=[dict(entry=key,rowStart=0,rowEnd=2)])
         db.writestr(
             "mpdb.json",
             json.dumps(
                 {
+                    "records": {"LINK":cols},
                     "meta": {
                         "lauraycsPlatform": {
                             "direction": "downlink",
@@ -87,12 +129,55 @@ def test_same_import_can_build_twice_and_download_independent_archives(
     with zipfile.ZipFile(outer, "w") as archive:
         archive.writestr("R0B0S0D.mpdb", inner.getvalue())
     url = "/api/v1/channel-assets/mpdb-projects"
+    def imported_with_meta(meta):
+        variant = io.BytesIO()
+        with zipfile.ZipFile(inner) as src, zipfile.ZipFile(variant, "w") as dst:
+            for name in src.namelist():
+                data = src.read(name)
+                if name == "mpdb.json":
+                    desc=json.loads(data)
+                    platform=desc["meta"]["lauraycsPlatform"]
+                    platform.update(meta.get("lauraycsPlatform",{}))
+                    desc["meta"].update({k:v for k,v in meta.items() if k!="lauraycsPlatform"})
+                    data=json.dumps(desc).encode()
+                dst.writestr(name,data)
+        raw = io.BytesIO()
+        with zipfile.ZipFile(raw,"w") as out:
+            out.writestr("R0B0S0D.mpdb",variant.getvalue())
+        return client.post(url+"/import",files={"file":("source.zip",raw.getvalue())})
+    stamps = {"rtSampleTimesSeconds":[7,9]}
+    raw = imported_with_meta({"rtSampleIntervalSeconds":2, "lauraycsPlatform":stamps})
+    assert raw.json()["timing"]["source_times_s"] == [7,9]
+    assert raw.json()["timing"]["time_source"].endswith(".rtSampleTimesSeconds")
+    for meta in ({"rtSampleIntervalSeconds":1,"lauraycsPlatform":stamps},
+                 {"rtSampleTimesSeconds":[8,10],"lauraycsPlatform":stamps},
+                 {"lauraycsPlatform":{"rtSampleTimesSeconds":[0,0]}},
+                 {"lauraycsPlatform":{"rtFrameClock":{"version":1,"mode":"physical"}}}):
+        assert imported_with_meta(meta).status_code == 422
+    assert imported_with_meta({"rtSampleIntervalSeconds":0.5}).json()["timing"]["source_times_s"] == [0,0.5]
     source = client.post(
         url + "/import", files={"file": ("source.zip", outer.getvalue())}
     ).json()
+    assert source.get("timing", {}).get("distances_m") == [5]
+    assert source["timing"]["source_times_s"] is None
+    assert source["clustering"] == "missing"
+    import hashlib
+    for identity, expected in (("wrong",422),(hashlib.sha256(inner.getvalue()).hexdigest(),200)):
+        labels=io.BytesIO()
+        np.savez(labels,source_sha256=identity,L0=np.array([0]),L1=np.array([0]))
+        supplied_response=client.post(url+"/import",files={
+            "file":("source.zip",outer.getvalue()),"members":("groups.npz",labels.getvalue())})
+        assert supplied_response.status_code == expected
+        if expected == 200:
+            assert supplied_response.json()["clustering"] == "supplied"
+    build_url = f"{url}/{source['source_id']}/build"
+    assert client.post(build_url,json={"mode":"ota"}).status_code == 422
+    assert client.post(build_url,json={"mode":"ota","rate_hz":100}).status_code == 422
+    assert client.post(build_url,json={"mode":"ota","speed_m_s":5}).status_code == 422
+    explicit = {"speed_m_s":5,"rate_hz":100}
     for mode, count in [("conducted", 8), ("ota", 128)]:
         response = client.post(
-            f"{url}/{source['source_id']}/build", json={"mode": mode}
+            build_url, json={"mode": mode, **(explicit if mode == "ota" else {})}
         )
         assert response.status_code == 200, response.text
         data = response.json()
@@ -130,7 +215,7 @@ def test_same_import_can_build_twice_and_download_independent_archives(
         mutations.clear()
         mutations[role] = mutate
         response = client.post(f"{url}/{source['source_id']}/build",
-                               json={"mode": "conducted" if role == "conducted" else "ota"})
+                               json={"mode": "conducted"} if role == "conducted" else {"mode":"ota", **explicit})
         assert response.status_code == 500
         assert all(word in response.json()["detail"] for word in [role, *details])
         assert set((base / source["source_id"]).glob("*.zip")) == packages

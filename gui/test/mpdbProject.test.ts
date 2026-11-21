@@ -8,6 +8,13 @@ import {
 const origin = 'https://example.test'
 const project = { asc_count: 8, download_url: '/project.zip' }
 
+test('逐段时长按源帧数校验，原始时间不提交假定速度', () => {
+  assert.deepEqual(projectParameters('ota', '', '100', 'segments', '0.8, 1.2', 2),
+    {mode:'ota', rate_hz:100, segment_durations_s:[0.8,1.2]})
+  assert.equal(projectParameters('ota','','100','segments','1,',2),null)
+  assert.deepEqual(projectParameters('ota','','100','original','',2),{mode:'ota',rate_hz:100})
+})
+
 test('保留播放参数精度，拒绝空值、非正数和无穷值', () => {
   assert.deepEqual(projectParameters('ota', '5', '171.18765176762867'), {
     mode: 'ota',
@@ -57,6 +64,10 @@ test('动态清单直接给出本次模型相位结果，源帧缺证据单独�
   const build = () => readProject({ ...project, asc_count: 128, manifests: { dynamic } }, 'ota', origin)
   assert.match(build().summaries.join(' '), /791531/)
   assert.match(build().summaries.join(' '), /源帧工程未核验/)
+  dynamic.time_source = 'operator_segment_durations'
+  dynamic.evidence = 'offline_timeline_doppler'
+  assert.match(build().summaries.join(' '), /操作员提供的逐段时长/)
+  assert.doesNotMatch(build().summaries.join(' '), /由帧间距离和速度估算/)
   const baseline = {
     ...dynamic, evidence: 'offline_ideal_plane_wave', source_frames_only: true,
     header: { ...dynamic.header, cir_count: 1 },

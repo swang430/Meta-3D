@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react'
 import { Button, Group, Paper, Select, Stack, Text, Title } from '@mantine/core'
-import { readBundle, verifyAscFile, type Mode } from './imtBundle'
+import { dynamicEvidence, readBundle, verifyAscFile, type Mode } from './imtBundle'
 
 import { imtProjectDirectories } from './imtProjectDirectories'
 
@@ -41,10 +41,9 @@ export function ImtBundlePanel() {
       if (
         path &&
         (mode !== 'ota' ||
-          manifest.evidence !==
-            (path === 'baseline'
-              ? 'offline_ideal_plane_wave'
-              : 'offline_distance_doppler'))
+          (path === 'baseline'
+              ? manifest.evidence !== 'offline_ideal_plane_wave'
+              : !dynamicEvidence(manifest.evidence)))
       )
         throw Error('清单记录的工程类型与子目录不符：' + path)
       const parsed = readBundle(manifest, mode)

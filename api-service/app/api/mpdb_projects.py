@@ -1,6 +1,7 @@
 """一次保存原始传播数据，分别生成可下载的离线工程输入包。"""
 
 import io
+import hashlib
 import json
 import logging
 import os
@@ -14,6 +15,7 @@ import time
 from typing import Literal
 from uuid import UUID, uuid4
 import zipfile
+import numpy as np
 
 from dotenv import dotenv_values
 from fastapi import APIRouter, File, HTTPException, UploadFile
@@ -26,8 +28,33 @@ LIMIT = 256 * 1024**2
 logger = logging.getLogger(__name__)
 
 
+def offline_modules():
+    # 只有离线工作台依赖仓库顶层的脚本；独立 API 镜像仍能启动和使用其他功能。
+    scripts = ROOT / "scripts"
+    if not (scripts / "mpdb_workbench.py").is_file():
+        raise HTTPException(503, "当前服务未安装 MPDB 离线计算脚本，请使用配有离线工作台的部署。")
+    if str(scripts) not in sys.path:
+        sys.path.append(str(scripts))
+    try:
+        import mpdb_playback
+        import mpdb_conducted_project
+    except ImportError as exc:
+        logger.warning("无法加载 MPDB 离线脚本：%s", exc)
+        raise HTTPException(503, "当前服务的 MPDB 离线计算组件不完整，请检查部署。") from exc
+    return mpdb_playback, mpdb_conducted_project
+
+
+class SourceTiming(BaseModel):
+    frame_ids: list[int]
+    distances_m: list[float | None]
+    source_times_s: list[float] | None
+    time_source: str | None
+
+
 class ImportedSource(BaseModel):
     source_id: UUID
+    timing: SourceTiming
+    clustering: Literal["matched", "missing", "supplied"]
 
 
 class BuiltProject(BaseModel):
@@ -41,8 +68,9 @@ class BuiltProject(BaseModel):
 class BuildParameters(BaseModel):
     mode: Literal["conducted", "ota"]
     clustering_method: Literal["delay_bins", "hyperrt"] | None = None
-    speed_m_s: float = Field(default=5, gt=0, allow_inf_nan=False)
-    rate_hz: float = Field(default=171.18765176762867, gt=0, allow_inf_nan=False)
+    speed_m_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    rate_hz: float | None = Field(default=None, gt=0, allow_inf_nan=False)
+    segment_durations_s: list[float] | None = None
 
 
 def storage():
@@ -53,6 +81,7 @@ def storage():
 
 @router.post("/import", response_model=ImportedSource)
 def import_source(file: UploadFile = File(...), members: UploadFile | None = File(None)):
+    playback, conducted = offline_modules()
     base = storage()
     for old in base.iterdir():
         if old.is_dir() and old.stat().st_mtime < time.time() - 86400:
@@ -73,12 +102,15 @@ def import_source(file: UploadFile = File(...), members: UploadFile | None = Fil
                 raise ValueError(
                     "压缩包须包含一份下行 R0B0S0D.mpdb，大小不超过 256 MiB"
                 )
-            with zipfile.ZipFile(io.BytesIO(outer.read(matches[0]))) as db:
+            raw = outer.read(matches[0])
+            digest = hashlib.sha256(raw).hexdigest()
+            with zipfile.ZipFile(io.BytesIO(raw)) as db:
                 if len(db.namelist()) != len(set(db.namelist())):
                     raise ValueError("传播数据库中存在同名文件，无法确认分片来源")
                 if sum(i.file_size for i in db.infolist()) > 512 * 1024**2:
                     raise ValueError("解压后的下行数据超过 512 MiB")
-                meta = json.loads(db.read("mpdb.json"))["meta"]
+                desc = json.loads(db.read("mpdb.json"))
+                meta = desc["meta"]
                 platform = meta["lauraycsPlatform"]
                 if platform["direction"] != "downlink":
                     raise ValueError("工程需要下行传播数据")
@@ -90,15 +122,32 @@ def import_source(file: UploadFile = File(...), members: UploadFile | None = Fil
                     raise ValueError(
                         "当前支持采用全局角度坐标、单一载频的信道冲激响应数据"
                     )
+                timing = playback.inspect_timing(db, desc)
+                if members is not None:
+                    link_ids = conducted.column(db, desc, "LINK", "LINK_ID").ravel()
+        (folder / "timing.json").write_text(json.dumps(timing, allow_nan=False))
+        known = ROOT / "docs/evidence/imt-three/members.npz"
+        clustering = "missing"
+        if known.is_file():
+            with np.load(known, allow_pickle=False) as data:
+                if str(data["source_sha256"]) == digest:
+                    clustering = "matched"
         if members is not None:
             with (folder / "members.npz").open("xb") as dest:
                 while chunk := members.file.read(1024**2):
                     if dest.tell() + len(chunk) > 32 * 1024**2:
                         raise ValueError("成员表超过 32 MiB")
                     dest.write(chunk)
-        return {"source_id": str(ident)}
+            conducted.validate_members_container(dest.name, link_ids)
+            with np.load(dest.name, allow_pickle=False) as data:
+                if str(data["source_sha256"]) != digest:
+                    raise ValueError("上传的聚簇结果不属于这份下行数据")
+            clustering = "supplied"
+        return {"source_id": str(ident), "timing":timing, "clustering":clustering}
     except (
         OSError,
+        EOFError,
+        AttributeError,
         RuntimeError,
         KeyError,
         TypeError,
@@ -193,14 +242,30 @@ def build_project(source_id: UUID, params: BuildParameters):
     archive = folder / "source.zip"
     if not archive.is_file():
         raise HTTPException(404, "导入记录已过期，请重新选择原始文件")
+    clocks, _ = offline_modules()
     os.utime(folder, None)
-    env = worker_environment(ROOT)
     ident = uuid4()
     engine_python = ROOT / "channel-engine-service/.venv/bin/python"
     python = str(engine_python) if engine_python.is_file() else sys.executable
     with tempfile.TemporaryDirectory(dir=folder) as tmp:
         stage = Path(tmp)
         output = stage / "project"
+        arguments = ["-", "-", params.clustering_method or "auto"]
+        if params.mode == "ota":
+            timing_path = folder / "timing.json"
+            if not timing_path.is_file():
+                raise HTTPException(409, "此导入记录没有时间检查结果，请重新导入")
+            try:
+                playback = clocks.resolve_playback(json.loads(timing_path.read_text()), params.speed_m_s,
+                                            params.segment_durations_s, params.rate_hz)
+            except ValueError as exc:
+                raise HTTPException(422, str(exc)) from exc
+            playback_path = stage / "playback.json"
+            playback_path.write_text(json.dumps(playback, allow_nan=False))
+            arguments = [str(playback_path)]
+        elif (folder / "members.npz").is_file():
+            arguments.append(str(folder / "members.npz"))
+        env = worker_environment(ROOT)
         try:
             code, message = run_worker(
                 [
@@ -209,11 +274,7 @@ def build_project(source_id: UUID, params: BuildParameters):
                     str(archive),
                     str(output),
                     params.mode,
-                    str(params.speed_m_s),
-                    str(params.rate_hz),
-                    *([params.clustering_method or "auto"] if params.mode == "conducted" else []),
-                    *([str(folder / "members.npz")] if params.mode == "conducted" and
-                      (folder / "members.npz").is_file() else []),
+                    *arguments,
                 ],
                 env=env,
             )

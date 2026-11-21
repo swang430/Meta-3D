@@ -13,7 +13,8 @@
         '缺少文件字段',
       )
       uploads++
-      return route.fulfill({ json: { source_id: 'batch-' + uploads } })
+      return route.fulfill({ json: { source_id: 'batch-' + uploads, clustering:'matched',
+        timing:{frame_ids:[0,1],distances_m:[2],source_times_s:null,time_source:null} } })
     }
     builds.push(route.request().postDataJSON())
     if (rejectBuild)
@@ -27,7 +28,7 @@
     .getByRole('heading', { name: '从 MPDB 创建信道工程' })
     .locator('xpath=../..')
   const build = pane.getByRole('button', { name: '生成信道工程' })
-  const speed = pane.getByLabel('播放速度（m/s）')
+  const speed = pane.getByLabel('操作员假定的恒定速度（m/s）')
   const download = pane.getByRole('link', { name: '下载工程' })
   const select = (name) =>
     pane
@@ -49,7 +50,10 @@
     '传导请求包含播放参数',
   )
   await mode('空口（OTA）')
+  await pane.getByLabel('播放时间的依据').click()
+  await page.getByRole('option',{name:'假定恒速，由各段位移推算时长'}).click()
   await speed.fill('7')
+  await pane.getByLabel('输出更新率（Hz）').fill('100')
   rejectBuild = true
   await build.click()
   await pane.getByText('生成工程失败：样本不足').waitFor()
