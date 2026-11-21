@@ -163,17 +163,6 @@ export function ChannelWorkbench() {
 
   return (
     <Stack gap="md">
-      <details>
-        <summary>查看或核验已有工程</summary>
-        <Stack mt="sm">
-          <SegmentedControl aria-label="选择复查内容" value={reviewTask} onChange={setReviewTask} data={[
-            { value: 'files', label: '查看工程文件' },
-            { value: 'clusters', label: '核验聚簇结果' },
-          ]} />
-          <div hidden={reviewTask !== 'files'}><ImtBundlePanel /></div>
-          <div hidden={reviewTask !== 'clusters'}><ClusterVerificationPanel /></div>
-        </Stack>
-      </details>
       <Group justify="space-between" align="flex-end">
         <div>
           <Title order={3}>
@@ -331,6 +320,17 @@ export function ChannelWorkbench() {
 
       <div hidden={filter !== 'rt_dynamic'}>
       <MpdbProjectPanel />
+      <details>
+        <summary>查看或核验已有工程</summary>
+        <Stack mt="sm">
+          <SegmentedControl aria-label="选择复查内容" value={reviewTask} onChange={setReviewTask} data={[
+            { value: 'files', label: '查看工程文件' },
+            { value: 'clusters', label: '核验聚簇结果' },
+          ]} />
+          <div hidden={reviewTask !== 'files'}><ImtBundlePanel /></div>
+          <div hidden={reviewTask !== 'clusters'}><ClusterVerificationPanel /></div>
+        </Stack>
+      </details>
       <details>
         <summary>逐帧频率响应分析（可选）</summary>
         <ClusterResponsePanel />
