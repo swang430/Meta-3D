@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/channel-assets/mpdb-projects/port-evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Analyze Port Evidence
+         * @description 只读核对各端口的成员，再比较同一批成员的两种时延。
+         */
+        post: operations["analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/channel-assets/mpdb-projects/import": {
         parameters: {
             query?: never;
@@ -3589,6 +3609,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** Body_analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post */
+        Body_analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post: {
+            /**
+             * Archive
+             * Format: binary
+             */
+            archive: string;
+            /** Bandwidth Mhz */
+            bandwidth_mhz: number;
+            /** Points */
+            points: number;
+            /** Members */
+            members?: string | null;
+            /** Expected */
+            expected?: string | null;
+            /** Amplitude Floor */
+            amplitude_floor?: number | null;
+        };
         /** Body_import_source_api_v1_channel_assets_mpdb_projects_import_post */
         Body_import_source_api_v1_channel_assets_mpdb_projects_import_post: {
             /** File */
@@ -3606,7 +3644,7 @@ export interface components {
              */
             mode: "conducted" | "ota";
             /** Clustering Method */
-            clustering_method?: ("delay_bins" | "hyperrt") | null;
+            clustering_method?: "delay_bins" | null;
             /** Speed M S */
             speed_m_s?: number | null;
             /**
@@ -7988,6 +8026,39 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post"];
+            };
+        };
+        responses: {
+            /** @description 下载含摘要、分析参数和逐帧记录的完整结果 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": Record<string, never>;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     import_source_api_v1_channel_assets_mpdb_projects_import_post: {
         parameters: {
             query?: never;

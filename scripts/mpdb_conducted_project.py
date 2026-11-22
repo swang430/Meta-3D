@@ -7,7 +7,6 @@ import math
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 import zipfile
@@ -22,17 +21,6 @@ else:
     from imt_conducted_spectrum import column
 
 PAIRS = [(tx, rx) for tx in range(4) for rx in range(2)]
-
-
-def hyperrt_executable():
-    configured = os.environ.get("HYPERRT_PATH")
-    executable = shutil.which(configured or "HyperRT")
-    if executable is None:
-        raise FileNotFoundError(
-            "找不到可执行的 HyperRT。请将 HYPERRT_PATH 设为发行目录中 HyperRT 可执行文件的路径，"
-            "或将发行目录加入 PATH。"
-        )
-    return Path(executable).resolve()
 
 
 def digest(path):
@@ -88,6 +76,8 @@ def validate_members_container(members, lid):
 
 
 def assemble(dbpath, stage, method=None, supplied=None):
+    if method not in (None, "delay_bins"):
+        raise ValueError("仅支持复用同源成员表或按时延分组")
     with zipfile.ZipFile(dbpath) as db:
         desc = json.loads(db.read("mpdb.json"))
 
@@ -130,11 +120,6 @@ def assemble(dbpath, stage, method=None, supplied=None):
     if match is not None:
         shutil.copyfile(match, members)
         origin = "supplied_members" if supplied is not None else "reference_members"
-    elif method == "hyperrt":
-        runtime = hyperrt_executable()
-        subprocess.run([runtime, Path(__file__).resolve().with_name("imt_joint_members.py"),
-                        dbpath, members], cwd=runtime.parent, check=True)
-        origin = method
     elif method == "delay_bins":
         # Common frame-wide boundaries for all eight links; not angular clustering.
         groups = {}
@@ -238,6 +223,6 @@ if __name__ == "__main__":
     parser.add_argument("archive", type=Path)
     parser.add_argument("output", type=Path)
     parser.add_argument("--members", type=Path)
-    parser.add_argument("--method", choices=["hyperrt", "delay_bins"])
+    parser.add_argument("--method", choices=["delay_bins"])
     args = parser.parse_args()
     build(args.archive, args.output, args.method, args.members)

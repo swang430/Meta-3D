@@ -149,9 +149,8 @@ export function MpdbProjectPanel() {
           {(choose || supplied) && <details><summary>使用已有的射线分组文件（可选）</summary>
             <FileInput label="此前保存的分组文件" description="仅在已有同一份原数据的离线分组结果时使用。选择后会重新核对来源；没有文件时直接选择分组方式即可。"
               accept=".npz" clearable disabled={!!busy} value={supplied} onChange={(next)=>inspectFile(file,next)}/></details>}
-          {choose && <Select label="这份数据没有已收录的射线分组，请选择分组方式" placeholder="请选择，不会自动调用 HyperRT"
-            data={[{ value: 'delay_bins', label: '按每帧共享的时延区间分组（最多 24 组，不按角度分组）' },
-              { value: 'hyperrt', label: 'HyperRT 时延和角度联合聚簇（需要可用的授权和运行环境）' }]}
+          {choose && <Select label="这份数据没有已收录的射线分组，请选择分组方式" placeholder="请选择分组方式"
+            data={[{ value: 'delay_bins', label: '按每帧共享的时延区间分组（最多 24 组，不按角度分组）' }]}
             value={method} disabled={!!busy} onChange={(v)=>{setMethod(v);setProjects({})}} />}
           <Text size="sm">
             四个发射端口和两个接收端口共用每帧的簇划分。八路 ASC

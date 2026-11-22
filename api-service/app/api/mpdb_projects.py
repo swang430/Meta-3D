@@ -18,7 +18,7 @@ import zipfile
 import numpy as np
 
 from dotenv import dotenv_values
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
@@ -70,7 +70,7 @@ class BuiltProject(BaseModel):
 class BuildParameters(BaseModel):
     model_config = {"extra": "forbid"}
     mode: Literal["conducted", "ota"]
-    clustering_method: Literal["delay_bins", "hyperrt"] | None = None
+    clustering_method: Literal["delay_bins"] | None = None
     speed_m_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
     rate_quality: Literal["standard", "dense"] = "standard"
     segment_durations_s: list[float] | None = None
@@ -171,9 +171,9 @@ def worker_environment(root: Path):
     env = os.environ.copy()
     config = root / "channel-engine-service/.env"
     local = dotenv_values(config, interpolate=False) if config.is_file() else {}
-    for key in ("CHANNEL_ENGINE_PATH", "HYPERRT_PATH"):
-        if key not in env and local.get(key):
-            env[key] = local[key]
+    env.pop("HYPERRT_PATH", None)
+    if "CHANNEL_ENGINE_PATH" not in env and local.get("CHANNEL_ENGINE_PATH"):
+        env["CHANNEL_ENGINE_PATH"] = local["CHANNEL_ENGINE_PATH"]
     engine = Path(env.get("CHANNEL_ENGINE_PATH", ""))
     if not engine.is_absolute() or not (engine / "mimo_ota_simulator").is_dir():
         raise HTTPException(503, "找不到信道引擎。请在 channel-engine-service/.env 中设置 CHANNEL_ENGINE_PATH 为引擎的绝对路径；启动环境中的同名设置优先。")
@@ -182,7 +182,6 @@ def worker_environment(root: Path):
 
 
 def run_worker(command, env):
-    # HyperRT 是传导计算的子进程；超时要一起结束，之后才能删除它正在使用的目录。
     with subprocess.Popen(
         command,
         env=env,
@@ -341,3 +340,70 @@ def download_project(source_id: UUID, project_id: UUID):
     return FileResponse(
         path, filename=f"MPDB-{project_id}.zip", media_type="application/zip"
     )
+
+
+@router.post("/port-evidence", response_class=FileResponse, responses={
+    200: {"content": {"application/json": {"schema": {"type": "object"}}},
+          "description": "下载含摘要、分析参数和逐帧记录的完整结果"}
+})
+def analyze_port_evidence(archive: UploadFile, bandwidth_mhz: float = Form(..., gt=0, le=10000, allow_inf_nan=False),
+                          points: int = Form(..., ge=3, le=257), members: UploadFile | None = File(None),
+                          expected: UploadFile | None = File(None),
+                          amplitude_floor: float | None = Form(None, gt=0, allow_inf_nan=False)):
+    """只读核对各端口的成员，再比较同一批成员的两种时延。"""
+    from starlette.background import BackgroundTask
+    from app.services.channel_generation.mpdb_input import _archive
+
+    if points % 2 == 0:
+        raise HTTPException(422, "频点数须为包含中心和两端带边的奇数。")
+    script = ROOT / "scripts/mpdb_port_evidence.py"
+    if not script.is_file():
+        raise HTTPException(503, "当前部署缺少端口分析脚本。")
+    temporary = tempfile.TemporaryDirectory(prefix="mpdb-port-evidence-")
+    directory = Path(temporary.name)
+    output = directory / "port-evidence.json"
+    command = [sys.executable, str(script), "--bandwidth-mhz", str(bandwidth_mhz),
+               "--points", str(points), "--output", str(output)]
+    try:
+        if amplitude_floor is not None:
+            command.extend(["--amplitude-floor", str(amplitude_floor)])
+        for upload, option, name, limit in (
+            (archive, "--archive", "source.zip", LIMIT),
+            (members, "--members", "members.npz", 32 * 1024**2),
+            (expected, "--expected", "results.json", 32 * 1024**2),
+        ):
+            if upload is None:
+                continue
+            path = directory / name
+            with path.open("xb") as dest:
+                while chunk := upload.file.read(1024**2):
+                    if dest.tell() + len(chunk) > limit:
+                        raise ValueError(f"{name} 超过 {limit // 1024**2} MiB")
+                    dest.write(chunk)
+            command.extend([option, str(path)])
+        with _archive((directory / "source.zip").read_bytes()) as outer:
+            with _archive(outer.read("R0B0S0D.mpdb")):
+                pass
+        if members is not None:
+            with _archive((directory / "members.npz").read_bytes()) as container:
+                if sum(entry.file_size for entry in container.infolist()) > 128 * 1024**2:
+                    raise ValueError("解压后的成员表超过 128 MiB")
+        env = worker_environment(ROOT)
+        env.pop("HYPERRT_PATH", None)
+        code, message = run_worker(command, env)
+        if code:
+            logger.warning("端口离线分析失败：%s", message[-2000:])
+            raise HTTPException(422, "分析未完成，请检查原始数据和配套记录。")
+        if not output.is_file():
+            raise HTTPException(502, "分析程序未返回结果文件。")
+        return FileResponse(output, filename=output.name, media_type="application/json",
+                            background=BackgroundTask(temporary.cleanup))
+    except (ValueError, KeyError, zipfile.BadZipFile, RuntimeError, EOFError, NotImplementedError) as exc:
+        temporary.cleanup()
+        raise HTTPException(422, f"无法读取分析文件：{exc}") from exc
+    except subprocess.TimeoutExpired as exc:
+        temporary.cleanup()
+        raise HTTPException(504, "端口分析超时。") from exc
+    except Exception:
+        temporary.cleanup()
+        raise

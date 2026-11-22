@@ -55,6 +55,12 @@ def test_rejects_archive_without_downlink_and_unknown_source():
         json={"mode": "conducted"},
     )
     assert response.status_code == 404
+    response = client.post(
+        "/channel-assets/mpdb-projects/00000000-0000-0000-0000-000000000000/build",
+        json={"mode": "conducted", "clustering_method": "hyperrt"},
+    )
+    assert response.status_code == 422
+    assert response.json()["detail"][0]["loc"] == ["body", "clustering_method"]
 
 
 def test_same_import_can_build_twice_and_download_independent_archives(
@@ -236,8 +242,8 @@ def test_engine_paths_from_local_service_configuration(tmp_path, monkeypatch):
         monkeypatch.delenv(key, raising=False)
     env = worker_environment(tmp_path)
     assert env["CHANNEL_ENGINE_PATH"] == str(engine)
-    assert env["HYPERRT_PATH"] == "/tools/HyperRT"
+    assert "HYPERRT_PATH" not in env
     assert env["PYTHONPATH"].split(os.pathsep)[0] == str(engine)
     assert "MOCK_ASC_MODE" not in env
     monkeypatch.setenv("HYPERRT_PATH", "/custom/HyperRT")
-    assert worker_environment(tmp_path)["HYPERRT_PATH"] == "/custom/HyperRT"
+    assert "HYPERRT_PATH" not in worker_environment(tmp_path)
