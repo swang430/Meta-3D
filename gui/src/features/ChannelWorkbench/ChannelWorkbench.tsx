@@ -29,6 +29,7 @@ import {
   type ChannelSourceType,
   type SMUProjectSyncPreview,
 } from '../../api/channelAssetService'
+import { PortEvidencePanel } from './PortEvidencePanel'
 import { MpdbProjectPanel } from './MpdbProjectPanel'
 import { ImtBundlePanel } from './ImtBundlePanel'
 import { ClusterVerificationPanel } from './ClusterVerificationPanel'
@@ -326,8 +327,10 @@ export function ChannelWorkbench() {
           <SegmentedControl aria-label="选择复查内容" value={reviewTask} onChange={setReviewTask} data={[
             { value: 'files', label: '查看工程文件' },
             { value: 'clusters', label: '核验聚簇结果' },
+            { value: 'ports', label: '端口成员与时延分析' },
           ]} />
           <div hidden={reviewTask !== 'files'}><ImtBundlePanel /></div>
+          <div hidden={reviewTask !== 'ports'}><PortEvidencePanel /></div>
           <div hidden={reviewTask !== 'clusters'}><ClusterVerificationPanel /></div>
         </Stack>
       </details>

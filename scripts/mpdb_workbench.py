@@ -79,7 +79,7 @@ if __name__ == "__main__":
         from mpdb_conducted_project import ChooseClustering, build
 
         try:
-            build(archive, output, sys.argv[6] if len(sys.argv) > 6 else None,
+            build(archive, output, sys.argv[6] if len(sys.argv) > 6 and sys.argv[6] != "auto" else None,
                   Path(sys.argv[7]) if len(sys.argv) > 7 else None)
         except ChooseClustering as exc:
             print(exc, file=sys.stderr)

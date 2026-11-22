@@ -1,16 +1,14 @@
 import hashlib
 import json
 import math
-import os
 from pathlib import Path
 import tempfile
 import unittest
-from unittest.mock import patch
 import zipfile
 
 import numpy as np
 
-from scripts.mpdb_conducted_project import ChooseClustering, build, hyperrt_executable
+from scripts.mpdb_conducted_project import ChooseClustering, build
 
 
 def sample(path, links, change=None):
@@ -50,9 +48,7 @@ def sample(path, links, change=None):
 
 class ConductedProjectTest(unittest.TestCase):
     def test_members_take_precedence_and_missing_members_require_choice(self):
-        with tempfile.TemporaryDirectory() as tmp, patch(
-                "scripts.mpdb_conducted_project.hyperrt_executable",
-                side_effect=AssertionError("不应启动 HyperRT")):
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             source = root / "source"
             sample(source, 8)
@@ -62,21 +58,12 @@ class ConductedProjectTest(unittest.TestCase):
             members = root / "members.npz"
             np.savez(members, source_sha256="wrong", **labels)
             with self.assertRaisesRegex(ValueError, "与本次输入不符"):
-                build(source, root / "out", "hyperrt", members)
+                build(source, root / "out", supplied=members)
             np.savez(members, source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(), **labels)
-            self.assertEqual(build(source, root / "out", "hyperrt", members)["clustering_method"], "supplied_members")
+            with self.assertRaisesRegex(ValueError, "仅支持"):
+                build(source, root / "out", "hyperrt", members)
+            self.assertEqual(build(source, root / "out", "delay_bins", members)["clustering_method"], "supplied_members")
             self.assertEqual(build(source, root / "bins", "delay_bins")["clustering_method"], "delay_bins")
-
-    def test_runtime_lookup_and_guidance(self):
-        with tempfile.TemporaryDirectory() as tmp, patch.dict(os.environ, {"PATH": tmp}, clear=True):
-            with self.assertRaisesRegex(FileNotFoundError, "HYPERRT_PATH.*PATH"):
-                hyperrt_executable()
-            runtime = Path(tmp) / "HyperRT"
-            runtime.touch(mode=0o755)
-            self.assertEqual(hyperrt_executable(), runtime.resolve())
-            os.environ["HYPERRT_PATH"] = str(runtime.with_name("missing"))
-            with self.assertRaisesRegex(FileNotFoundError, "发行目录"):
-                hyperrt_executable()
 
     def test_reject_wrong_channel_metadata(self):
         for group, key, value in (("lauraycsPlatform", "direction", "uplink"),
@@ -133,7 +120,6 @@ class ConductedProjectTest(unittest.TestCase):
             with self.assertRaises(FileExistsError):
                 build(Path("missing"), Path(tmp))
 
-    @unittest.skipUnless(os.environ.get("HYPERRT_PATH"), "需要配置 HyperRT 发行环境")
     def test_full_build_and_missing_pair(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -147,7 +133,7 @@ class ConductedProjectTest(unittest.TestCase):
             sample(archive, 8)
             with zipfile.ZipFile(archive, "a") as outer:
                 outer.write(source, "R0B0S0D.mpdb")
-            manifest = build(archive, root / "out", "hyperrt")
+            manifest = build(archive, root / "out", "delay_bins")
             self.assertEqual(manifest["source"]["mpdb"], hashlib.sha256(source.read_bytes()).hexdigest())
             self.assertEqual(manifest["frames"], [10, 13])
             self.assertEqual(len(manifest["links"]), 8)
