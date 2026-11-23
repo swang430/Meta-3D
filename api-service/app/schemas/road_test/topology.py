@@ -14,6 +14,7 @@ class TopologyType(str, Enum):
     """Topology type"""
     SISO = "SISO"
     MIMO_2X2 = "MIMO_2x2"
+    MIMO_4X2 = "MIMO_4x2"
     MIMO_4X4 = "MIMO_4x4"
     MIMO_8X8 = "MIMO_8x8"
 

@@ -36,6 +36,7 @@ import {
   submitExecutionMetrics,
   type TimeSeriesPoint,
 } from '../../api/roadTestService'
+import { ConductedExecutionModal } from './ConductedExecutionModal'
 import { TestReportModal } from './TestReportModal'
 
 interface Props {
@@ -62,9 +63,14 @@ const MODE_LABELS: Record<TestMode, string> = {
 }
 
 // Modes that require additional hardware setup
-const MODES_REQUIRING_HARDWARE: TestMode[] = ['conducted', 'ota']
+const MODES_REQUIRING_HARDWARE: TestMode[] = ['ota']
 
-export function TestExecutionModal({ opened, onClose, scenario, testMode }: Props) {
+export function TestExecutionModal(props: Props) {
+  if (props.testMode === 'conducted') return <ConductedExecutionModal key={props.scenario.id} {...props} />
+  return <DemoExecutionModal {...props} />
+}
+
+function DemoExecutionModal({ opened, onClose, scenario, testMode }: Props) {
   const queryClient = useQueryClient()
   const [executionId, setExecutionId] = useState<string>('')
   const [status, setStatus] = useState<ExecutionStatus>('idle')
@@ -87,7 +93,6 @@ export function TestExecutionModal({ opened, onClose, scenario, testMode }: Prop
   const createMutation = useMutation({
     mutationFn: async () => {
       // For modes requiring hardware, use digital_twin mode for simulation
-      // In production, this would require topology_id for conducted mode
       const effectiveMode = requiresHardware ? 'digital_twin' : (testMode || 'digital_twin')
 
       return createExecution({

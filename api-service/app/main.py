@@ -59,6 +59,10 @@ async def lifespan(app: FastAPI):
     # Initialize database
     try:
         init_db()
+        from app.db.database import SessionLocal
+        from app.services.road_test.conducted_runner import recover_conducted_runs
+        with SessionLocal() as db:
+            recover_conducted_runs(db)
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
@@ -158,6 +162,9 @@ async def lifespan(app: FastAPI):
     await shutdown_route_batch_jobs()
     await shutdown_fixed_route_jobs()
 
+    from app.services.road_test.conducted_runner import shutdown_conducted_runs
+    await shutdown_conducted_runs()
+
     # Shutdown HAL service
     from app.services.instrument_hal_service import shutdown_hal_service
     try:
@@ -251,6 +258,8 @@ app.include_router(monitoring.router, prefix=settings.api_v1_prefix, tags=["Moni
 app.include_router(report.router, prefix=settings.api_v1_prefix, tags=["Reports"])
 
 # Phase 3.7: Virtual Road Test
+from app.api import road_test_conducted
+app.include_router(road_test_conducted.router, prefix=settings.api_v1_prefix)
 app.include_router(road_test.router, prefix=settings.api_v1_prefix, tags=["Virtual Road Test"])
 
 # Alert system

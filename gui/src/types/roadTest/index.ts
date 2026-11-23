@@ -39,7 +39,7 @@ export * from './scenario'
 export interface NetworkTopology {
   id: string
   name: string
-  type: 'SISO' | 'MIMO_2x2' | 'MIMO_4x4' | 'MIMO_8x8' | 'custom'
+  type: 'SISO' | 'MIMO_2x2' | 'MIMO_4x2' | 'MIMO_4x4' | 'MIMO_8x8' | 'custom'
 }
 
 // 测试配置

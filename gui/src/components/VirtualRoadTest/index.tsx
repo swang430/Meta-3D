@@ -41,6 +41,7 @@ import {
 } from '@tabler/icons-react'
 import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
+import { ConductedExecutionModal } from './ConductedExecutionModal'
 import { TestReportModal } from './TestReportModal'
 import { TestMode } from '../../types/roadTest'
 import { fetchExecutions } from '../../api/roadTestService'
@@ -170,6 +171,7 @@ const MODE_LABELS: Record<TestMode, string> = {
  * 执行历史组件 - 显示虚拟路测的执行记录
  */
 function ExecutionHistory() {
+  const [conducted, setConducted] = useState<{ id: string; name: string } | null>(null)
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
 
@@ -266,7 +268,7 @@ function ExecutionHistory() {
                   </Table.Td>
                   <Table.Td>
                     <Badge size="sm" variant="light">
-                      {MODE_LABELS[exec.mode] || exec.mode}
+                      {MODE_LABELS[exec.mode] || exec.mode}{exec.conducted?.binding?.execution_mode === 'simulated' && '（模拟硬件）'}
                     </Badge>
                   </Table.Td>
                   <Table.Td>
@@ -295,6 +297,8 @@ function ExecutionHistory() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
+                      {exec.mode === 'conducted' && <Button size="xs" variant="light" onClick={() =>
+                        setConducted({ id: exec.execution_id, name: exec.scenario_name })}>查看执行</Button>}
                       {isCompleted && (
                         <Tooltip label="查看报告">
                           <ActionIcon
@@ -315,6 +319,8 @@ function ExecutionHistory() {
         </Table>
       </Paper>
 
+      {conducted && <ConductedExecutionModal key={conducted.id} opened initialId={conducted.id}
+        scenario={{ id: '', name: conducted.name }} onClose={() => setConducted(null)} />}
       {/* Report Modal */}
       {selectedExecutionId && (
         <TestReportModal

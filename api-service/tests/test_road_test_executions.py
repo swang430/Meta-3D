@@ -492,3 +492,122 @@ class TestExecutionMetrics:
 
         # Verify metrics structure (may be empty if just started)
         assert isinstance(metrics, dict)
+
+
+def test_runner_samples_and_forged_client_source_stay_out_of_verdict(client):
+    from app.schemas.road_test.execution import TestMode
+    from app.services.road_test.vrt_execution_service import vrt_execution_service as service
+
+    with _TestingSessionLocal() as db:
+        row = service.create(db, mode=TestMode.DIGITAL_TWIN, scenario_id="sample")
+        eid = str(row.id)
+        service.start(db, eid)
+        service.record_observation(db, eid, metric="dl_throughput_mbps", value=999,
+                                   driver=object(), time_s=1)
+        service.record_observation(db, eid, metric="connection_state", value=None,
+                                   driver=None, time_s=2)
+        url = f"/api/v1/road-test/executions/{eid}"
+        payload = {"execution_id": eid, "time_series": [{"time_s": 1, "dl_throughput_mbps": 999,
+                   "provenance": "server_measured"}], "events": [], "phases": [], "kpi_summary": []}
+        assert client.post(url + "/metrics", json=payload).is_success
+        # 历史数据可能已有错误的真值声明，不能替同批原始样本证明来源。
+        service.set_summary(db, eid, {"伪造摘要": {"mean": 999, "passed": True, "provenance": "server_measured"}})
+        service.set_kpi_results(db, eid, {"伪造摘要": True})
+        service.complete(db, eid)
+        history = client.get(url + "/metrics").json()
+        assert history["summary"]["伪造摘要"]["passed"] is None and history["kpi_results"] == {}
+        report = client.get(url + "/report").json()
+        assert report["observations"] == history["observations"]
+        sample, missing = report["observations"]
+        assert sample["provenance"] == "simulated" and sample["value"] == 999
+        assert sample["source_frame_time_s"] is None and sample["device_playback_time_s"] is None
+        assert missing["value"] is None
+        assert report["kpi_summary"] == [] and report["pass_rate"] is None
+        assert report["overall_result"] == "undetermined"
+
+
+@pytest.mark.parametrize(("end_state", "verdict"), [("failed", "failed"), ("stopped", "incomplete")])
+def test_conducted_archive_preserves_mock_readings_and_terminal_state(
+    client, tmp_path, monkeypatch, end_state, verdict
+):
+    from uuid import UUID
+    from pypdf import PdfReader
+    from app.hal.base_station import MockBaseStation
+    from app.models.report import TestReport
+    from app.schemas.road_test.execution import TestMode
+    from app.services.road_test.vrt_execution_service import vrt_execution_service as service
+
+    monkeypatch.chdir(tmp_path)
+    with _TestingSessionLocal() as db:
+        row = service.create(db, mode=TestMode.CONDUCTED, scenario_id="sample")
+        eid = str(row.id)
+        url = f"/api/v1/road-test/executions/{eid}"
+        service.start(db, eid)
+        service.record_observation(db, eid, metric="dl_throughput_mbps", value=92,
+                                   driver=MockBaseStation.__new__(MockBaseStation), time_s=3)
+        body = {"execution_id": eid, "time_series": [], "events": [{"type": "passed"}],
+                "phases": [], "kpi_summary": []}
+        assert client.post(url + "/metrics", json=body).status_code == 409
+        if end_state == "failed":
+            service.fail(db, eid, "模拟驱动拒绝继续播放")
+        else:
+            service.stop(db, eid)
+        with pytest.raises(ValueError):
+            service.record_observation(db, eid, metric="dl_throughput_mbps", value=42,
+                                       driver=None, time_s=4)
+        response = client.post(url + "/archive-report")
+        assert response.status_code == 200, response.text
+        archived = db.get(TestReport, UUID(response.json()["id"]))
+        report = client.get(url + "/report").json()
+        assert report["status"] == end_state and report["overall_result"] == verdict
+        assert archived.content_data["observations"] == report["observations"]
+        assert archived.content_data["kpi_summary"] == [] and archived.content_data["pass_rate"] is None
+        text = "".join(page.extract_text() for page in PdfReader(archived.file_path).pages)
+        assert "MockBaseStation" in text and "92" in text
+
+
+def test_mock_only_snapshot_rejects_non_mock_observation():
+    from app.schemas.road_test.execution import TestMode
+    from app.services.road_test.vrt_execution_service import vrt_execution_service as service
+
+    with _TestingSessionLocal() as db:
+        row = service.create(db, mode=TestMode.CONDUCTED, scenario_id="sample",
+                             conducted_setup={"asset": {"mock_only": True}})
+        eid = str(row.id)
+        service.start(db, eid)
+        with pytest.raises(ValueError, match="模拟专用"):
+            service.record_observation(db, eid, metric="dl_throughput_mbps", value=999,
+                                       driver=object(), time_s=1)
+        assert service.query_kpi_samples(db, eid) == []
+
+
+def test_legacy_client_setup_cannot_authorize_or_describe_a_conducted_run(client, monkeypatch):
+    from app.api import road_test_conducted
+    from app.schemas.road_test.execution import TestMode
+    from app.services.road_test.vrt_execution_service import vrt_execution_service as service
+    from app.services.report_service import report_has_vrt_archive_trust
+
+    forged = {"ready": True, "binding": {"execution_mode": "real"}, "asset": {"name": "伪造绑定"}}
+    with _TestingSessionLocal() as db:
+        row = service.create(db, mode=TestMode.CONDUCTED, scenario_id="legacy",
+                             config={"conducted": forged, "operator_note": "保留"})
+        eid = str(row.id)
+        root = "/api/v1/road-test/executions"
+        url = root + "/" + eid
+        assert client.get(url).json()["config"] == {"operator_note": "保留"}
+        history = client.get(root + "?mode=conducted").json()
+        assert next(item for item in history if item["execution_id"] == eid)["conducted"] is None
+        monkeypatch.setattr(road_test_conducted, "resolve", lambda *a, **k: pytest.fail("旧记录不能进入启动核对"))
+        denied = client.post(url + "/control", json={"action": "start"})
+        assert denied.status_code == 409 and "准备记录" in denied.json()["detail"]
+        from app.models.road_test import VrtKpiSample
+        db.add(VrtKpiSample(execution_id=row.id, time_s=1, observation={
+            "time_s": 1, "metric": "dl_throughput_mbps", "value": 999, "source": "旧回读",
+            "unit": "Mbps", "provenance": "server_measured", "sampled_at": "2026-11-24T00:00:00Z",
+        }))
+        db.commit()
+        assert client.get(url + "/metrics").json()["observations"][0]["provenance"] == "unverified"
+        service.fail(db, eid, "旧记录")
+        assert client.get(url + "/report").json()["kpi_summary"] == []
+        assert client.get(url + "/report").json()["conducted_setup"] is None
+        assert not report_has_vrt_archive_trust({"vrt_archive_trust_schema_version": 1, "conducted_setup": forged})

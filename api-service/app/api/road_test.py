@@ -41,7 +41,6 @@ from app.schemas.road_test import (
     ExecutionStatus,
     # Report models
     ExecutionReport,
-    PhaseResult,
     KPISummary,
     ScenarioInfo,
     NetworkInfo,
@@ -50,7 +49,6 @@ from app.schemas.road_test import (
     BaseStationInfo,
     StepConfigInfo,
     # Metrics submission models
-    TimeSeriesPoint,
     ExecutionMetricsSubmit,
     # Detailed config models
     NetworkConfigDetail,
@@ -155,55 +153,6 @@ def _log_event(
     logger.info(f"[{execution_id}] {message}")
 
 
-def _compute_kpi_summary_from_samples(kpi_samples: List[KPIMetrics]) -> List[KPISummary]:
-    """Compute KPI summary statistics from raw samples."""
-    import statistics
-
-    result = []
-
-    # Helper to compute stats for a metric
-    def compute_stats(values: List[float], name: str, unit: str, target: float = None) -> KPISummary:
-        if not values:
-            return None
-        mean_val = statistics.mean(values)
-        return KPISummary(
-            name=name,
-            unit=unit,
-            mean=round(mean_val, 2),
-            min=round(min(values), 2),
-            max=round(max(values), 2),
-            std=round(statistics.stdev(values), 2) if len(values) > 1 else 0,
-            target=target,
-            passed=mean_val >= target if target and name not in ["端到端延迟", "BLER"] else (mean_val <= target if target else None)
-        )
-
-    # Extract values for each metric
-    dl_values = [s.dl_throughput_mbps for s in kpi_samples if s.dl_throughput_mbps is not None]
-    ul_values = [s.ul_throughput_mbps for s in kpi_samples if s.ul_throughput_mbps is not None]
-    latency_values = [s.latency_ms for s in kpi_samples if s.latency_ms is not None]
-    rsrp_values = [s.rsrp_dbm for s in kpi_samples if s.rsrp_dbm is not None]
-    sinr_values = [s.sinr_db for s in kpi_samples if s.sinr_db is not None]
-
-    if dl_values:
-        result.append(compute_stats(dl_values, "下行吞吐量", "Mbps", 100.0))
-    if ul_values:
-        result.append(compute_stats(ul_values, "上行吞吐量", "Mbps", 40.0))
-    if latency_values:
-        kpi = compute_stats(latency_values, "端到端延迟", "ms", 20.0)
-        if kpi:
-            kpi.passed = kpi.mean <= kpi.target if kpi.target else None
-            result.append(kpi)
-    if rsrp_values:
-        kpi = compute_stats(rsrp_values, "RSRP", "dBm", -90.0)
-        if kpi:
-            kpi.passed = kpi.mean >= kpi.target if kpi.target else None
-            result.append(kpi)
-    if sinr_values:
-        result.append(compute_stats(sinr_values, "SINR", "dB", 10.0))
-
-    return [r for r in result if r is not None]
-
-
 # ===== Scenario Management =====
 
 def compute_overall_result(kpi_summary, execution_status):
@@ -212,8 +161,7 @@ def compute_overall_result(kpi_summary, execution_status):
     ⚠️ **一条 KPI 都没有真判决时，结论恒为「未判定」** —— 不能掉进 failed。
     那等于把「编造的通过」换成「编造的不通过」，只是换了个方向说谎，半径没收敛。
 
-    虚拟路测今天没有真数据源，所以「没有真判决」是常态；合格判定原先由**浏览器**
-    算完发上来、后端原样存原样印，现在一律不采信（落库与读回都置 None）。
+    只有正式测量且具备适用判据时才能形成合格结论。客户端提交的判决不采信。
     """
     judged = [k for k in kpi_summary if getattr(k, "passed", None) is not None]
     passed_kpis = sum(1 for k in judged if k.passed)
@@ -625,6 +573,9 @@ async def create_execution(
     if not scenario:
         raise HTTPException(status_code=404, detail=f"Scenario '{execution_create.scenario_id}' not found")
 
+    if "conducted" in execution_create.config:
+        raise HTTPException(400, "请通过传导建档接口保存服务端核对的准备资料。")
+
     # Validate topology for conducted mode
     if execution_create.mode == TestMode.CONDUCTED:
         if not execution_create.topology_id:
@@ -672,6 +623,15 @@ async def control_execution(
     current = ExecutionStatus(row.status)
     action = control.action.value if hasattr(control.action, "value") else control.action
     logger.info("[Control] %s requested for %s (current=%s)", action, execution_id, current.value)
+
+    if row.mode == TestMode.CONDUCTED.value:
+        from app.services.road_test.conducted_runner import control as control_conducted
+
+        await control_conducted(db, row, action)
+        if action == "stop":
+            db.expire_all()
+            await _archive_execution_report(execution_id, db)
+        return {"status": "success", "execution_id": execution_id, "action": action}
 
     if action == "start":
         if current != ExecutionStatus.IDLE:
@@ -790,6 +750,9 @@ async def submit_execution_metrics(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
 
+    if row.mode == TestMode.CONDUCTED.value:
+        raise HTTPException(status_code=409, detail="传导测试的采样和进度由服务器记录。")
+
     # 1. Convert TimeSeriesPoint → KPIMetrics for the KPI samples table
     kpi_samples = [
         KPIMetrics(
@@ -807,7 +770,7 @@ async def submit_execution_metrics(
     ]
 
     # 2. Build summary from kpi_summary
-    # ⚠️ 这个入口收到的**就是浏览器提交的数据**（虚拟路测今天没有服务端真实数据源），
+    # ⚠️ 这个入口收到的**就是浏览器提交的数据**，
     #    所以后端**无条件**把这批标成模拟、不读请求里的任何标记 —— 被检查的一方
     #    不能自己声明自己是真是假。
     #    上一版只丢掉了 passed，而 mean/min/max/std **照样落库、照样印进报告**
@@ -873,6 +836,7 @@ async def archive_execution_report(execution_id: str, db: Session = Depends(get_
     if row.status not in {
         ExecutionStatus.COMPLETED.value,
         ExecutionStatus.STOPPED.value,
+        ExecutionStatus.FAILED.value,
     }:
         raise HTTPException(
             status_code=409,
@@ -891,6 +855,10 @@ async def archive_execution_report(execution_id: str, db: Session = Depends(get_
         )
     payload = {"id": str(report.id), "title": report.title, "status": report.status}
     if report.status == ReportStatus.COMPLETED.value:
+        from app.services.report_service import report_has_vrt_archive_trust
+
+        if not report_has_vrt_archive_trust(report.content_data):
+            raise HTTPException(status_code=409, detail="旧报告的测量来源未核实，归档尚未重建。")
         return payload
     if report.status == ReportStatus.GENERATING.value:
         raise HTTPException(
@@ -947,32 +915,6 @@ async def _archive_execution_report(execution_id: str, db: Session):
         # 2. Convert to JSON dict
         content_data = report_data.model_dump(mode="json")
         content_data[VRT_ARCHIVE_TRUST_FIELD] = VRT_ARCHIVE_TRUST_SCHEMA_VERSION
-        
-        # DEBUG LOGGING FOR REPORT DATA
-        logger.info(f"Generated report data for {execution_id}. Keys: {list(content_data.keys())}")
-        if 'logs' in content_data:
-             logger.info(f"Report has {len(content_data['logs'])} log entries")
-        else:
-             logger.warning("Report has NO logs key!")
-        
-        if 'time_series' in content_data:
-             logger.info(f"Report has {len(content_data['time_series'])} time_series points")
-        else:
-             logger.warning("Report has NO time_series key!")
-
-        # TEMP DEBUG TO FILE
-        try:
-            with open("debug_report_dump.txt", "a") as f:
-                f.write(f"\n--- Report Archive {datetime.now()} ---\n")
-                f.write(f"Execution ID: {execution_id}\n")
-                f.write(f"Keys: {list(content_data.keys())}\n")
-                f.write(f"Logs count: {len(content_data.get('logs', []))}\n")
-                f.write(f"Steps count: {len(content_data.get('step_configs', []))}\n")
-                f.write(f"KPI Summary: {len(content_data.get('kpi_summary', []))}\n")
-        except Exception as file_err:
-            logger.error(f"Failed to write debug dump: {file_err}")
-
-
         
         # 3. Create TestReport entry
         from datetime import datetime, timezone
@@ -1260,30 +1202,11 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
         logger.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail=f"Error processing scenario details: {str(e)}")
 
-    from datetime import datetime, timedelta
-
-    base_time = execution.start_time or datetime.now()
 
     # Pull real metrics + phases from DB (Phase 2.4c)
     kpi_samples_orm = vrt_execution_service.query_kpi_samples(db, execution_id)
     metrics_obj = vrt_execution_service.to_test_metrics(row, kpi_samples_orm)
-    # ⚠️ 光看「有没有样本」不够（外审 P1）：那些样本本身就是浏览器
-    #    Math.random() 造的。上一版只在摘要那层 continue 掉，而下面
-    #    kpi_summary 空了之后会 **从原始样本重算** —— 编的数又算回来了。
-    #    所以来源是客户端模拟时，整批都不算「真数据」。
-    #    ⚠️ 判法是**白名单放行**不是黑名单拦截（外审 P1）：
-    #    历史执行的样本**没有这个标记**，按黑名单会被当成真数据放行；
-    #    带样本但 summary 为空的提交同理。而虚拟路测今天**没有服务端真实数据源** ——
-    #    所有样本都来自浏览器，所以只有**明确标着 real** 的才允许当真数据。
-    _summary = getattr(metrics_obj, "summary", None) or {}
-    _explicitly_real = bool(_summary) and all(
-        (v or {}).get("provenance") == "server_measured"
-        for v in _summary.values()
-    )
-    has_real_metrics = len(metrics_obj.kpi_samples) > 0 and _explicitly_real
-    persisted_phases = vrt_execution_service.to_phase_results(row)
-
-    # Initialize new fields
+    observations = metrics_obj.observations
     time_series_data = []
     trajectory_data = []
     network_config_detail = None
@@ -1292,92 +1215,15 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
     custom_config_highlights = []
 
     try:
-        if has_real_metrics:
-            # ===== Use real collected data =====
-            metrics = metrics_obj
-
-            # Use submitted phases if available
-            if persisted_phases:
-                phases = persisted_phases
-            else:
-                # Fallback to generating phases from metrics
-                phases = [
-                    PhaseResult(
-                        name="测试执行",
-                        status="completed",
-                        duration_s=execution.duration_s or 0,
-                        start_time=execution.start_time or datetime.now(),
-                        end_time=execution.end_time or datetime.now(),
-                        notes=None
-                    )
-                ]
-
-            # Build KPI summary from real metrics
-            kpi_summary = []
-            for name, stats in metrics.summary.items():
-                # ⚠️ 来源是客户端模拟的 → 数值不进正式 KPI（外审 P1）。
-                #    只丢 passed 不够：mean/min/max/std 本身就是 Math.random() 造的。
-                if stats.get("provenance") == "client_simulated":
-                    continue
-                kpi_summary.append(KPISummary(
-                    name=name,
-                    unit=stats.get("unit", ""),
-                    mean=stats.get("mean", 0),
-                    min=stats.get("min", 0),
-                    max=stats.get("max", 0),
-                    std=stats.get("std"),
-                    target=stats.get("target"),
-                    # 同上：不采信落库的 passed（历史行里可能还留着浏览器算的值）
-                    passed=None
-                ))
-
-            # If no summary, compute from samples
-            if not kpi_summary and metrics.kpi_samples:
-                kpi_summary = _compute_kpi_summary_from_samples(metrics.kpi_samples)
-
-            # Use real events
-            events = metrics.events
-
-            # Build time series data for charts
-            for sample in metrics.kpi_samples:
-                time_series_data.append(TimeSeriesPoint(
-                    time_s=sample.time_s,
-                    position=sample.position,
-                    rsrp_dbm=sample.rsrp_dbm,
-                    rsrq_db=sample.rsrq_db,
-                    sinr_db=sample.sinr_db,
-                    dl_throughput_mbps=sample.dl_throughput_mbps,
-                    ul_throughput_mbps=sample.ul_throughput_mbps,
-                    latency_ms=sample.latency_ms,
-                    event=sample.event_occurred
-                ))
-
-                # Build trajectory from positions
-                if sample.position and 'lat' in sample.position and 'lon' in sample.position:
-                    trajectory_data.append(TrajectoryPoint(
-                        lat=sample.position['lat'],
-                        lon=sample.position['lon'],
-                        alt=sample.position.get('alt'),
-                        time_s=sample.time_s
-                    ))
-
-            logger.info(f"Using real metrics for report: {len(metrics.kpi_samples)} samples")
-
-        else:
-            # ===== 没有样本 → 什么都不编（P1-48）=====
-            # 这里原先用 random.uniform 现编 7 个相位、5 条 KPI（全部硬编 passed=True）、
-            # 3 条事件，写进正式 PDF。生产库里有实物：一份 PDF 上 5 行全 ✓ PASS、
-            # 通过率 100%，而那次执行零仪器参与。
-            #
-            # 编出来的数标着「通过」进正式报告，比没有报告危险得多。
-            phases = []
-            kpi_summary = []
-            events = []
-            logger.info(
-                "[road-test] 执行 %s 没有采集到样本 —— 不生成任何 KPI/相位/事件，"
-                "报告将标为未判定（原先此处会用随机数编造一份「全部通过」的报告）",
-                execution.id,
-            )
+        phases = []
+        events = []
+        kpi_summary = []
+        for metric, name in (("dl_throughput_mbps", "下行吞吐量"), ("ul_throughput_mbps", "上行吞吐量")):
+            values = [item.value for item in observations if item.metric == metric
+                      and item.provenance == "server_measured" and item.value is not None]
+            if values:
+                kpi_summary.append(KPISummary(name=name, unit="Mbps", mean=sum(values) / len(values),
+                                              min=min(values), max=max(values), passed=None))
 
     except Exception as e:
         logger.error(f"Error generating metrics/phases: {e}")
@@ -1470,7 +1316,7 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
                         ))
 
         # Build trajectory from route waypoints if no real trajectory
-        if not trajectory_data and scenario:
+        if execution.mode != TestMode.CONDUCTED and not trajectory_data and scenario:
             route = get_attr_or_item(scenario, 'route')
             if route:
                 waypoints = get_attr_or_item(route, 'waypoints', [])
@@ -1515,6 +1361,8 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             end_time=execution.end_time,
             duration_s=execution.duration_s,
             # Results
+            conducted_setup=row.vrt_conducted_setup if row.mode == "conducted" else None,
+            observations=observations,
             phases=phases,
             kpi_summary=kpi_summary,
             overall_result=overall_result,
@@ -1580,23 +1428,25 @@ async def stream_execution_metrics(websocket: WebSocket, execution_id: str):
 
         logger.info(f"Subscription: {subscription.channels}")
 
-        # Mock streaming (replace with actual executor events)
         import asyncio
-        from datetime import datetime
 
         while True:
-            # Send mock metrics every second
-            if "metrics" in subscription.channels:
-                message = MetricsStreamMessage(
-                    execution_id=execution_id,
-                    timestamp=datetime.now(),
-                    message_type="metrics",
-                    data={
-                        "rsrp_dbm": -85.0,
-                        "sinr_db": 15.0,
-                        "dl_throughput_mbps": 45.0
-                    }
-                )
+            with SessionLocal() as session:
+                row = vrt_execution_service.get(session, execution_id)
+                if row is None:
+                    await websocket.close(code=4004)
+                    return
+                status = vrt_execution_service.to_test_status(row).model_dump(mode="json")
+                messages = []
+                if "metrics" in subscription.channels:
+                    samples = vrt_execution_service.query_kpi_samples(session, execution_id)
+                    metrics = vrt_execution_service.to_test_metrics(row, samples)
+                    messages.append(("metrics", metrics.model_dump(mode="json")))
+                if "events" in subscription.channels or "logs" in subscription.channels:
+                    messages.append(("status", {"status": status, "logs": row.execution_logs or []}))
+            for kind, payload in messages:
+                message = MetricsStreamMessage(execution_id=execution_id, timestamp=datetime.now(),
+                                               message_type=kind, data=payload)
                 await websocket.send_json(message.model_dump(mode="json"))
 
             await asyncio.sleep(1.0)
@@ -1615,6 +1465,10 @@ async def get_capabilities():
     """
     Get system capabilities for each test mode
     """
+    from app.services.instrument_hal_service import get_hal_service, is_mock_driver
+
+    drivers = get_hal_service().drivers
+    simulated = all(is_mock_driver(drivers.get(key)) for key in ("baseStation", "channelEmulator"))
     return {
         "digital_twin": {
             "available": True,
@@ -1623,9 +1477,12 @@ async def get_capabilities():
             "acceleration_factor": 10.0
         },
         "conducted": {
-            "available": False,  # Requires hardware
-            "max_bandwidth_mhz": 100,
-            "max_mimo_order": "4x4",
+            "available": simulated,
+            "simulated_available": simulated,
+            "real_available": False,
+            "requires_preparation": True,
+            "max_bandwidth_mhz": None,
+            "max_mimo_order": "4x2",
             "requires_topology": True
         },
         "ota": {

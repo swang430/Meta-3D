@@ -6,6 +6,9 @@
 
 import apiClient from './client'
 import type {
+  ConductedSelection,
+  ConductedPreparation,
+  RunnerObservation,
   RoadTestScenario,
   ScenarioSummary,
   TestExecution,
@@ -160,7 +163,10 @@ export interface SystemCapabilities {
   }
   conducted: {
     available: boolean
-    max_bandwidth_mhz: number
+    simulated_available: boolean
+    real_available: boolean
+    requires_preparation: boolean
+    max_bandwidth_mhz: number | null
     max_mimo_order: string
     requires_topology: boolean
   }
@@ -175,4 +181,25 @@ export interface SystemCapabilities {
 export async function fetchCapabilities(): Promise<SystemCapabilities> {
   const response = await apiClient.get<SystemCapabilities>(`${BASE_URL}/capabilities`)
   return response.data
+}
+
+type ResourceOption = { id: string; name: string; mock_only?: boolean }
+
+export async function fetchConductedOptions() {
+  return (await apiClient.get<Record<'labs' | 'topologies' | 'assets', ResourceOption[]>>(
+    `${BASE_URL}/conducted/options`)).data
+}
+
+export async function prepareConducted(selection: ConductedSelection) {
+  return (await apiClient.post<ConductedPreparation>(`${BASE_URL}/conducted/prepare`, selection)).data
+}
+
+export async function saveConducted(selection: ConductedSelection) {
+  return (await apiClient.post<TestExecution>(`${BASE_URL}/conducted/executions`, selection)).data
+}
+
+export async function fetchExecutionObservations(id: string) {
+  const response = await apiClient.get<{ observations?: RunnerObservation[] }>(
+    `${BASE_URL}/executions/${id}/metrics`)
+  return response.data.observations || []
 }

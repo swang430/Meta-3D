@@ -1,3 +1,5 @@
+import { ConductedSetup } from '../VirtualRoadTest/ConductedSetup'
+import { ExecutionObservations } from '../VirtualRoadTest/ExecutionObservations'
 /**
  * Unified Report Viewer Component
  *
@@ -131,6 +133,9 @@ export function ReportViewer({ reportId, contentData, title }: Props) {
     <Stack>
       {!contentData && report && !report.road_test_execution_id && report.test_execution_ids?.length === 1 &&
         <CalibrationAuditExport key={report.id} reportId={report.id} />}
+      {content.conducted_setup && <ConductedSetup snapshot={content.conducted_setup} />}
+      {(content.execution?.mode === 'conducted' || content.conducted_setup) &&
+        <ExecutionObservations samples={content.observations || []} />}
     <ReportContent
       content={content}
       outcome={outcome}

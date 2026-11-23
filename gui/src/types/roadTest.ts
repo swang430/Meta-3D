@@ -787,6 +787,7 @@ export interface TestExecution {
 }
 
 export interface ExecutionSummary {
+  conducted?: { binding?: { execution_mode?: string | null } | null } | null
   execution_id: string
   mode: TestMode
   status: ExecutionStatus
@@ -984,7 +985,38 @@ export interface CustomConfigHighlight {
   description?: string
 }
 
+export interface ConductedSelection {
+  scenario_id: string
+  direction: 'downlink'
+  lab_profile_id: string | null
+  topology_id: string | null
+  asset_id: string | null
+}
+
+export interface ConductedPreparation extends ConductedSelection {
+  binding?: { execution_mode: 'simulated' | 'real' | null } | null
+  scenario_version: string
+  lab_name: string | null
+  asset: { name: string; sha256: string; instrument_path?: string; mock_only?: boolean } | null
+  port_mapping: { tx: number; rx: number; input_port: number; output_port: number }[]
+  ready: boolean
+  reasons: string[]
+}
+
+export interface RunnerObservation {
+  metric: 'connection_state' | 'dl_throughput_mbps' | 'ul_throughput_mbps' | 'playback_position_s'
+  value: string | number | boolean | null
+  unit: string
+  source: string
+  provenance: 'server_measured' | 'simulated' | 'unverified'
+  sampled_at: string
+  source_frame_time_s: number | null
+  device_playback_time_s: number | null
+}
+
 export interface ExecutionReport {
+  conducted_setup?: ConductedPreparation | null
+  observations?: RunnerObservation[]
   execution_id: string
   scenario_name: string
   mode: TestMode

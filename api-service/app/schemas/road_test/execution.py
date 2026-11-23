@@ -115,9 +115,24 @@ class KPIMetrics(BaseModel):
     event_occurred: Optional[str] = Field(None, description="Event occurred (handover, etc.)")
 
 
+class RunnerObservation(BaseModel):
+    """单次回读。三种时间各自记录，缺项保持空。"""
+    metric: Literal["connection_state", "dl_throughput_mbps", "ul_throughput_mbps", "playback_position_s"]
+    value: str | float | bool | None
+    unit: str
+    source: str
+    provenance: Literal["server_measured", "simulated", "unverified"]
+    sampled_at: UTCDateTime
+    time_s: float = Field(ge=0, allow_inf_nan=False)
+    source_frame_time_s: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+    device_playback_time_s: Optional[float] = Field(None, ge=0, allow_inf_nan=False)
+
+
 class TestMetrics(BaseModel):
     """Complete test metrics"""
     execution_id: str = Field(description="Execution ID")
+
+    observations: List[RunnerObservation] = Field(default_factory=list)
 
     # Time series data
     kpi_samples: List[KPIMetrics] = Field(description="KPI samples over time")
@@ -140,23 +155,7 @@ class TestMetrics(BaseModel):
         description="KPI target achievement results"
     )
 
-    # P1-48: 这批样本是真是假 —— 由服务端给，不问客户端。
-    #
-    # `vrt_kpi_samples` 全仓**只有一个写入方**：`POST /executions/{id}/metrics`，
-    # 也就是浏览器提交。服务端执行链不写这张表。所以只要有样本，就一定是
-    # 浏览器 `Math.random()` 造的。
-    #
-    # 外审 P1 的实证：请求里带 time_series 但 kpi_summary 为空时（schema 允许），
-    # 逐条 KPI 的 provenance 一条都不会写，而原始样本照样入库 ——
-    # 这个读端点再把它们原样返回，调用方分不出真假。所以标记必须挂在**批次层**，
-    # 不能只挂在逐条摘要里。
-    provenance: Optional[str] = Field(
-        default=None,
-        description=(
-            "这批 KPI 样本的来源：client_simulated = 浏览器模拟生成（不得作为验收依据）；"
-            "None = 没有样本。虚拟路测目前没有服务端真实数据源。"
-        ),
-    )
+    provenance: Optional[str] = Field(None, description="kpi_samples 的来源。运行器逐项回读另见 observations。")
 
 
 # ===== Test Execution =====
@@ -215,6 +214,7 @@ class ExecutionControl(BaseModel):
 
 class ExecutionSummary(BaseModel):
     """Execution summary for list view"""
+    conducted: Optional[Dict[str, Any]] = None
     execution_id: str
     mode: TestMode
     status: ExecutionStatus
@@ -373,6 +373,8 @@ class TrajectoryPoint(BaseModel):
 
 class ExecutionReport(BaseModel):
     """Complete execution report"""
+    conducted_setup: Optional[Dict[str, Any]] = None
+    observations: List[RunnerObservation] = Field(default_factory=list)
     execution_id: str = Field(description="Execution ID")
     scenario_name: str = Field(description="Scenario name")
     mode: TestMode = Field(description="Test mode")

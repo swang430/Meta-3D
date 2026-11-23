@@ -1,0 +1,155 @@
+import pytest
+
+from tests.test_road_test_executions import _isolated_db
+
+
+def test_legacy_conducted_draft_cannot_start(client, sample_topology_data):
+    root = "/api/v1/road-test"
+    topology = client.post(root + "/topologies", json=sample_topology_data).json()
+    scenario = client.get(root + "/scenarios").json()[0]
+    execution = client.post(root + "/executions", json={
+        "mode": "conducted", "scenario_id": scenario["id"], "topology_id": topology["id"],
+    }).json()
+    url = root + "/executions/" + execution["execution_id"]
+    result = client.post(url + "/control", json={"action": "start"})
+    assert result.status_code == 409
+    assert client.get(url).json()["status"] == "idle"
+
+
+@pytest.mark.parametrize("outcome", ["stop", "start_rejected", "stop_unconfirmed", "mixed_drivers", "complete", "extra_file", "changed_bytes"])
+def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path, monkeypatch, outcome):
+    import hashlib
+    import json
+    import os
+    from pathlib import Path
+    from uuid import uuid4
+    from app.api.road_test_conducted import mock_asset
+    from app.models.lab_profile import LabProfile
+    from tests.test_road_test_executions import _TestingSessionLocal
+
+    root = "/api/v1/road-test"
+    scenario = client.get(root + "/scenarios").json()[0]
+    scenario = client.get(root + "/scenarios/" + scenario["id"]).json()
+    if os.environ.get("VRT_TEST_ASC_DIRECTORY"):
+        directory = Path(os.environ["VRT_TEST_ASC_DIRECTORY"])
+    else:
+        directory = tmp_path
+        links = []
+        for tx in range(4):
+            for rx in range(2):
+                name = f"fixture_TX{tx}_RX{rx}_H.asc"
+                (directory / name).write_bytes(name.encode())
+                links.append(dict(tx=tx, rx=rx, file=name, sha256=hashlib.sha256(name.encode()).hexdigest()))
+        (directory / "manifest.json").write_text(json.dumps(dict(mode="conducted", direction="downlink", links=links)))
+    if outcome in ("extra_file", "changed_bytes") and directory != tmp_path:
+        import shutil
+        directory = Path(shutil.copytree(directory, tmp_path / "source"))
+    asset = mock_asset(directory, "模拟清单")
+    topology = sample_topology_data
+    topology["base_station"]["tx_ports"] = topology["channel_emulator"]["input_ports"] = 4
+    for port in (3, 4):
+        topology["connections"].append(dict(topology["connections"][0], connection_id=f"bs-{port}", source_port=port, target_port=port))
+    topology_id = client.post(root + "/topologies", json=topology).json()["id"]
+    assert client.post(root + "/topologies/" + topology_id + "/validate").is_success
+    selection = dict(scenario_id=scenario["id"], topology_id=topology_id, asset_id=str(uuid4()), direction="downlink")
+    mapping = [dict(tx=t, rx=r, input_port=t, output_port=r) for t in range(1, 5) for r in (1, 2)]
+    registration = dict(selection, kind="asc_manifest", manifest_dir=str(directory), name="模拟清单",
+                        sha256=asset["sha256"], scenario_version=scenario["version"], port_mapping=mapping)
+    with _TestingSessionLocal() as db:
+        lab = LabProfile(name="模拟实验室", extra_metadata={"vrt_conducted": [registration]})
+        db.add(lab)
+        db.commit()
+        selection["lab_profile_id"] = str(lab.id)
+    saved = client.post(root + "/conducted/executions", json=selection).json()
+    assert saved["config"]["conducted"]["ready"], saved
+    url = root + "/executions/" + saved["execution_id"]
+    from app.services.instrument_hal_service import get_hal_service
+    from unittest.mock import AsyncMock
+    hal = get_hal_service()
+    channel = hal.drivers["channelEmulator"]
+    if outcome in ("extra_file", "changed_bytes"):
+        original_load = channel.load_channel
+        observed = {}
+        if outcome == "extra_file":
+            (directory / "extra.asc").write_bytes(b"not registered")
+
+        async def inspect_load(*args, waveform_dir, **kwargs):
+            if outcome == "changed_bytes":
+                (directory / asset["links"][0]["file"]).write_bytes(b"replacement")
+            for path in Path(waveform_dir).glob("*.asc"):
+                observed[path.name] = hashlib.sha256(path.read_bytes()).hexdigest()
+            return await original_load(*args, waveform_dir=waveform_dir, **kwargs)
+
+        monkeypatch.setattr(channel, "load_channel", inspect_load)
+        assert client.post(url + "/control", json={"action": "start"}).is_success
+        assert client.post(url + "/control", json={"action": "stop"}).is_success
+        assert observed == {link["file"]: link["sha256"] for link in asset["links"]}
+        return
+    if outcome == "mixed_drivers":
+        load = AsyncMock()
+        monkeypatch.setattr(channel, "load_channel", load)
+        monkeypatch.setitem(hal.drivers, "baseStation", object())
+        assert client.post(url + "/control", json={"action": "start"}).status_code == 409
+        load.assert_not_awaited()
+        assert client.get(url).json()["status"] == "idle"
+        return
+    if outcome == "start_rejected":
+        monkeypatch.setattr(channel, "start_emulation", AsyncMock(return_value=False))
+        assert client.post(url + "/control", json={"action": "start"}).status_code == 409
+        assert client.get(url).json()["status"] == "failed"
+        assert (client.get(url + "/status").json()["last_error"])
+        return
+    if outcome == "complete":
+        from app.api import road_test
+        route = road_test.get_scenario_by_id(scenario["id"]).model_copy(deep=True)
+        route.route.duration_s = 0.15
+        monkeypatch.setattr(road_test, "get_scenario_by_id", lambda _: route)
+    start = client.post(url + "/control", json={"action": "start"})
+    assert start.is_success, start.text
+    if outcome == "complete":
+        import time
+        deadline = time.monotonic() + 5
+        while client.get(url).json()["status"] == "running" and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert client.get(url).json()["status"] == "completed"
+        return
+    assert client.get(url).json()["status"] == "running"
+    for action in ("start", "pause", "complete"):
+        assert client.post(url + "/control", json={"action": action}).status_code == 409
+    samples = client.get(url + "/metrics").json()["observations"]
+    assert samples and all(s["provenance"] == "simulated" for s in samples)
+    other = client.post(root + "/conducted/executions", json=selection).json()
+    other_url = root + "/executions/" + other["execution_id"]
+    assert client.post(other_url + "/control", json={"action": "start"}).status_code == 409
+    assert client.get(other_url).json()["status"] == "idle"
+    if outcome == "stop_unconfirmed":
+        monkeypatch.setattr(channel, "stop_emulation", AsyncMock(return_value=False))
+        assert client.post(url + "/control", json={"action": "stop"}).status_code == 409
+        assert client.get(url).json()["status"] == "failed"
+        return
+    assert client.post(url + "/control", json={"action": "stop"}).is_success
+    assert client.get(url).json()["status"] == "stopped"
+
+def test_recover_interrupted_conducted_execution():
+    from app.schemas.road_test import TestMode
+    from app.services.road_test.conducted_runner import recover_conducted_runs
+    from app.services.road_test.vrt_execution_service import vrt_execution_service as service
+    from tests.test_road_test_executions import _TestingSessionLocal
+    with _TestingSessionLocal() as db:
+        row = service.create(db, mode=TestMode.CONDUCTED, scenario_id="restart")
+        service.start(db, str(row.id))
+        recover_conducted_runs(db)
+        db.refresh(row)
+        assert row.status == "failed" and "未取得设备停止回读" in row.error_message
+
+
+def test_changed_source_rejected_before_driver_receives_copy(tmp_path):
+    import hashlib
+    from app.services.road_test.conducted_runner import _stage_waveforms
+
+    link = {"file": "link.asc", "sha256": hashlib.sha256(b"at preparation").hexdigest()}
+    (tmp_path / "link.asc").write_bytes(b"changed before staging")
+    staged = tmp_path / "staged"
+    staged.mkdir()
+    with pytest.raises(ValueError, match="摘要不一致"):
+        _stage_waveforms(tmp_path, [link], staged)
