@@ -42,6 +42,7 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
         execution_mode="simulated", status="configured", binding_digest="test",
         instrument_model_id=str(model), instrument_connection_id=str(connection)))
     mapping = [dict(tx=tx, rx=rx, input_port=tx, output_port=rx) for tx in range(1, 5) for rx in (1, 2)]
+    preview = client.post(ROOT + "/conducted/prepare", json={"scenario_id": scenario["id"]}).json()
     with _TestingSessionLocal() as db:
         asset = ChannelAsset(name="已扫描工程", source_type="vendor_file", allowed_targets=["gcm_native"],
                              associated_file_path=path, instrument_connection_id=connection, instrument_model_id=model,
@@ -51,7 +52,7 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
         db.add(asset)
         db.flush()
         selection = dict(scenario_id=scenario["id"], topology_id=topology, asset_id=str(asset.id), direction="downlink")
-        registration = dict(selection, scenario_version=scenario["version"], sha256=digest, port_mapping=mapping)
+        registration = dict(selection, scenario_sha256=preview["scenario_sha256"], scenario_version=scenario["version"], sha256=digest, port_mapping=mapping)
         lab = LabProfile(name="实验室", extra_metadata={"vrt_conducted": [registration]})
         db.add(lab)
         db.commit()
@@ -91,3 +92,25 @@ def test_mock_asset_checks_each_file_before_use(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="摘要"):
         api.mock_asset(tmp_path, "测试资产")
+
+
+def test_prepare_digest_ignores_record_timestamps(client):
+    template = client.get(ROOT + "/scenarios").json()[0]["id"]
+    body = client.get(ROOT + "/scenarios/" + template).json()
+    body["name"] = "仅更新记录时间"
+    scenario = client.post(ROOT + "/scenarios", json=body).json()
+    selection = {"scenario_id": scenario["id"]}
+    before = client.post(ROOT + "/conducted/prepare", json=selection).json()
+    assert before["scenario_snapshot"] == {
+        k: v for k, v in scenario.items() if k not in ("created_at", "updated_at")
+    }
+    from datetime import datetime
+    from uuid import UUID
+    from app.models.test_plan import TestCase
+    from tests.test_road_test_executions import _TestingSessionLocal
+    with _TestingSessionLocal() as db:
+        case = db.get(TestCase, UUID(scenario["id"]))
+        case.updated_at = datetime(2030, 1, 2)
+        db.commit()
+    after = client.post(ROOT + "/conducted/prepare", json=selection).json()
+    assert after["scenario_sha256"] == before["scenario_sha256"]

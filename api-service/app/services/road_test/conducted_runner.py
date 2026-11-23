@@ -169,7 +169,6 @@ async def control(db, row, action):
     if action != "start" or row.status != "idle" or run:
         raise HTTPException(409, "当前执行状态不允许启动。")
     from app.api.road_test_conducted import Selection, resolve
-    from app.api.road_test import _get_custom_scenario, get_scenario_by_id
     saved = row.vrt_conducted_setup
     if not isinstance(saved, dict):
         raise HTTPException(409, "请先保存本次传导测试的准备记录。")
@@ -188,8 +187,7 @@ async def control(db, row, action):
     directory = playback_files.get("directory")
     if not directory:
         raise HTTPException(409, "模拟资产缺少已核验的文件目录。")
-    scenario = get_scenario_by_id(row.scenario_id) or _get_custom_scenario(db, row.scenario_id)
-    duration = scenario.route.duration_s
+    duration = saved["scenario_snapshot"]["route"]["duration_s"]
     if not math.isfinite(duration) or duration <= 0:
         raise HTTPException(409, "场景缺少有效的路线时长。")
     reason = _mock_only(get_hal_service())

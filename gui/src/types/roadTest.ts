@@ -996,6 +996,8 @@ export interface ConductedSelection {
 export interface ConductedPreparation extends ConductedSelection {
   binding?: { execution_mode: 'simulated' | 'real' | null } | null
   scenario_version: string
+  scenario_sha256?: string
+  scenario_snapshot?: { name: string }
   lab_name: string | null
   asset: { name: string; sha256: string; instrument_path?: string; mock_only?: boolean } | null
   port_mapping: { tx: number; rx: number; input_port: number; output_port: number }[]

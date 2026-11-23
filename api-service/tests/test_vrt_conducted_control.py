@@ -16,7 +16,7 @@ def test_legacy_conducted_draft_cannot_start(client, sample_topology_data):
     assert client.get(url).json()["status"] == "idle"
 
 
-@pytest.mark.parametrize("outcome", ["stop", "start_rejected", "stop_unconfirmed", "mixed_drivers", "complete", "extra_file", "changed_bytes"])
+@pytest.mark.parametrize("outcome", ["stop", "start_rejected", "stop_unconfirmed", "mixed_drivers", "complete", "extra_file", "changed_bytes", "scenario_changed", "missing_digest"])
 def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path, monkeypatch, outcome):
     import hashlib
     import json
@@ -30,6 +30,12 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
     root = "/api/v1/road-test"
     scenario = client.get(root + "/scenarios").json()[0]
     scenario = client.get(root + "/scenarios/" + scenario["id"]).json()
+    if outcome in ("complete", "scenario_changed"):
+        scenario["route"]["duration_s"] = 0.15
+        scenario["name"] = "冻结场景"
+        result = client.post(root + "/scenarios", json=scenario)
+        assert result.status_code == 201, result.text
+        scenario = result.json()
     if os.environ.get("VRT_TEST_ASC_DIRECTORY"):
         directory = Path(os.environ["VRT_TEST_ASC_DIRECTORY"])
     else:
@@ -55,12 +61,20 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
     mapping = [dict(tx=t, rx=r, input_port=t, output_port=r) for t in range(1, 5) for r in (1, 2)]
     registration = dict(selection, kind="asc_manifest", manifest_dir=str(directory), name="模拟清单",
                         sha256=asset["sha256"], scenario_version=scenario["version"], port_mapping=mapping)
+    if outcome != "missing_digest":
+        content = {k: v for k, v in scenario.items() if k not in ("created_at", "updated_at")}
+        registration["scenario_sha256"] = hashlib.sha256(
+            json.dumps(content, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
     with _TestingSessionLocal() as db:
         lab = LabProfile(name="模拟实验室", extra_metadata={"vrt_conducted": [registration]})
         db.add(lab)
         db.commit()
         selection["lab_profile_id"] = str(lab.id)
     saved = client.post(root + "/conducted/executions", json=selection).json()
+    if outcome == "missing_digest":
+        assert not saved["config"]["conducted"]["ready"]
+        return
     assert saved["config"]["conducted"]["ready"], saved
     url = root + "/executions/" + saved["execution_id"]
     from app.services.instrument_hal_service import get_hal_service
@@ -99,11 +113,25 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
         assert client.get(url).json()["status"] == "failed"
         assert (client.get(url + "/status").json()["last_error"])
         return
+    if outcome == "scenario_changed":
+        changed = dict(scenario["route"], duration_s=90)
+        edited = client.put(root + "/scenarios/" + scenario["id"], json={"route": changed})
+        assert edited.is_success and edited.json()["version"] == scenario["version"]
+        load = AsyncMock()
+        monkeypatch.setattr(channel, "load_channel", load)
+        assert client.post(url + "/control", json={"action": "start"}).status_code == 409
+        load.assert_not_awaited()
+        preview = client.post(root + "/conducted/prepare", json=selection).json()
+        assert preview["scenario_sha256"] != registration["scenario_sha256"] and not preview["ready"]
+        return
     if outcome == "complete":
         from app.api import road_test
-        route = road_test.get_scenario_by_id(scenario["id"]).model_copy(deep=True)
-        route.route.duration_s = 0.15
-        monkeypatch.setattr(road_test, "get_scenario_by_id", lambda _: route)
+        # 延迟首次归档到原场景删除之后，覆盖真正的归档生成路径。
+        archive_report = road_test._archive_execution_report
+        monkeypatch.setattr(road_test, "_archive_execution_report", AsyncMock())
+        # prepare 仍读取当前自定义场景；重验之后的执行与报告只能读保存的版本。
+        monkeypatch.setattr(road_test, "_get_custom_scenario",
+                            lambda *_: pytest.fail("重新读取了可变场景"))
     start = client.post(url + "/control", json={"action": "start"})
     assert start.is_success, start.text
     if outcome == "complete":
@@ -112,6 +140,25 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
         while client.get(url).json()["status"] == "running" and time.monotonic() < deadline:
             time.sleep(0.05)
         assert client.get(url).json()["status"] == "completed"
+        report = client.get(url + "/report").json()
+        assert report["route"]["duration_s"] == 0.15
+        report.pop("generated_at")
+        scenario_url = root + "/scenarios/" + scenario["id"]
+        for edit in (lambda: client.put(scenario_url, json={"name": "新名称"}), lambda: client.delete(scenario_url)):
+            assert edit().is_success
+            latest = client.get(url + "/report").json()
+            latest.pop("generated_at")
+            assert latest == report
+            history = client.get(root + "/executions?mode=conducted").json()
+            assert history[0]["scenario_name"] == "冻结场景"
+        monkeypatch.setattr(road_test, "_archive_execution_report", archive_report)
+        archive = client.post(url + "/archive-report")
+        assert archive.is_success, archive.text
+        from app.models.report import TestReport
+        with _TestingSessionLocal() as db:
+            record = db.query(TestReport).filter_by(road_test_execution_id=saved["execution_id"]).one()
+            assert record.content_data["scenario_name"] == "冻结场景"
+            assert record.content_data["conducted_setup"] == report["conducted_setup"]
         return
     assert client.get(url).json()["status"] == "running"
     for action in ("start", "pause", "complete"):

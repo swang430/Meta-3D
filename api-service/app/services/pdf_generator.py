@@ -1347,6 +1347,8 @@ class PDFGenerator:
             details = [f"场景版本：{setup.get('scenario_version') or '未知'}",
                        f"实验室：{setup.get('lab_name') or '未知'}",
                        f"资产：{asset.get('name') or '未登记'}"]
+            if setup.get("scenario_sha256"):
+                details.append(f"场景内容摘要（SHA-256）：{setup['scenario_sha256']}")
             if asset.get("mock_only") or binding.get("mock_only"):
                 details.append("本次绑定仅供模拟驱动使用。")
             if asset.get("sha256"):

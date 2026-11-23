@@ -75,7 +75,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
   const reason = isAxiosError(error) ? error.response?.data?.detail : null
   return <Modal opened={opened} onClose={onClose} closeOnEscape={!report} closeOnClickOutside={!report} title="传导测试准备与执行" size="xl">
     <Stack>
-      <Text fw={600}>{scenario.name} · 下行四发二收</Text>
+      <Text fw={600}>{id ? snapshot?.scenario_snapshot?.name || '已保存的传导执行' : scenario.name} · 下行四发二收</Text>
       {fields.map(([label, list, field]) => <Select key={field} label={label} value={id ? snapshot?.[field] || null : selection[field]}
         disabled={!!id || save.isPending} placeholder={'请选择' + label} clearable searchable
         data={(options.data?.[list] || []).map(x => ({ value: x.id, label: x.name }))}

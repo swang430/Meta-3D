@@ -147,6 +147,9 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
     scenario = get_scenario_by_id(selection.scenario_id) or _get_custom_scenario(db, selection.scenario_id)
     if not scenario:
         raise HTTPException(404, "所选场景不存在。")
+    scenario_snapshot = scenario.model_dump(mode="json", exclude={"created_at", "updated_at"})
+    canonical = json.dumps(scenario_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+    scenario_sha256 = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
     reasons = []
     if selection.direction != "downlink":
         reasons.append("当前仅有下行四发二收的准备流程。")
@@ -162,10 +165,13 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
             reasons.append("接线拓扑的设备或电缆登记不完整。")
     if not topology or not topology.is_validated or topology.validation_errors:
         reasons.append("请选择已验证的传导接线拓扑。")
-    matches = [r for r in _registrations(lab) if all(
-        r.get(k) == v for k, v in {**{k: ids[k] for k in ("scenario_id", "direction", "topology_id", "asset_id")},
-                                   "scenario_version": scenario.version}.items()
-    )]
+    registration_key = {key: ids[key] for key in ("scenario_id", "direction", "topology_id", "asset_id")}
+    registration_key["scenario_version"] = scenario.version
+    candidates = [entry for entry in _registrations(lab)
+                  if all(entry.get(key) == value for key, value in registration_key.items())]
+    matches = [entry for entry in candidates if entry.get("scenario_sha256") == scenario_sha256]
+    if candidates and not matches:
+        reasons.append("实验室登记缺少当前场景内容的摘要，或场景已修改，请重新核对登记。")
     asset = db.get(ChannelAsset, selection.asset_id) if selection.asset_id else None
     summary = None
     mock_registration = matches[0] if len(matches) == 1 and matches[0].get("kind") == "asc_manifest" else None
@@ -218,7 +224,8 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
         mapping, error = _mapping(matches[0].get("port_mapping"), topology)
         if error:
             reasons.append(error)
-    return {**ids, "scenario_version": scenario.version, "lab_name": lab.name if lab else None,
+    return {**ids, "scenario_version": scenario.version, "scenario_sha256": scenario_sha256,
+            "scenario_snapshot": scenario_snapshot, "lab_name": lab.name if lab else None,
             "asset": summary, "binding": binding, "port_mapping": mapping, "ready": not reasons, "reasons": reasons}
 
 

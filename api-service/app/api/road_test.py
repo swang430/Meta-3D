@@ -530,6 +530,15 @@ async def validate_topology(topology_id: str, db: Session = Depends(get_db)):
 
 # ===== Test Execution =====
 
+def _execution_scenario(db: Session, row):
+    if row.mode == TestMode.CONDUCTED.value:
+        # 旧传导记录没有可信快照，只能显示当时保存的场景标识。
+        return (row.vrt_conducted_setup or {}).get("scenario_snapshot")
+    if row.scenario_id:
+        return get_scenario_by_id(row.scenario_id) or _get_custom_scenario(db, row.scenario_id)
+    return None
+
+
 @router.get("/executions", response_model=List[ExecutionSummary])
 async def list_executions(
     mode: Optional[TestMode] = None,
@@ -542,13 +551,8 @@ async def list_executions(
     rows = vrt_execution_service.list(db, mode=mode, status=status)
     summaries = []
     for row in rows:
-        # Resolve scenario name from standard library or DB-backed custom scenarios
-        std = get_scenario_by_id(row.scenario_id) if row.scenario_id else None
-        if std is not None:
-            scenario_name = std.name
-        else:
-            custom = _get_custom_scenario(db, row.scenario_id) if row.scenario_id else None
-            scenario_name = custom.name if custom else (row.scenario_id or "")
+        scenario = _execution_scenario(db, row)
+        scenario_name = get_attr_or_item(scenario, "name", row.scenario_id or "")
         summaries.append(vrt_execution_service.to_summary(row, scenario_name))
     return summaries
 
@@ -1086,10 +1090,7 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
         raise HTTPException(status_code=500, detail=f"Error checking status: {str(e)}")
 
     try:
-        # Get scenario details (check both standard and custom scenarios)
-        scenario = get_scenario_by_id(execution.scenario_id)
-        if not scenario:
-            scenario = _get_custom_scenario(db, execution.scenario_id)
+        scenario = _execution_scenario(db, row)
         scenario_name = get_attr_or_item(scenario, 'name', execution.scenario_id)
     except Exception as e:
         logger.error(f"Error retrieving scenario: {e}")

@@ -32,7 +32,7 @@
 
 前缀为 `/api/v1/road-test/conducted`。GET `/options` 返回 labs、topologies、assets（各项含 id、name）。POST `/prepare` 与 POST `/executions` 共用请求字段 scenario_id、lab_profile_id、topology_id、asset_id、direction。预览直接返回快照，建档返回执行详情，快照在 config.conducted；历史列表行的 conducted 保存同一份快照。ready 仅说明准备检查结果。启动仍通过执行控制接口并重新解析。
 
-仅模拟资产取自所选 LabProfile.extra_metadata.vrt_conducted 数组的一条登记。每条包含 scenario_id、scenario_version、direction、topology_id、asset_id、sha256、port_mapping；模拟登记额外包含 kind="asc_manifest"、manifest_dir（服务端工程目录）、name。sha256 为 manifest.json 原始字节的 SHA-256，asset_id 为 UUID。port_mapping 各行含从 1 开始的 tx、rx、input_port、output_port。asset.links 保留清单中从 0 开始的 tx、rx、file、sha256。每次解析重验八条文件摘要。asset.mock_only=true、asset.mock_ref 是模拟驱动标识；该分支没有 instrument_path，不能交给真实驱动。
+仅模拟资产取自所选 LabProfile.extra_metadata.vrt_conducted 数组的一条登记。每条包含 scenario_id、scenario_version、scenario_sha256、direction、topology_id、asset_id、sha256、port_mapping；模拟登记额外包含 kind="asc_manifest"、manifest_dir（服务端工程目录）、name。sha256 为 manifest.json 原始字节的 SHA-256，asset_id 为 UUID。port_mapping 各行含从 1 开始的 tx、rx、input_port、output_port。asset.links 保留清单中从 0 开始的 tx、rx、file、sha256。每次解析重验八条文件摘要。asset.mock_only=true、asset.mock_ref 是模拟驱动标识；该分支没有 instrument_path，不能交给真实驱动。
 
 ### 本批八路输入与真实执行的差距
 
@@ -51,3 +51,7 @@
 故障复测让隔离服务中的模拟信道仿真器仅第一次拒绝启动。执行 `692f7e6b-7136-4f1c-b8b8-d0dfd0a36558` 返回 409，窗口显示执行失败。随后从同一窗口重新准备，执行 `b7bd5833-d7c1-4dbe-a5b1-f14deb01e422` 完成并下载归档 `c515c9e8-fdab-4c12-aa34-48f8a5be808f`。
 
 复测使用 `gui/test/vrtConducted.browser.js`，提供隔离站点的浏览器页面、场景名、实验室名、错接实验室名、拓扑名、模拟资产名和清单摘要。运行中的进度来自服务端；具体采样条数随调度变化。仪器未回读的播放位置及路线帧时间为空。
+
+登记时从准备接口取实际场景内容摘要。保存时冻结该场景，启动按冻结时长播放，历史和报告也从同一份场景取数。场景内容被修改后，旧登记须重新核对；已经执行的记录仍使用原场景。
+
+场景冻结复测：执行 `e23dbf3b-6f65-4238-aaeb-b6947437101b` 的归档 `f535b110-054a-4001-ad31-ea3baa8336cb` 含 111 条模拟采样。下载 PDF 后逐项核对场景、清单、八个 ASC 共十个摘要。修改场景名称后，从改名后的场景卡重新打开，执行窗口仍显示保存时的名称。
