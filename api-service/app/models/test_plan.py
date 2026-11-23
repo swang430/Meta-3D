@@ -287,6 +287,7 @@ class TestExecution(Base):
     mode = Column(String(50), comment="VRT: digital_twin | conducted | ota")
     notes = Column(Text, comment="Operator notes")
     config = Column(_JSONB, comment="Executor config snapshot (immutable once execution starts)")
+    vrt_conducted_setup = Column(JSON, nullable=True, comment="仅由服务端传导准备接口写入")
     vrt_runtime_status = Column(_JSONB, comment="Live progress: {progress_percent, current_waypoint_index, current_position, elapsed/remaining}")
     execution_logs = Column(_JSONB, comment="Array of {timestamp, level, message, source}")
     execution_events = Column(_JSONB, comment="Scenario events array {time_s, type, payload}")

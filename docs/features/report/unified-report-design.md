@@ -182,7 +182,7 @@ POST /api/v1/reports
 ```
 
 通用创建入口不得携带 `road_test_execution_id`。VRT 报告的唯一归档槽与内容只由
-服务端终态归档拥有；completed/stopped 执行的手工恢复使用：
+服务端终态归档拥有；completed、stopped 和 failed 执行的手工恢复使用：
 
 ```
 POST /api/v1/road-test/executions/{execution_id}/archive-report
@@ -191,11 +191,12 @@ POST /api/v1/road-test/executions/{execution_id}/archive-report
 该入口从权威执行记录重建内容，不接受客户端 KPI/content_data。只有最终
 `completed` 报告返回成功；`pending`、`failed`、以及无法证明 writer 仍存活的
 `generating` 均返回 409 与可操作说明。服务端生成的 VRT 内容以精确整数
-`vrt_archive_trust_schema_version: 1` 证明所有权；升级前旧 GUI 创建且没有该标记的
+`vrt_archive_trust_schema_version: 2` 证明所有权；版本 1 中带传导绑定或传导实测声明的归档须先重建；升级前旧 GUI 创建且没有该标记的
 同 execution 行不能直接复用或下载，而是保留原 report id 并由上述入口从终态执行重建。
 重建以旧 `content_data` 快照作为原子 writer claim 的一部分，迟到请求不能在首个 writer
 完成后再次覆盖。claim winner 会先清除旧 HTML/Excel、模板、标题/生成者与文件元数据，
 再以服务端权威 PDF envelope 发布；trust 标记不能只证明 payload 而继续放行客户端外壳。
+带有正式数值的旧归档还须有逐项设备回读来源。仅有批次摘要的历史数值，在从终态执行重建前不能下载。
 列表以 `vrt_archive_trusted` 暴露这项真值，使旧行不会隐藏对应的待归档执行。
 
 ### 获取报告内容

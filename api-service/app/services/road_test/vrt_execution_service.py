@@ -19,6 +19,7 @@ Design:
 """
 from __future__ import annotations
 
+import math
 import logging
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -38,7 +39,7 @@ from app.schemas.road_test import (
     TestMode,
     TestStatus,
 )
-from app.schemas.road_test.execution import PhaseResult
+from app.schemas.road_test.execution import PhaseResult, RunnerObservation
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,7 @@ class VrtExecutionService:
         config: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None,
         created_by: str = "api",
+        conducted_setup: Optional[Dict[str, Any]] = None,
     ) -> TestExecutionORM:
         """Create a new VRT execution row in IDLE state."""
         row = TestExecutionORM(
@@ -86,6 +88,7 @@ class VrtExecutionService:
             scenario_id=scenario_id,
             topology_id=topology_id,
             config=config or {},
+            vrt_conducted_setup=conducted_setup,
             notes=notes,
             executed_by=created_by,
             vrt_runtime_status={"progress_percent": 0.0, "elapsed_time_s": 0.0},
@@ -470,6 +473,53 @@ class VrtExecutionService:
 
     # ── KPI time-series ──────────────────────────────────────────────────
 
+    def record_observation(
+        self, db: Session, execution_id: str, *, metric: str, value, driver,
+        time_s: float, source_frame_time_s=None, device_playback_time_s=None,
+        sampled_at=None,
+    ) -> RunnerObservation:
+        """运行器在一次回读后调用。time_s 是执行经过时间，缺测传 None。"""
+        from app.hal.propsim_f64 import RealPropsimF64Driver
+        from app.hal.uxm_base_station import RealUxmDriver
+        from app.services.instrument_hal_service import is_mock_driver
+
+        row = (
+            db.query(TestExecutionORM).filter_by(id=_resolve_uuid(execution_id))
+            .with_for_update().populate_existing().one_or_none()
+        )
+        if row is None or row.status != ExecutionStatus.RUNNING.value:
+            raise ValueError("只有运行中的执行可以记录设备回读。")
+        units = {"connection_state": "", "dl_throughput_mbps": "Mbps",
+                 "ul_throughput_mbps": "Mbps", "playback_position_s": "s"}
+        if metric not in units:
+            raise ValueError("无法识别采样项目。")
+        if metric != "connection_state" and value is not None:
+            if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
+                raise ValueError("吞吐量和播放位置必须是有限的非负数。")
+        expected_driver = RealPropsimF64Driver if metric == "playback_position_s" else RealUxmDriver
+        provenance = "unverified"
+        setup = row.vrt_conducted_setup or {}
+        binding = setup.get("binding") or {}
+        mock_only = (setup.get("asset") or {}).get("mock_only") is True or binding.get("mock_only") is True
+        simulated_driver = is_mock_driver(driver)
+        if mock_only and driver is not None and not simulated_driver:
+            raise ValueError("模拟专用资产只接受模拟驱动的回读。")
+        simulated_run = row.mode == TestMode.DIGITAL_TWIN.value or binding.get("execution_mode") == "simulated"
+        if mock_only or simulated_run or simulated_driver:
+            provenance = "simulated"
+        elif binding.get("execution_mode") == "real" and isinstance(driver, expected_driver) and value is not None:
+            provenance = "server_measured"
+        observation = RunnerObservation(
+            metric=metric, value=value, unit=units[metric], time_s=time_s,
+            source=type(driver).__name__ if driver is not None else "无设备",
+            provenance=provenance, sampled_at=sampled_at or _utcnow(),
+            source_frame_time_s=source_frame_time_s, device_playback_time_s=device_playback_time_s,
+        )
+        db.add(VrtKpiSample(execution_id=row.id, time_s=time_s,
+                            observation=observation.model_dump(mode="json")))
+        db.commit()
+        return observation
+
     def insert_kpi_samples(
         self,
         db: Session,
@@ -522,7 +572,7 @@ class VrtExecutionService:
             query = query.filter(VrtKpiSample.time_s >= time_from)
         if time_to is not None:
             query = query.filter(VrtKpiSample.time_s <= time_to)
-        query = query.order_by(VrtKpiSample.time_s)
+        query = query.order_by(VrtKpiSample.time_s, VrtKpiSample.id)
         if limit is not None:
             query = query.limit(limit)
         return query.all()
@@ -531,13 +581,17 @@ class VrtExecutionService:
 
     @staticmethod
     def to_test_execution(orm: TestExecutionORM) -> TestExecutionSchema:
+        config = dict(orm.config or {})
+        config.pop("conducted", None)
+        if orm.mode == "conducted" and orm.vrt_conducted_setup is not None:
+            config["conducted"] = orm.vrt_conducted_setup
         return TestExecutionSchema(
             execution_id=str(orm.id),
             mode=TestMode(orm.mode) if orm.mode else TestMode.DIGITAL_TWIN,
             status=ExecutionStatus(orm.status),
             scenario_id=orm.scenario_id or "",
             topology_id=orm.topology_id,
-            config=orm.config or {},
+            config=config,
             start_time=orm.started_at,
             end_time=orm.completed_at,
             duration_s=orm.duration_sec,
@@ -578,7 +632,18 @@ class VrtExecutionService:
         orm: TestExecutionORM,
         kpi_samples: List[VrtKpiSample],
     ) -> TestMetrics:
+        observations = [s.observation for s in kpi_samples if getattr(s, "observation", None)]
+        if getattr(orm, "mode", None) == "conducted":
+            setup = orm.vrt_conducted_setup or {}
+            binding = setup.get("binding") or {}
+            if binding.get("execution_mode") != "real" or (setup.get("asset") or {}).get("mock_only"):
+                observations = [
+                    {**item, "provenance": "unverified"} if item.get("provenance") == "server_measured" else item
+                    for item in observations
+                ]
+        kpi_samples = [s for s in kpi_samples if not getattr(s, "observation", None)]
         return TestMetrics(
+            observations=observations,
             execution_id=str(orm.id),
             kpi_samples=[
                 KPIMetrics(
@@ -601,14 +666,13 @@ class VrtExecutionService:
                 )
                 for s in kpi_samples
             ],
-            summary=orm.measurements or {},
-            events=list(orm.execution_events or []),
-            kpi_results=orm.test_results or {},
-            # P1-48 (外审 P1): 批次级的真假标记，由服务端无条件给出。
-            # 判据不是「请求里写了什么」，而是「这张表只有浏览器一个写入方」——
-            # 有样本 ⇒ 一定是浏览器造的。
-            # 只挂在逐条摘要里不够：请求可以带 time_series 而 kpi_summary 为空，
-            # 那样一条 provenance 都不会写，样本却照样入库、照样被这里读出去。
+            summary={
+                name: {**stats, "passed": None, "provenance": "client_simulated"}
+                for name, stats in (orm.measurements or {}).items() if isinstance(stats, dict)
+            },
+            events=[{**event, "provenance": "client_simulated"} for event in (orm.execution_events or [])
+                    if isinstance(event, dict)],
+            kpi_results={},
             provenance="client_simulated" if kpi_samples else None,
         )
 
@@ -620,6 +684,7 @@ class VrtExecutionService:
     def to_summary(orm: TestExecutionORM, scenario_name: str) -> ExecutionSummary:
         runtime = orm.vrt_runtime_status or {}
         return ExecutionSummary(
+            conducted=orm.vrt_conducted_setup if orm.mode == "conducted" else None,
             execution_id=str(orm.id),
             mode=TestMode(orm.mode) if orm.mode else TestMode.DIGITAL_TWIN,
             status=ExecutionStatus(orm.status),

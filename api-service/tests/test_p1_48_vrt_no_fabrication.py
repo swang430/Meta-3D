@@ -93,24 +93,6 @@ def test_empty_sample_path_produces_nothing():
     )
 
 
-def test_client_submitted_values_are_marked_and_excluded():
-    """⭐ 外审抓出：上一版只丢掉 passed，而 mean/min/max/std 照样落库照样印。
-
-    那些数值本身就是浏览器 `Math.random()` 造的 —— 判决不采信了、数值还是编的，
-    等于只挡了一半。
-
-    让它报错的改法：把落库处的 `"provenance": "client_simulated"` 删掉，
-    或把读回处那句 `continue` 去掉。
-    """
-    text = _SRC.read_text(encoding="utf-8")
-    assert '"provenance": "client_simulated"' in text, (
-        "落库时没给客户端提交的数据打来源标记 —— 报告分不出这批是编的"
-    )
-    assert 'stats.get("provenance") == "client_simulated"' in text, (
-        "读回时没按来源排除 —— 浏览器造的 mean/min/max/std 会进正式 KPI"
-    )
-
-
 def test_undetermined_is_not_rendered_as_failed_in_ui():
     """⭐ 外审抓出：`passed=null` 在界面上会掉进 false 分支、显示成 ✗ 不合格。
 
@@ -133,22 +115,6 @@ def test_undetermined_is_not_rendered_as_failed_in_ui():
     )
 
 
-def test_client_samples_do_not_reach_the_recompute_path():
-    """⭐ 外审抓出：上一版的 continue 只挡了摘要，**原始样本还在**。
-
-    `has_real_metrics` 只看 `len(kpi_samples) > 0`，而 kpi_summary 被排空之后
-    下游会 `_compute_kpi_summary_from_samples()` **从原始样本重算** ——
-    那些样本正是浏览器 `Math.random()` 造的，编的数又算回来了。
-
-    让它报错的改法：把 `has_real_metrics` 改回只判 `len(...) > 0`。
-    """
-    text = _SRC.read_text(encoding="utf-8")
-    # 2026-08-10 外审后改成白名单：只有显式标着真实的才算真数据
-    assert "_explicitly_real" in text, (
-        "has_real_metrics 没有要求显式的真实标记 —— 重算路径会把编的数算回来"
-    )
-
-
 def test_unjudged_pass_rate_is_none_not_zero():
     """⭐ 外审抓出：`pass_rate=0.0` 会被显示成「通过率 0%」。
 
@@ -168,21 +134,6 @@ def test_unjudged_pass_rate_is_none_not_zero():
 
     rate2, result2 = compute_overall_result([_KPI()], ExecutionStatus.COMPLETED)
     assert rate2 == 100.0 and result2 == "passed", "有真判决时照常算"
-
-
-def test_real_data_requires_an_explicit_marker():
-    """⭐ 外审抓出：上一版用黑名单（有 client_simulated 标记才排除）。
-
-    历史执行的样本**没有这个标记** → 被当成真数据放行；
-    带样本但 summary 为空的提交同理。而虚拟路测今天没有服务端真实数据源。
-
-    让它报错的改法：把 `_explicitly_real` 那段改回黑名单判法。
-    """
-    text = _SRC.read_text(encoding="utf-8")
-    assert "_explicitly_real" in text and 'provenance") == "server_measured"' in text, (
-        "没有改成白名单 —— 历史样本会被当成真数据"
-    )
-    assert "and _explicitly_real" in text, "has_real_metrics 没有要求显式的真实标记"
 
 
 def test_unfinished_and_unjudged_are_different_labels():

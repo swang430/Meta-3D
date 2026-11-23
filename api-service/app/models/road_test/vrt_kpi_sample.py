@@ -31,6 +31,8 @@ class VrtKpiSample(Base):
     # Sample timing (within execution)
     time_s = Column(Float, nullable=False, comment="Seconds since execution start")
 
+    observation = Column(JSON, nullable=True)
+
     # Radio link KPIs
     rsrp_dbm = Column(Float)
     rsrq_db = Column(Float)

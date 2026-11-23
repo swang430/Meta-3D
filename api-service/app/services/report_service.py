@@ -97,7 +97,7 @@ _SERVER_OWNED_REPORT_TRUST_FIELDS = frozenset({
 
 THROUGHPUT_TRUST_SCHEMA_VERSION = 2
 THROUGHPUT_TRUST_FIELD = "throughput_trust_schema_version"
-VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 1
+VRT_ARCHIVE_TRUST_SCHEMA_VERSION = 2
 VRT_ARCHIVE_TRUST_FIELD = "vrt_archive_trust_schema_version"
 BASE_STATION_METRIC_TRUST_SCHEMA_VERSION = 1
 _UNCONDITIONAL_REPORT_SNAPSHOT = object()
@@ -400,7 +400,22 @@ def report_has_vrt_archive_trust(content_data: Any) -> bool:
     if not isinstance(content_data, dict):
         return False
     marker = content_data.get(VRT_ARCHIVE_TRUST_FIELD)
-    return type(marker) is int and marker == VRT_ARCHIVE_TRUST_SCHEMA_VERSION
+    if type(marker) is not int or marker not in (1, VRT_ARCHIVE_TRUST_SCHEMA_VERSION):
+        return False
+    # 旧归档的绑定可能取自客户端配置，重新归档时只能从服务端专列恢复。
+    if marker == 1 and (content_data.get("conducted_setup") is not None or (
+        content_data.get("mode") == "conducted"
+        and any(isinstance(item, dict) and item.get("provenance") == "server_measured"
+                for item in (content_data.get("observations") or []))
+    )):
+        return False
+    # 旧报告可能只凭摘要标记采信整批浏览器样本。已有正式数值须有逐项设备回读。
+    has_measurements = (content_data.get("kpi_summary") or content_data.get("time_series")
+                        or content_data.get("pass_rate") is not None or content_data.get("overall_result") == "passed")
+    if has_measurements:
+        return any(isinstance(item, dict) and item.get("provenance") == "server_measured"
+                   and item.get("value") is not None for item in (content_data.get("observations") or []))
+    return True
 
 
 def _parse_report_execution_ids(report: TestReport) -> tuple[List[UUID], bool]:

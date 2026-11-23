@@ -183,6 +183,10 @@ class PDFGenerator:
             # P1-47C：自定义模板不能删掉正式证据。只要报告数据含服务端证据摘要，
             # 就强制保留一节；位置优先紧跟执行摘要，避免模板选择造成“证据缺席”。
             sections = list(sections)
+            if "vrt_archive_trust_schema_version" in report_data and "observations" in report_data and not any(
+                section.get("type") == "vrt_kpi_summary" for section in sections
+            ):
+                sections.append({"type": "vrt_kpi_summary", "order": 4, "title": "虚拟路测采样及判定"})
             if 'parameter_groups' in report_data and not any(
                 section.get('type') == 'parameter_groups' for section in sections
             ):
@@ -1333,9 +1337,44 @@ class PDFGenerator:
         """Generate VRT KPI summary section with pass/fail indicators"""
         elements = []
 
+        terminal = {"failed": "执行失败", "stopped": "执行中止", "completed": "执行完成"}
+        if data.get("status") in terminal:
+            elements.append(Paragraph(terminal[data["status"]], self.styles["BodyText"]))
+        setup = data.get("conducted_setup")
+        if setup:
+            asset = setup.get("asset") or {}
+            binding = setup.get("binding") or {}
+            details = [f"场景版本：{setup.get('scenario_version') or '未知'}",
+                       f"实验室：{setup.get('lab_name') or '未知'}",
+                       f"资产：{asset.get('name') or '未登记'}"]
+            if setup.get("scenario_sha256"):
+                details.append(f"场景内容摘要（SHA-256）：{setup['scenario_sha256']}")
+            if asset.get("mock_only") or binding.get("mock_only"):
+                details.append("本次绑定仅供模拟驱动使用。")
+            if asset.get("sha256"):
+                details.append(f"资产摘要（SHA-256）：{asset['sha256']}")
+            for link in asset.get("links", []):
+                details.append(f"{link['file']}  SHA-256 {link['sha256']}")
+            for path in setup.get("port_mapping", []):
+                details.append(f"发射 {path['tx']} → 接收 {path['rx']}，"
+                               f"仿真器输入端口 {path['input_port']}，输出端口 {path['output_port']}")
+            elements.extend(Paragraph(escape(detail), self.styles["BodyText"]) for detail in details)
+        metric_labels = {"connection_state": "连接状态", "dl_throughput_mbps": "下行吞吐量",
+                         "ul_throughput_mbps": "上行吞吐量", "playback_position_s": "播放位置"}
+        sources = {"simulated": "模拟", "server_measured": "设备实测", "unverified": "来源未核实"}
+        for item in data.get("observations", []):
+            value = item["value"] if item["value"] is not None else "缺测"
+            label = metric_labels[item["metric"]]
+            text = (f"{label} {value} {item['unit']}（{sources[item['provenance']]}，{item['source']}）"
+                    f" 采样时间 {item['sampled_at']}，执行经过 {item['time_s']} s")
+            for field, name in (("source_frame_time_s", "路线源帧时间"), ("device_playback_time_s", "设备播放时间")):
+                clock = item.get(field)
+                text += f"，{name} " + ("未知" if clock is None else f"{clock} s")
+            elements.append(Paragraph(escape(text), self.styles["BodyText"]))
+
         kpi_summary = data.get('kpi_summary', [])
         if not kpi_summary:
-            elements.append(Paragraph("<i>No KPI data available</i>", self.styles['BodyText']))
+            elements.append(Paragraph("没有可用于正式判定的测量指标。", self.styles['BodyText']))
             return elements
 
         # KPI summary table

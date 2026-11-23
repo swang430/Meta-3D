@@ -1182,7 +1182,7 @@ def _vrt_archive_payload():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("legacy_marker", [None, True, 1.0])
+@pytest.mark.parametrize("legacy_marker", [None, True, 1.0, 1])
 async def test_vrt_archive_rebuilds_existing_row_without_strict_server_trust(
     report_db,
     monkeypatch,
@@ -1252,7 +1252,7 @@ async def test_vrt_archive_rebuilds_existing_row_without_strict_server_trust(
     ).one()
     assert rebuilt.id == legacy.id
     assert rebuilt.file_path == "server-rebuilt.pdf"
-    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 1
+    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 2
     assert type(rebuilt.content_data["vrt_archive_trust_schema_version"]) is int
     assert "client-owned" not in str(rebuilt.content_data)
     assert generation_calls == [(legacy.id, rebuilt.content_data)]
@@ -1318,7 +1318,7 @@ async def test_vrt_legacy_rebuild_normalizes_server_owned_pdf_envelope(
     assert rebuilt.file_path != "client-owned.html"
     assert rebuilt.file_path.endswith(f"report_{legacy.id}.pdf")
     assert rebuilt.file_size_bytes == 456
-    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 1
+    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 2
     assert "client_kpi" not in rebuilt.content_data
     assert len(generated) == 1
     assert generated[0][1] is None
@@ -1397,7 +1397,7 @@ async def test_vrt_legacy_rebuild_claims_old_snapshot_only_once(
     report_db.expire_all()
     rebuilt = report_db.get(TestReport, legacy.id)
     assert rebuilt.status == "completed"
-    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 1
+    assert rebuilt.content_data["vrt_archive_trust_schema_version"] == 2
     assert len(generated_paths) == 1
 
 

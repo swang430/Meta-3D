@@ -185,6 +185,8 @@ export interface CustomConfigHighlight {
  * Used by both test plans and virtual road tests
  */
 export interface ReportContentData {
+  conducted_setup?: import('./roadTest').ConductedPreparation | null
+  observations?: import('./roadTest').RunnerObservation[]
   /** 只读原执行冻结投影；不可用当前配置重建。 */
   calibration_traceability?: {
     schema_version: number
