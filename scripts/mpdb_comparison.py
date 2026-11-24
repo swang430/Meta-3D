@@ -140,6 +140,7 @@ def analyze(args):
         raw, grouped, asc, right = [], [], [], []
         powers = {'raw':[], 'members':[], 'asc':[]}
         used = []
+        asc_used = []
         for p,(tx,rx) in enumerate(PORTS):
             ident = lookup[frame,tx,rx]
             mask = (rays['link_id'] == ident) & (abs(rays['h']) > 0)
@@ -150,6 +151,7 @@ def analyze(args):
             taps = member_taps(h, delay, lab, tap_budget=24)
             used.append(int(taps['used_taps']))
             ah, ad = recovered['coefficients'][index,p], recovered['delays_s'][index,p]
+            asc_used.append(int(np.count_nonzero(abs(ah)>0)))
             raw.append(frequency_response(h,delay,offsets))
             grouped.append(frequency_response(taps['coefficients'],taps['delays_s'],offsets))
             asc.append(frequency_response(ah,ad,offsets))
@@ -164,7 +166,7 @@ def analyze(args):
         center = args.points//2
         denom = abs(raw[:,center])
         result.update(frame=frame, sample_position=float(recovered['sample_positions'][index]),
-            asc_time_s=recovered['times_s'][index],used_taps=used,power=powers,
+            asc_time_s=recovered['times_s'][index],used_taps=used,asc_used_taps=asc_used,power=powers,
             left_right_relative_difference=float(np.max(abs(asc-right))/amplitude) if amplitude else None,
             carrier_max_relative_error=float(np.max(abs(asc[:,center]-raw[:,center])/denom)) if (denom>0).all() else None)
         output.append(result)
