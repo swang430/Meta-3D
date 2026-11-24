@@ -73,3 +73,9 @@
 - 报告采用 `app/services/road_test/port_calibration.py` 中的 CalibrationEvidence 格式。八行 CSV 列为 tx、rx、input_port、output_port、source、meter_serial、base_station_output_dbm、emulator_input_dbm、emulator_output_dbm、emulator_output_setting_dbm、dut_input_dbm。报告绑定 CSV 原始字节的 SHA-256、仪器序列号、计量证书、有效期、各端口参考面、允许输入上限及其出处。车载端实测峰值须对应八路同时播放。安全余量等于允许输入上限减去实测峰值和测量不确定度。
 
 校准时逐个物理输出口读取 F64 的平均功率设置（User Reference Rev 10.2 §20.4.5.4/.5）。将设备回复按 dBm 原样记入上述 CSV 的 `emulator_output_setting_dbm` 列。同一物理输出口在八路清单的多行中必须具有相同设置。准备记录在 `binding.real_preflight.calibration.ports[]` 中冻结该值；`emulator_output_dbm` 单独保存输出参考面的实测峰值，用于线缆损耗与运行监测。旧记录保留原件供历史查询，缺少设置回读时须补测并以新报告编号登记才能启动实机。
+
+## P2-111 数字孪生对照验收
+
+操作员从同一个场景分别进入数字孪生与传导。数字孪生执行保留实际使用的场景版本、仿真输入和采样时刻。用相同输入重复运行，应能复算相同时刻的模拟指标。刷新页面和从历史重新打开，均须能找回原执行；中途停止时只展示已经生成的样本。
+
+与传导对照时先核对场景版本，再核对样本对应的路线时刻。服务启动后经过的秒数本身不能证明两台设备播放到了同一帧。缺少对齐依据的区间应标为“未核验”；模拟曲线和实测曲线均保留各自来源。检查归档报告中的正式指标和判词，确保模拟值始终排除在正式判定之外。

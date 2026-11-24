@@ -185,6 +185,9 @@ export interface CustomConfigHighlight {
  * Used by both test plans and virtual road tests
  */
 export interface ReportContentData {
+  mode?: string
+  simulation_input?: import('./roadTest').TwinInput | null
+  simulation_timeline?: import('./roadTest').TwinTimeline | null
   conducted_setup?: import('./roadTest').ConductedPreparation | null
   observations?: import('./roadTest').RunnerObservation[]
   /** 只读原执行冻结投影；不可用当前配置重建。 */

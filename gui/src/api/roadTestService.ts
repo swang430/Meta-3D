@@ -10,6 +10,7 @@ import type {
   ConductedCalibrationRecord,
   ConductedPreparation,
   RunnerObservation,
+  TwinTimeline,
   RoadTestScenario,
   ScenarioSummary,
   TestExecution,
@@ -216,4 +217,21 @@ export async function fetchExecutionObservations(id: string) {
   const response = await apiClient.get<{ observations?: RunnerObservation[] }>(
     `${BASE_URL}/executions/${id}/metrics`)
   return response.data.observations || []
+}
+
+interface TwinComparison {
+  comparable: boolean
+  reason: string
+  formal_kpi: boolean
+  differences: { source_frame_time_s: number; delta_dl_throughput_mbps: number }[]
+}
+
+export async function fetchTwinTimeline(id: string) {
+  return (await apiClient.get<TwinTimeline>(`${BASE_URL}/executions/${id}/timeline`)).data
+}
+
+export async function fetchTwinComparison(id: string, conductedId: string) {
+  return (await apiClient.get<TwinComparison>(`${BASE_URL}/executions/${id}/comparison`, {
+    params: { conducted_execution_id: conductedId },
+  })).data
 }

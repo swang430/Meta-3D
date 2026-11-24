@@ -41,6 +41,7 @@ import {
 } from '@tabler/icons-react'
 import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
+import { DigitalTwinExecutionModal } from './DigitalTwinExecutionModal'
 import { ConductedExecutionModal } from './ConductedExecutionModal'
 import { TestReportModal } from './TestReportModal'
 import { TestMode } from '../../types/roadTest'
@@ -56,7 +57,7 @@ const TEST_MODES = [
     label: '数字孪生',
     icon: IconCpu,
     color: 'blue',
-    description: '纯软件仿真，成本最低',
+    description: '软件模拟',
   },
   {
     value: TestMode.CONDUCTED,
@@ -171,6 +172,7 @@ const MODE_LABELS: Record<TestMode, string> = {
  * 执行历史组件 - 显示虚拟路测的执行记录
  */
 function ExecutionHistory() {
+  const [twin, setTwin] = useState<{ id: string; name: string } | null>(null)
   const [conducted, setConducted] = useState<{ id: string; name: string } | null>(null)
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
@@ -298,6 +300,7 @@ function ExecutionHistory() {
                   </Table.Td>
                   <Table.Td>
                     <Group gap="xs">
+                      {exec.mode === 'digital_twin' && <Button size="xs" onClick={() => setTwin({ id: exec.execution_id, name: exec.scenario_name })}>回看模拟执行</Button>}
                       {exec.mode === 'conducted' && <Button size="xs" variant="light" onClick={() =>
                         setConducted({ id: exec.execution_id, name: exec.scenario_name })}>查看执行</Button>}
                       {isCompleted && (
@@ -320,6 +323,7 @@ function ExecutionHistory() {
         </Table>
       </Paper>
 
+      {twin && <DigitalTwinExecutionModal initialId={twin.id} scenario={twin} onClose={() => setTwin(null)} />}
       {conducted && <ConductedExecutionModal key={conducted.id} opened initialId={conducted.id}
         scenario={{ id: '', name: conducted.name }} onClose={() => setConducted(null)} />}
       {/* Report Modal */}

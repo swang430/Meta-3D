@@ -56,13 +56,15 @@ from app.schemas.road_test import (
     CustomConfigHighlight,
     TrajectoryPoint,
 )
-from app.schemas.road_test.execution import ExecutionArchiveReceipt, ExecutionControlReceipt, RoadTestAvailability
+from app.schemas.road_test.execution import TwinTimeline, TwinComparison, ExecutionArchiveReceipt, ExecutionControlReceipt, RoadTestAvailability
 from app.data.scenario_library import (
     get_all_scenarios,
     get_scenario_by_id,
     get_scenarios_by_category,
 )
 from app.services.road_test.measurement_evidence import real_driver_pair, throughput_summary
+from app.services.road_test import twin_playback
+from app.services.road_test.vrt_execution_service import _utcnow
 from app.services.road_test.vrt_service import vrt_service
 from app.services.road_test.network_topology_service import network_topology_service
 from app.services.road_test.vrt_execution_service import vrt_execution_service
@@ -535,6 +537,8 @@ def _execution_scenario(db: Session, row):
     if row.mode == TestMode.CONDUCTED.value:
         # 旧传导记录没有可信快照，只能显示当时保存的场景标识。
         return (row.vrt_conducted_setup or {}).get("scenario_snapshot")
+    if row.mode == "digital_twin" and row.vrt_twin_input:
+        return row.vrt_twin_input["scenario_snapshot"]
     if row.scenario_id:
         return get_scenario_by_id(row.scenario_id) or _get_custom_scenario(db, row.scenario_id)
     return None
@@ -595,6 +599,7 @@ async def create_execution(
         scenario_id=execution_create.scenario_id,
         topology_id=execution_create.topology_id,
         config=execution_create.config,
+        twin_input=twin_playback.freeze(scenario, execution_create.config) if execution_create.mode == TestMode.DIGITAL_TWIN else None,
         notes=execution_create.notes,
         created_by="api",
     )
@@ -715,6 +720,28 @@ async def control_execution(
         raise HTTPException(status_code=400, detail=f"Unknown action: {action}")
 
     return {"status": "success", "execution_id": execution_id, "action": action}
+
+
+@router.get("/executions/{execution_id}/timeline", response_model=TwinTimeline)
+async def get_twin_timeline(execution_id: str, db: Session = Depends(get_db)):
+    row = vrt_execution_service.get(db, execution_id)
+    if row is None:
+        raise HTTPException(404, "找不到本次执行。")
+    return twin_playback.timeline(row, _utcnow())
+
+
+@router.get("/executions/{execution_id}/comparison", response_model=TwinComparison)
+async def compare_twin(execution_id: str, conducted_execution_id: str, db: Session = Depends(get_db)):
+    row = vrt_execution_service.get(db, execution_id)
+    conducted = vrt_execution_service.get(db, conducted_execution_id)
+    if row is None or conducted is None:
+        raise HTTPException(404, "找不到所选执行。")
+    if conducted.mode != "conducted":
+        raise HTTPException(422, "请选择传导执行作为对照。")
+    points = twin_playback.timeline(row, _utcnow())["points"]
+    samples = vrt_execution_service.query_kpi_samples(db, conducted_execution_id)
+    observations = vrt_execution_service.to_test_metrics(conducted, samples).observations
+    return twin_playback.compare(row.vrt_twin_input, conducted.vrt_conducted_setup or {}, points, observations)
 
 
 @router.get("/executions/{execution_id}/status", response_model=TestStatus)
@@ -927,6 +954,8 @@ async def _archive_execution_report(execution_id: str, db: Session):
         from datetime import datetime, timezone
         import uuid
         
+        report_kind = "数字孪生模拟报告" if report_data.mode == TestMode.DIGITAL_TWIN else "虚拟路测报告"
+        report_title = f"{report_kind}: {report_data.scenario_name}"
         legacy_content_snapshot = None
         if existing_report is not None:
             from copy import deepcopy
@@ -945,7 +974,7 @@ async def _archive_execution_report(execution_id: str, db: Session):
             logger.info(f"Creating new archived report for execution {execution_id}")
             new_report = TestReport(
                 id=uuid.uuid4(),
-                title=f"虚拟路测报告: {report_data.scenario_name}",
+                title=report_title,
                 description=f"Mode: {report_data.mode}, Result: {report_data.overall_result}",
                 report_type=ReportType.SINGLE_EXECUTION,
                 format=ReportFormat.PDF,
@@ -1000,7 +1029,7 @@ async def _archive_execution_report(execution_id: str, db: Session):
                 generation_kwargs = {
                     "content_data_override": content_data,
                     "vrt_archive_metadata_override": {
-                        "title": f"虚拟路测报告: {report_data.scenario_name}",
+                        "title": report_title,
                         "description": (
                             f"Mode: {report_data.mode}, "
                             f"Result: {report_data.overall_result}"
@@ -1360,6 +1389,8 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             duration_s=execution.duration_s,
             # Results
             conducted_setup=row.vrt_conducted_setup if row.mode == "conducted" else None,
+            simulation_input=row.vrt_twin_input,
+            simulation_timeline=twin_playback.timeline(row, _utcnow()) if row.vrt_twin_input else None,
             observations=observations,
             phases=phases,
             kpi_summary=kpi_summary,
