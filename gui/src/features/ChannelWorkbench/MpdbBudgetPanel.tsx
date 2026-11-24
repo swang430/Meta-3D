@@ -49,9 +49,9 @@ export function MpdbBudgetPanel() {
    <ScrollArea><Table withTableBorder aria-label="抽头预算结果"><Table.Thead><Table.Tr>{['策略','预算上限','实际使用范围','矩阵 NMSE 中位数（线性）','矩阵 NMSE P95（线性）','相位误差 P95（度）','共同有效相位点','改善点','变差点','不变点'].map(x=><Table.Th key={x}>{x}</Table.Th>)}</Table.Tr></Table.Thead><Table.Tbody>
     {['independent','shared'].flatMap(strategy=>[24,26,31].map(budget=>{const r=result.summary[`${strategy}-${budget}`];return <Table.Tr key={`${strategy}-${budget}`} data-testid={`${strategy}-${budget}`}><Table.Td>{strategy==='independent'?'端口独立功率加权时延':'八路共享功率加权时延'}</Table.Td><Table.Td>{budget}</Table.Td><Table.Td>{r.used_taps_min===r.used_taps_max?r.used_taps_min:`${r.used_taps_min}–${r.used_taps_max}`}</Table.Td>{[r.matrix_nmse_median,r.matrix_nmse_p95,r.phase_error_p95_deg].map((v,i)=><Table.Td key={i}>{metric(v)}</Table.Td>)}{[r.common_valid,r.improved,r.worse,r.unchanged].map((v,i)=><Table.Td key={i}>{v}</Table.Td>)}</Table.Tr>}))}
    </Table.Tbody></Table></ScrollArea>
-   <Text size="sm">改善、变差、不变仅比较同策略与自身 24 抽头基线的共同有效相位点，容差 1e-7 度。矩阵变化请查看 CSV 的 matrix_delta；无有效数值显示“无有效点”。</Text>
+   <Text size="sm">改善、变差和不变均以同一时延策略下未拆分任何簇的方案为基线，只统计双方均有效的相位点，容差为 1e-7 度。本批样本有 24 个共同簇，其未拆分基线与 24 抽头方案一致。矩阵变化请查看 CSV 的 matrix_delta；无有效数值显示“无有效点”。</Text>
    <Group><Anchor href={result.download_url} download>下载预算完整报告 ZIP</Anchor><Anchor href={result.points_url} download>下载预算逐点 CSV</Anchor></Group>
-   <Text>定位方法：CSV 按 frame、strategy、tap_budget、offset_hz、port_a/b 筛选；端口索引见来源详情。phase_delta_deg 与 matrix_delta 均为当前减同策略 24 抽头值，负数表示改善。ZIP 内 report.json 提供逐帧八路实际抽头数、簇排序与分界。下载 24 小时后过期，404 时请重新比较。</Text>
+   <Text>定位方法：CSV 按 frame、strategy、tap_budget、offset_hz、port_a/b 筛选；端口索引见来源详情。phase_delta_deg 与 matrix_delta 均为当前方案的误差减去同一时延策略下未拆簇基线的误差，负数表示改善。ZIP 内 report.json 提供逐帧八路实际抽头数、簇排序与分界。下载 24 小时后过期，404 时请重新比较。</Text>
    <details><summary>查看预算比较来源与定位索引</summary><pre style={{whiteSpace:'pre-wrap',overflowWrap:'anywhere'}}>{JSON.stringify({source:result.source,mpdb_sha256:result.mpdb_sha256,frame_ids:result.frame_ids,port_order:result.port_order,port_pairs:result.port_pairs,offsets_hz:result.offsets_hz,amplitude_floor:result.amplitude_floor},null,2)}</pre></details>
   </Stack>}
  </Stack>
