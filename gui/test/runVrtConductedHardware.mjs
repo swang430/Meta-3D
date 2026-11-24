@@ -1,4 +1,5 @@
 // 用已有的 Playwright 环境运行；全部接口响应由浏览器夹具提供。
+import { verifyConductedStopRecovery } from "./vrtConductedStopRecovery.browser.js"
 import { createRequire } from 'node:module'
 import { fileURLToPath } from 'node:url'
 import { build } from 'esbuild'
@@ -28,7 +29,7 @@ const bundle = await build({
 })
 const browser = await chromium.launch({ channel: process.env.CHROMIUM_CHANNEL })
 try {
-  for (const [check, hash] of [[verifyConductedStart, ''], [verifyCalibrationRegistration, '#new']]) {
+  for (const [check, hash] of [[verifyConductedStopRecovery, ''], [verifyConductedStart, ''], [verifyCalibrationRegistration, '#new']]) {
     const page = await browser.newPage()
     await page.route('**/*', route => route.abort())
     await page.route('http://fixture.test/', route => route.fulfill({

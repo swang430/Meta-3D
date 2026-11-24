@@ -62,6 +62,24 @@ def _output_limits(calibration):
     return limits
 
 
+async def _verify_output_settings(channel, calibration, ports):
+    settings = {}
+    for path in calibration["ports"]:
+        port = path["output_port"]
+        value = path.get("emulator_output_setting_dbm")
+        if type(value) not in (float, int) or not math.isfinite(value):
+            raise RuntimeError(f"输出口 {port} 缺少校准时的有效平均功率设置。")
+        if port in settings and settings[port] != value:
+            raise RuntimeError(f"输出口 {port} 各路径登记的平均功率设置不一致。")
+        settings[port] = value
+    if set(settings) != set(ports):
+        raise RuntimeError("输出功率设置的校准记录与物理接线不一致。")
+    for port in sorted(settings):
+        configured = await channel.read_conducted_output_setting(port)
+        if configured != settings[port]:
+            raise RuntimeError(f"输出口 {port} 的平均功率设置无法确认或与校准时不一致。")
+
+
 async def check_running_power(station, channel, calibration):
     """最近的输出平均值超过校准时的峰值即中止；低于它不能重新证明峰值安全。"""
     scope = calibration["scope"]
@@ -89,6 +107,7 @@ async def check_running_power(station, channel, calibration):
             raise RuntimeError(f"输入口 {port} 的峰值读数无效或安全余量不足。")
         peaks[str(port)] = peak
     limits = _output_limits(calibration)
+    await _verify_output_settings(channel, calibration, limits)
     readings = {}
     for port, limit in limits.items():
         value = await channel.read_running_output_average_dbm(port)
@@ -145,10 +164,7 @@ async def hardware_playback(setup, station, channel, stop, verify_project, recor
         limits = _output_limits(calibration)
         if set(limits) != outputs:
             raise RuntimeError("输出参考面登记与物理接线不一致。")
-        for port in owned_ports:
-            configured = await channel.read_conducted_output_setting(port)
-            if configured is None or not math.isfinite(configured) or configured > limits[port]:
-                raise RuntimeError(f"输出口 {port} 的工程电平无法核验或超过校准登记电平。")
+        await _verify_output_settings(channel, calibration, owned_ports)
         for port in owned_ports:
             check_stop()
             if not await channel.set_conducted_output_enabled(port, True):

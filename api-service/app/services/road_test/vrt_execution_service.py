@@ -628,6 +628,7 @@ class VrtExecutionService:
             current_waypoint_index=runtime.get("current_waypoint_index"),
             current_time_s=runtime.get("current_time_s"),
             current_position=runtime.get("current_position"),
+            conducted_stop_pending=orm.mode == TestMode.CONDUCTED.value and "conducted_shutdown_ports" in hw,
             instruments_connected=hw.get("instruments_connected"),
             instrument_status=hw.get("instrument_status"),
             last_error=orm.error_message,

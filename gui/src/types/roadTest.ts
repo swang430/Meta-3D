@@ -799,6 +799,7 @@ export interface ExecutionSummary {
 }
 
 export interface TestStatus {
+  conducted_stop_pending: boolean
   execution_id: string
   status: ExecutionStatus
   progress_percent: number

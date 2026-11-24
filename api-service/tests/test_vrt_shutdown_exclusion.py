@@ -10,14 +10,16 @@ from tests.test_road_test_executions import _isolated_db, _TestingSessionLocal
 
 
 @pytest.mark.asyncio
-async def test_failed_execution_blocks_other_equipment_users_after_restart():
+async def test_failed_execution_blocks_other_equipment_users_after_restart(client):
     with _TestingSessionLocal() as db:
         row = runner.executions.create(db, mode=TestMode.CONDUCTED, scenario_id="fixture")
         row.status = "failed"
         row.hardware_status = {"conducted_shutdown_ports": [7], "conducted_stop_confirmed": False}
         db.commit()
+        status_url = f"/api/v1/road-test/executions/{row.id}/status"
         runner.recover_conducted_runs(db)
         try:
+            assert client.get(status_url).json()["conducted_stop_pending"] is True
             with pytest.raises(HTTPException) as blocked:
                 async with _exclusive_f64_control_operation(db):
                     pytest.fail("停止未确认时仍允许切换控制权")
@@ -28,5 +30,6 @@ async def test_failed_execution_blocks_other_equipment_users_after_restart():
                     pytest.fail("停止未确认时仍取得其他测试租约")
         finally:
             runner._record_shutdown(db, row, None)
+        assert client.get(status_url).json()["conducted_stop_pending"] is False
         async with _exclusive_f64_control_operation(db):
             pass

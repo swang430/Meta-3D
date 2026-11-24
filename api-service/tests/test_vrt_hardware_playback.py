@@ -9,13 +9,13 @@ from app.hal.base_station import CellState
 
 
 def _calibrated_ports():
-    return [dict(input_port=t, output_port=r, emulator_output_dbm=-40,
+    return [dict(input_port=t, output_port=r, emulator_output_dbm=-40, emulator_output_setting_dbm=-50,
                  emulator_input={"max_safe_input_dbm":-5, "uncertainty_db":1})
             for t in range(1, 5) for r in (1, 2)]
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", [None, "power", "frequency", "wire", "output", "disconnect", "stop"])
+@pytest.mark.parametrize("fault", [None, "power", "frequency", "wire", "output", "missing_setting", "changed_setting", "disconnect", "stop"])
 async def test_device_control_sequence(fault):
     from app.services.road_test.conducted_hardware import hardware_playback
 
@@ -31,17 +31,25 @@ async def test_device_control_sequence(fault):
         active_channels=8, active_output_ports=[1,3] if fault == "wire" else [1,2], topology_source="readback")
     channel.read_playback_state.side_effect = ["CLOSED", "RUNNING"]
     channel.read_conducted_group_working_points.return_value = [(3500 if fault == "frequency" else 3600,100)]
-    channel.read_conducted_output_setting.return_value = -10 if fault == "output" else -55
+    channel.read_conducted_output_setting.side_effect = [-50, -41 if fault == "output" else -50, -50, -51]
     channel.start_emulation.return_value = True
     channel.stop_emulation.return_value = True
     channel.close_conducted_project.return_value = True
     channel.set_conducted_output_enabled.return_value = True
     setup = {"binding":{"real_preflight":{"calibration":{"applicable":True, "scope":{
-        "center_frequency_hz":3600000000, "bandwidth_mhz":100,"tx_power_dbm":-20}, "ports":[{"output_port":n,"emulator_output_dbm":-40} for n in [1,2]]}}},
+        "center_frequency_hz":3600000000, "bandwidth_mhz":100,"tx_power_dbm":-20}, "ports":_calibrated_ports(), "required_margin_db":3}}},
         "asset":{"instrument_path":"route.smu"}, "port_mapping":[dict(input_port=t, output_port=r)
         for t in range(1,5) for r in (1,2)]}
+    calibration = setup["binding"]["real_preflight"]["calibration"]
+    if fault == "missing_setting":
+        del calibration["ports"][-1]["emulator_output_setting_dbm"]
     async def exercise():
         async with hardware_playback(setup, station, channel, asyncio.Event(), lambda: None):
+            if fault == "changed_setting":
+                from app.services.road_test.conducted_hardware import check_running_power
+                channel.measure_input.return_value = (-20, 3)
+                channel.read_running_output_average_dbm.return_value = -50
+                await check_running_power(station, channel, calibration)
             if fault == "disconnect":
                 raise ConnectionError("连接中断")
     if fault:
@@ -59,7 +67,7 @@ async def test_device_control_sequence(fault):
         channel.close_conducted_project.assert_not_awaited()
     else:
         channel.close_conducted_project.assert_awaited_once()
-    if fault in {"wire", "power", "frequency", "output"}:
+    if fault in {"wire", "power", "frequency", "output", "missing_setting"}:
         station.start_signaling.assert_not_awaited()
         channel.start_emulation.assert_not_awaited()
 
@@ -86,6 +94,7 @@ async def test_running_average_and_limit(reading):
     station.read_conducted_working_point.return_value = (3600000000, 100, -20)
     channel = AsyncMock()
     channel.measure_input.return_value = (-20, 3)
+    channel.read_conducted_output_setting.return_value = -50
     channel.read_running_output_average_dbm.return_value = reading
     evidence = {"scope": {"center_frequency_hz":3600000000, "bandwidth_mhz":100, "tx_power_dbm":-20},
                 "ports":_calibrated_ports(), "required_margin_db":3}
@@ -122,7 +131,7 @@ async def test_worker_with_mock_devices_never_creates_measured_samples(monkeypat
     channel.load_local_scenario = AsyncMock(return_value=True)
     channel.set_conducted_output_enabled = AsyncMock(return_value=True)
     channel.read_conducted_group_working_points = AsyncMock(return_value=[(3600, 100)])
-    channel.read_conducted_output_setting = AsyncMock(return_value=-55)
+    channel.read_conducted_output_setting = AsyncMock(return_value=-50)
     channel.measure_input = AsyncMock(return_value=(-20, 3))
     channel.read_running_output_average_dbm = AsyncMock(return_value=-50)
     channel.read_playback_state = AsyncMock(side_effect=["CLOSED","RUNNING","RUNNING"])

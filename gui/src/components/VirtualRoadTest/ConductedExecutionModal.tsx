@@ -44,6 +44,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
     enabled: opened && matches, refetchInterval: opened && matches ? 2000 : false,
   })
   const status = state.data?.status
+  const stopPending = matches && state.data?.conducted_stop_pending === true
   const terminal = status === 'failed' || status === 'completed' || status === 'stopped'
   const samples = useQuery({ queryKey: ['vrt-samples', id], queryFn: () => fetchExecutionObservations(id),
     enabled: opened && matches, refetchInterval: opened && matches && !terminal ? 2000 : false })
@@ -105,11 +106,17 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
       </Group>}
       {id && <Button variant="light" onClick={() => { void detail.refetch(); if (matches) void state.refetch() }}>重新读取执行状态</Button>}
       {samples.data && <ExecutionObservations samples={samples.data} />}
+      {terminal && stopPending && <Alert color="orange" title="设备停止状态待复核">
+        <Stack gap="xs">
+          <Text>本次执行已结束，仍有设备端口未确认停止。请对原执行重新请求停止。</Text>
+          <Button loading={stop.isPending} onClick={() => stop.mutate()}>重新停止并核对设备状态</Button>
+        </Stack>
+      </Alert>}
       {terminal && <Group>
         <Button onClick={() => setReport(true)}>查看报告</Button>
         <Button loading={archive.isPending} disabled={archive.isSuccess} onClick={() => archive.mutate()}>归档报告</Button>
       </Group>}
-      {(terminal || status === 'idle' || (missing && !!selection.scenario_id)) && !controlling && <Button variant="light" onClick={retry}>重新准备一次执行</Button>}
+      {(terminal || status === 'idle' || (missing && !!selection.scenario_id)) && !stopPending && !controlling && <Button variant="light" onClick={retry}>重新准备一次执行</Button>}
       {archive.data && <Group><Text>归档报告编号 {archive.data.id}</Text>
         <Button component="a" href={`/api/v1/reports/${encodeURIComponent(archive.data.id)}/download`} download variant="light">下载归档报告</Button>
       </Group>}

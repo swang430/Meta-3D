@@ -74,6 +74,8 @@ class TestStatus(BaseModel):
     current_time_s: Optional[float] = Field(None, description="Current simulation/test time")
     current_position: Optional[Dict[str, float]] = Field(None, description="Current vehicle position")
 
+    conducted_stop_pending: bool = Field(description="原传导执行仍有设备端口待复核停止")
+
     # Hardware status (conducted/OTA)
     instruments_connected: Optional[bool] = Field(None, description="Instruments connected")
     instrument_status: Optional[Dict[str, str]] = Field(None, description="Instrument status")

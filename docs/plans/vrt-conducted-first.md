@@ -70,4 +70,6 @@
 
 - `POST /api/v1/road-test/conducted/calibrations` 接收 `{"report_file":"现场报告.json"}`。列表和详情支持 GET，详情保留报告及原始 CSV 的 Base64 字节。`POST /{id}/revoke` 接收 reason。重复导入同一原件保留原记录和撤销状态。
 - 先用准备接口查看 `binding.real_preflight.calibration.scope`。其中 tx_power_dbm 是场景的小区配置工作点。实际基站各物理口读数在 ports 的 base_station_output_dbm；仿真器实际输出在 emulator_output_dbm。两段电缆损耗 tx_cable_loss_db 和 rx_cable_loss_db 分别按各自输出参考面与输入参考面的实测功率差计算。
-- 报告采用 `app/services/road_test/port_calibration.py` 中的 CalibrationEvidence 格式。八行 CSV 列为 tx、rx、input_port、output_port、source、meter_serial、base_station_output_dbm、emulator_input_dbm、emulator_output_dbm、dut_input_dbm。报告绑定 CSV 原始字节的 SHA-256、仪器序列号、计量证书、有效期、各端口参考面、允许输入上限及其出处。车载端实测峰值须对应八路同时播放。安全余量等于允许输入上限减去实测峰值和测量不确定度。
+- 报告采用 `app/services/road_test/port_calibration.py` 中的 CalibrationEvidence 格式。八行 CSV 列为 tx、rx、input_port、output_port、source、meter_serial、base_station_output_dbm、emulator_input_dbm、emulator_output_dbm、emulator_output_setting_dbm、dut_input_dbm。报告绑定 CSV 原始字节的 SHA-256、仪器序列号、计量证书、有效期、各端口参考面、允许输入上限及其出处。车载端实测峰值须对应八路同时播放。安全余量等于允许输入上限减去实测峰值和测量不确定度。
+
+校准时逐个物理输出口读取 F64 的平均功率设置（User Reference Rev 10.2 §20.4.5.4/.5）。将设备回复按 dBm 原样记入上述 CSV 的 `emulator_output_setting_dbm` 列。同一物理输出口在八路清单的多行中必须具有相同设置。准备记录在 `binding.real_preflight.calibration.ports[]` 中冻结该值；`emulator_output_dbm` 单独保存输出参考面的实测峰值，用于线缆损耗与运行监测。旧记录保留原件供历史查询，缺少设置回读时须补测并以新报告编号登记才能启动实机。

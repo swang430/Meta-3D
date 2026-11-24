@@ -147,6 +147,7 @@ def read_report(filename):
     if hashlib.sha256(readings).hexdigest() != evidence.readings_sha256:
         raise ValueError("仪器原始读数文件的摘要与已审核报告不一致。")
     raw = {}
+    settings_by_port = {}
     reader = csv.DictReader(io.StringIO(readings.decode("utf-8-sig")))
     fields = reader.fieldnames or []
     if len(set(fields)) != len(fields):
@@ -157,6 +158,17 @@ def read_report(filename):
             raise ValueError("原始仪器读数存在重复通路、模拟来源或仪器身份不符。")
         values = {k: float(row[k]) for k in ("base_station_output_dbm", "emulator_input_dbm",
                                               "emulator_output_dbm", "dut_input_dbm")}
+        port = key[3]
+        try:
+            setting = float(row["emulator_output_setting_dbm"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"输出口 {port} 缺少校准时设备回读的平均功率设置，不能启动实机。") from exc
+        if not math.isfinite(setting):
+            raise ValueError(f"输出口 {port} 的平均功率设置回读无效，不能启动实机。")
+        if port in settings_by_port and settings_by_port[port] != setting:
+            raise ValueError(f"输出口 {port} 的平均功率设置回读在不同通路上不一致。")
+        settings_by_port[port] = setting
+        values["emulator_output_setting_dbm"] = setting
         if not all(math.isfinite(v) for v in values.values()):
             raise ValueError("原始仪器读数必须为有限值。")
         raw[key] = values

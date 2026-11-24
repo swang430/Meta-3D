@@ -11,7 +11,7 @@ def test_calibration_source_and_list(client):
     assert forged.status_code == 422
 
 
-def _site_files(directory):
+def _site_files(directory, *, settings=None):
     """软件测试夹具，只写入每个测试自己的临时审核目录。"""
     import csv
     import hashlib
@@ -44,6 +44,10 @@ def _site_files(directory):
             rows.append(dict(**mapping, source=doc["source"], meter_serial=doc["meter_serial"],
                              base_station_output_dbm=-18-tx, emulator_input_dbm=-20-tx,
                              emulator_output_dbm=-8-rx, dut_input_dbm=-11-rx))
+    for row in rows:
+        setting = -16 - row["output_port"] if settings is None else settings(row)
+        if setting is not None:
+            row["emulator_output_setting_dbm"] = setting
     readings = directory / doc["readings_file"]
     with readings.open("w") as f:
         writer = csv.DictWriter(f, fieldnames=rows[0].keys())
@@ -73,6 +77,8 @@ def test_site_record_port_evidence_and_revocation(client, monkeypatch, tmp_path)
         assert result["applicable"], result["reasons"]
         assert [p["base_station_output_dbm"] for p in result["ports"]][::2] == [-19, -20, -21, -22]
         assert all((p["tx_cable_loss_db"], p["rx_cable_loss_db"]) == (2, 3) for p in result["ports"])
+        assert {(p["output_port"], p["emulator_output_setting_dbm"], p["emulator_output_dbm"])
+                for p in result["ports"]} == {(1, -17, -9), (2, -18, -10)}
         assert result["ports"][0]["dut_input_margin_db"] == 11
         for field in doc["scope"]:
             assert not check({**doc["scope"], field: "changed"})["applicable"]
@@ -120,3 +126,34 @@ def test_untrusted_and_invalid_sources(client, monkeypatch, tmp_path):
     doc["readings_sha256"] = hashlib.sha256(readings.read_bytes()).hexdigest()
     (tmp_path / "report.json").write_text(json.dumps(doc))
     assert register().status_code == 422
+
+
+
+def test_legacy_calibration_without_output_settings_cannot_authorize_playback(client, tmp_path, monkeypatch):
+    import base64
+    import hashlib
+    from app.models.vrt_port_calibration import VrtPortCalibration
+    from app.services.road_test.port_calibration import applicability
+    from tests.test_road_test_executions import _TestingSessionLocal
+
+    monkeypatch.setenv("VRT_CALIBRATION_APPROVED_DIR", str(tmp_path))
+    doc, mapping = _site_files(tmp_path, settings=lambda _: None)
+    data = (tmp_path / "report.json").read_bytes()
+    readings = (tmp_path / "readings.csv").read_bytes()
+    with _TestingSessionLocal() as db:
+        old = VrtPortCalibration(evidence_sha256=hashlib.sha256(data).hexdigest(), report_file="report.json",
+                                 issuer=doc["issuer"], report_number=doc["report_number"],
+                                 evidence_b64=base64.b64encode(data).decode(), readings_b64=base64.b64encode(readings).decode())
+        db.add(old)
+        db.commit()
+        check = applicability(db, old.id, doc["scope"], mapping)
+        assert not check["applicable"] and "平均功率设置" in str(check["reasons"])
+        assert client.get(ROOT + "/" + str(old.id)).json()["readings_b64"] == old.readings_b64
+
+
+def test_conflicting_output_setting_for_same_port(client, monkeypatch, tmp_path):
+    monkeypatch.setenv("VRT_CALIBRATION_APPROVED_DIR", str(tmp_path))
+    _site_files(tmp_path, settings=lambda row: -row["tx"])
+    response = client.post(ROOT, json={"report_file": "report.json"})
+    assert response.status_code == 422
+    assert "平均功率设置" in response.json()["detail"]

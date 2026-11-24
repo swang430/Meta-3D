@@ -95,6 +95,8 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
         if physical:
             calibration = saved["binding"]["real_preflight"]["calibration"]
             assert calibration["applicable"] and len(calibration["ports"]) == 8
+            assert {(p["output_port"], p["emulator_output_setting_dbm"], p["emulator_output_dbm"])
+                    for p in calibration["ports"]} == {(1, -17, -9), (2, -18, -10)}
             client.post(ROOT + "/conducted/calibrations/" + selection["calibration_id"] + "/revoke",
                         json={"reason": "更换物理电缆"})
             changed = client.post(ROOT + "/conducted/prepare", json=selection).json()
