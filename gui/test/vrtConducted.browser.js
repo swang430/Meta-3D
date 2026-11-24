@@ -11,6 +11,17 @@
   }
   await openScenario()
   check(await button('启动传导测试').isDisabled(), '缺少绑定却允许启动')
+  if (fixture.missingCalibrationFile) {
+    const submitted = page.waitForResponse(r => r.url().endsWith('/conducted/calibrations') && r.request().method() === 'POST')
+    await page.getByLabel('实验室已审核目录中的报告文件名').fill(fixture.missingCalibrationFile)
+    await button('登记逐端口校准').click()
+    const response = await submitted
+    const { detail } = await response.json()
+    check(response.request().postDataJSON().report_file === fixture.missingCalibrationFile, '登记请求缺少报告文件名')
+    check(response.status() === 422 && typeof detail === 'string', '缺少已审核原件时应返回具体原因')
+    await page.getByText(detail, { exact: true }).waitFor()
+    check(await button('启动传导测试').isDisabled(), '登记失败后放行了启动')
+  }
   for (const [label, name] of [['实验室',fixture.lab],['接线方案',fixture.topology],['可播放工程',fixture.asset]]) {
     await page.getByRole('textbox', { name: label, exact: true }).click()
     await page.getByRole('option', { name, exact: false }).click()

@@ -15,17 +15,41 @@ from uuid import uuid4
 _ACTIVE_UNSAFE_DIAGNOSTIC: Optional[Tuple[str, str]] = None
 
 
+# 单进程内提供给没有数据库会话的设备入口。来源是每条执行的持久停止记录。
+_PENDING_CONDUCTED_STOPS: set[str] = set()
+
+
+def update_conducted_stop(execution_id: str, pending: bool) -> None:
+    if pending:
+        _PENDING_CONDUCTED_STOPS.add(execution_id)
+    else:
+        _PENDING_CONDUCTED_STOPS.discard(execution_id)
+
+
+def restore_conducted_stops(execution_ids) -> None:
+    _PENDING_CONDUCTED_STOPS.clear()
+    _PENDING_CONDUCTED_STOPS.update(execution_ids)
+
+
+def conducted_stop_blocker(recovery_execution_id=None):
+    if recovery_execution_id is not None and recovery_execution_id in _PENDING_CONDUCTED_STOPS:
+        return None
+    if _PENDING_CONDUCTED_STOPS:
+        return "传导执行尚未确认停止：" + "、".join(sorted(_PENDING_CONDUCTED_STOPS))
+    return None
+
+
 def active_unsafe_diagnostic() -> Optional[str]:
     """返回当前破坏性诊断 key；无占用则返回 ``None``。"""
     if _ACTIVE_UNSAFE_DIAGNOSTIC is None:
-        return None
+        return conducted_stop_blocker()
     return _ACTIVE_UNSAFE_DIAGNOSTIC[1]
 
 
-def try_acquire_unsafe_diagnostic(sequence_key: str) -> Optional[str]:
+def try_acquire_unsafe_diagnostic(sequence_key: str, *, recovery_execution_id=None) -> Optional[str]:
     """无等待地检查并占位；忙时返回 ``None``，成功时返回释放 token。"""
     global _ACTIVE_UNSAFE_DIAGNOSTIC
-    if _ACTIVE_UNSAFE_DIAGNOSTIC is not None:
+    if _ACTIVE_UNSAFE_DIAGNOSTIC is not None or conducted_stop_blocker(recovery_execution_id):
         return None
     token = uuid4().hex
     _ACTIVE_UNSAFE_DIAGNOSTIC = (token, sequence_key)

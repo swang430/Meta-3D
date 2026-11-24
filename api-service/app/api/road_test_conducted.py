@@ -9,6 +9,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
+from app.api import vrt_port_calibration
+from app.services.road_test.port_calibration import applicability
 from app.api.road_test import _get_custom_scenario
 from app.data.scenario_library import get_scenario_by_id
 from app.db.database import get_db
@@ -25,6 +27,8 @@ from app.services.road_test.vrt_execution_service import vrt_execution_service
 
 router = APIRouter(prefix="/road-test/conducted", tags=["Virtual Road Test"])
 
+router.include_router(vrt_port_calibration.router)
+
 
 class Selection(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -33,6 +37,7 @@ class Selection(BaseModel):
     lab_profile_id: UUID | None = None
     topology_id: UUID | None = None
     asset_id: UUID | None = None
+    calibration_id: UUID | None = None
 
 
 def _options(db, model):
@@ -76,7 +81,19 @@ def _registrations(lab):
     return [r for r in entries if isinstance(r, dict)] if isinstance(entries, list) else []
 
 
-@router.get("/options")
+class ConductedOption(BaseModel):
+    id: str
+    name: str
+    mock_only: bool | None = None
+
+
+class ConductedOptions(BaseModel):
+    labs: list[ConductedOption]
+    topologies: list[ConductedOption]
+    assets: list[ConductedOption]
+
+
+@router.get("/options", response_model=ConductedOptions, response_model_exclude_unset=True)
 def options(db: Session = Depends(get_db)):
     assets = {a["id"]: a for a in _options(db, ChannelAsset)}
     for lab in db.query(LabProfile).filter(LabProfile.is_active.is_(True)):
@@ -118,13 +135,17 @@ def _mapping(rows, topology):
     return [p.model_dump() for p in paths], None
 
 
-def real_preflight(db, hal, lab, asset, network):
+def real_preflight(db, hal, lab, asset, network, *, calibration_id=None, scope=None, mapping=(), duration_s=0, frequency_mhz=None):
     """核对真实设备所需的已登记证据；此处不取得控制权。"""
     scd = asset.payload["scd_config"]
     working_point = vendor_scd_frequency_identity(scd, allow_legacy_nr=True)
     evidence = {"center_frequency_hz": working_point.center_frequency_hz,
                 "bandwidth_mhz": working_point.bandwidth_mhz}
     reasons = []
+    if frequency_mhz is not None and frequency_mhz * 1e6 != working_point.center_frequency_hz:
+        reasons.append("场景指定的中心频率与工程工作点不一致。")
+    if scope is not None and scope.get("tx_power_dbm") is None:
+        reasons.append("需要唯一的基站小区功率工作点，物理端口功率另从现场读数核对。")
     if scd["band"].casefold() != network.band.casefold():
         reasons.append("工程登记的频段与场景不一致。")
     if working_point.bandwidth_mhz != network.bandwidth_mhz:
@@ -136,14 +157,21 @@ def real_preflight(db, hal, lab, asset, network):
     else:
         evidence["base_station_binding_digest"] = station.binding_digest
         evidence["base_station_connection_id"] = station.instrument_connection_id
-        if station.execution_mode != "real" or not station.instrument_connection_id or station.status == "diagnostic_unbound":
+        if station.execution_mode != "real" or not station.instrument_connection_id or station.status not in ("configured", "not_applicable"):
             reasons.append("该实验室未绑定可用于此次执行的真实基站。")
-    reasons.append("尚无逐段绑定基站输出、仿真器端口和车载设备输入端口的传导校准核验，无法确认实际输入功率。")
+    scope = {**(scope or {}), "center_frequency_hz": working_point.center_frequency_hz,
+             "bandwidth_mhz": working_point.bandwidth_mhz,
+             "base_station_binding_digest": evidence.get("base_station_binding_digest")}
+    calibration = applicability(db, calibration_id, scope, mapping, duration_s=duration_s)
+    evidence["calibration"] = calibration
+    reasons.extend(calibration["reasons"])
     return evidence, reasons
 
 
 def resolve(db: Session, selection: Selection, *, playback_files=None):
     ids = selection.model_dump(mode="json")
+    if selection.calibration_id is None:
+        ids.pop("calibration_id")
     scenario = get_scenario_by_id(selection.scenario_id) or _get_custom_scenario(db, selection.scenario_id)
     if not scenario:
         raise HTTPException(404, "所选场景不存在。")
@@ -194,8 +222,17 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                    "instrument_connection_id": str(asset.instrument_connection_id) if asset.instrument_connection_id else None}
     else:
         reasons.append("请选择已扫描并保存文件摘要的可播放工程。")
+    mapping = []
+    if len(matches) != 1 or not summary or matches[0].get("sha256") != summary["sha256"]:
+        reasons.append("实验室缺少唯一匹配场景版本、方向、拓扑和工程文件摘要的八路登记。")
+    elif topology:
+        mapping, error = _mapping(matches[0].get("port_mapping"), topology)
+        if error:
+            reasons.append(error)
     binding = None
     if mock_registration:
+        if selection.calibration_id:
+            reasons.append("模拟资产不能使用真实传导校准记录。")
         binding = {"execution_mode": "simulated", "mock_only": True}
     elif summary and lab and lab.is_active:
         try:
@@ -207,7 +244,24 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                        "instrument_connection_id": bound.instrument_connection_id,
                        "instrument_model_id": bound.instrument_model_id}
             if bound.execution_mode == "real":
-                evidence, blockers = real_preflight(db, get_hal_service(), lab, asset, scenario.network)
+                # 接线标识和实际电缆资料均参与比对，改接或更换电缆会使旧记录失效。
+                wiring = topology.model_dump(mode="json", include={"base_station", "channel_emulator", "dut", "connections"}) if topology else {}
+                wiring_digest = hashlib.sha256(json.dumps(wiring, sort_keys=True, separators=(",", ":"),
+                                                          ensure_ascii=False).encode()).hexdigest()
+                scope = {"lab_profile_id": str(lab.id), "topology_id": ids["topology_id"],
+                         "topology_sha256": wiring_digest, "scenario_sha256": scenario_sha256,
+                         "asset_sha256": summary["sha256"], "channel_emulator_binding_digest": bound.binding_digest,
+                         "direction": selection.direction,
+                         "base_station_id": topology.base_station.device_id if topology else None,
+                         "channel_emulator_id": topology.channel_emulator.device_id if topology else None,
+                         "dut_id": topology.dut.device_id if topology else None,
+                         "tx_power_dbm": scenario.base_stations[0].tx_power_dbm if len(scenario.base_stations) == 1 else None}
+                steps = scenario.step_configuration
+                net_step = steps.network_config if steps else None
+                evidence, blockers = real_preflight(db, get_hal_service(), lab, asset, scenario.network,
+                                                    calibration_id=selection.calibration_id, scope=scope, mapping=mapping,
+                                                    duration_s=scenario.route.duration_s,
+                                                    frequency_mhz=net_step.frequency_mhz if net_step else None)
                 binding["real_preflight"] = evidence
                 reasons.extend(blockers)
             if (bound.status != "configured" or not asset.instrument_connection_id
@@ -217,19 +271,47 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                 reasons.append("工程所属的仪器型号或连接与实验室绑定不一致。")
         if str(asset.payload["scd_config"].get("mimo", "")).lower() != "4x2":
             reasons.append("工程登记的天线规模与下行四发二收不一致。")
-    mapping = []
-    if len(matches) != 1 or not summary or matches[0].get("sha256") != summary["sha256"]:
-        reasons.append("实验室缺少唯一匹配场景版本、方向、拓扑和工程文件摘要的八路登记。")
-    elif topology:
-        mapping, error = _mapping(matches[0].get("port_mapping"), topology)
-        if error:
-            reasons.append(error)
     return {**ids, "scenario_version": scenario.version, "scenario_sha256": scenario_sha256,
             "scenario_snapshot": scenario_snapshot, "lab_name": lab.name if lab else None,
             "asset": summary, "binding": binding, "port_mapping": mapping, "ready": not reasons, "reasons": reasons}
 
 
-@router.post("/prepare")
+class CalibrationApplicability(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    id: str | None
+    applicable: bool
+    reasons: list[str]
+    scope: dict
+    ports: list[dict]
+    evidence_sha256: str | None = None
+
+
+class ConductedPreflight(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    center_frequency_hz: float | None
+    bandwidth_mhz: float | None
+    calibration: CalibrationApplicability
+
+
+class ConductedBinding(BaseModel):
+    model_config = ConfigDict(extra="allow")
+    execution_mode: str | None
+    real_preflight: ConductedPreflight | None = None
+
+
+class ConductedPreparation(Selection):
+    scenario_sha256: str
+    scenario_version: str
+    scenario_snapshot: dict
+    lab_name: str | None
+    asset: dict | None
+    binding: ConductedBinding | None
+    port_mapping: list[Path]
+    ready: bool
+    reasons: list[str]
+
+
+@router.post("/prepare", response_model=ConductedPreparation, response_model_exclude_unset=True)
 def prepare(selection: Selection, db: Session = Depends(get_db)):
     return resolve(db, selection)
 

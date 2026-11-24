@@ -1,10 +1,14 @@
 import { Stack, Table, Text } from '@mantine/core'
+import { CalibrationDetails } from './ConductedCalibration'
 import type { ConductedPreparation } from '../../types/roadTest'
 
 export function ConductedSetup({ snapshot }: { snapshot: ConductedPreparation }) {
+  const check = snapshot.binding?.real_preflight?.calibration
   return <Stack gap="xs">
     <Text fw={600}>{snapshot.binding?.execution_mode === 'simulated' ? '传导测试（模拟硬件）'
       : snapshot.binding?.execution_mode === 'real' ? '传导测试（已绑定真实信道仿真器）' : '信道仿真器绑定待确认'}</Text>
+    <Text>{snapshot.ready ? '准备检查已通过' : '准备检查尚未通过'}</Text>
+    {snapshot.binding?.execution_mode === 'simulated' && snapshot.asset?.mock_only && <Text>八路输入来自模拟清单，执行要求基站和信道仿真器均使用模拟驱动。模拟测量不计入正式测试结论。</Text>}
     <Text>场景版本 {snapshot.scenario_version} · 实验室 {snapshot.lab_name || '尚未选择'}</Text>
     {snapshot.scenario_sha256 && <Text size="sm" style={{ overflowWrap: 'anywhere' }}>场景内容摘要（SHA-256） {snapshot.scenario_sha256}</Text>}
     {snapshot.asset && <Text style={{ overflowWrap: 'anywhere' }}>{snapshot.asset.mock_only ? '八路模拟输入清单' : '工程'} {snapshot.asset.name} {snapshot.asset.instrument_path}<br/>文件摘要（SHA-256） {snapshot.asset.sha256}</Text>}
@@ -13,6 +17,7 @@ export function ConductedSetup({ snapshot }: { snapshot: ConductedPreparation })
     </Table.Tr></Table.Thead><Table.Tbody>{snapshot.port_mapping.map(p => <Table.Tr key={p.tx + '-' + p.rx}>
       {[p.tx,p.input_port,p.output_port,p.rx].map((v,i) => <Table.Td key={i}>{v}</Table.Td>)}
     </Table.Tr>)}</Table.Tbody></Table>}
-    {Array.isArray(snapshot.reasons) && snapshot.reasons.map(message => <Text c="red" key={message}>{message}</Text>)}
+    {check && <CalibrationDetails check={check} />}
+    {Array.isArray(snapshot.reasons) && snapshot.reasons.filter(message => !check?.reasons.includes(message)).map(message => <Text c="red" key={message}>{message}</Text>)}
   </Stack>
 }

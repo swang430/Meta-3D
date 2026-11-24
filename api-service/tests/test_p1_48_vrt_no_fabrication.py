@@ -85,7 +85,9 @@ def test_empty_sample_path_produces_nothing():
     """
     text = _SRC.read_text(encoding="utf-8")
     # 那三个变量在无样本分支里必须被置空
-    for marker in ("phases = []", "kpi_summary = []", "events = []"):
+    from app.services.road_test.measurement_evidence import throughput_summary
+    assert throughput_summary([]) == []
+    for marker in ("phases = []", "events = []"):
         assert marker in text, f"无样本分支里没有把 {marker.split(' =')[0]} 置空"
     # 而且不许再出现当年那批假相位名
     assert "启动基站" not in text or "原先" in text, (
@@ -292,12 +294,11 @@ def test_undetermined_execution_has_a_consistent_summary():
     """
     import pathlib
 
-    svc = (pathlib.Path(__file__).resolve().parents[1]
-           / "app/services/report_service.py").read_text(encoding="utf-8")
-    assert "'undetermined':" in svc, (
-        "构造 execution_summary 时没记 undetermined —— "
-        "total=1 而 passed/failed/pending 全 0，读者只会以为报告算错了"
-    )
+    from app.services.report_service import _vrt_execution_summary
+    for result in ("incomplete", "undetermined"):
+        summary = _vrt_execution_summary({"overall_result": result})
+        assert summary[result] == 1
+        assert sum(summary[key] for key in ("undetermined", "incomplete", "passed", "failed", "pending")) == 1
 
     pdf = (pathlib.Path(__file__).resolve().parents[1]
            / "app/services/pdf_generator.py").read_text(encoding="utf-8")
@@ -309,13 +310,4 @@ def test_undetermined_execution_has_a_consistent_summary():
         "图例数字没跟宽度同源"
     )
 
-    # ③「未判定」跟「未完成」不许合并计数（外审 P2）——
-    #    被 stop 掉的执行是**根本没测完**，不是「测完了但结果不可信」。
-    assert "'undetermined': 1 if _result == 'undetermined' else 0," in svc, (
-        "undetermined 计数又把 incomplete 算进来了 —— "
-        "没测完的执行会在 PDF 上印成「未判定」"
-    )
-    assert "'incomplete': 1 if _result == 'incomplete' else 0," in svc, (
-        "没有单独记 incomplete —— 被 stop 掉的执行在摘要里无处安放"
-    )
     assert "未完成 (Incomplete)" in pdf, "PDF 摘要没有单列「未完成」"

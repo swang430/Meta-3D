@@ -27,6 +27,7 @@ from uuid import UUID
 
 from sqlalchemy.orm import Session
 
+from app.services.road_test.measurement_evidence import calibrated_setup, confirmed_throughput_scope, measured_item, real_driver_pair
 from app.core.logging_config import current_execution_id
 from app.models.test_plan import TestExecution as TestExecutionORM
 from app.models.road_test import VrtKpiSample
@@ -476,12 +477,12 @@ class VrtExecutionService:
     def record_observation(
         self, db: Session, execution_id: str, *, metric: str, value, driver,
         time_s: float, source_frame_time_s=None, device_playback_time_s=None,
-        sampled_at=None,
+        sampled_at=None, throughput_readback=None, current_throughput=False,
     ) -> RunnerObservation:
         """运行器在一次回读后调用。time_s 是执行经过时间，缺测传 None。"""
         from app.hal.propsim_f64 import RealPropsimF64Driver
         from app.hal.uxm_base_station import RealUxmDriver
-        from app.services.instrument_hal_service import is_mock_driver
+        from app.services.instrument_hal_service import get_hal_service, is_mock_driver
 
         row = (
             db.query(TestExecutionORM).filter_by(id=_resolve_uuid(execution_id))
@@ -497,6 +498,7 @@ class VrtExecutionService:
             if type(value) not in (int, float) or not math.isfinite(value) or value < 0:
                 raise ValueError("吞吐量和播放位置必须是有限的非负数。")
         expected_driver = RealPropsimF64Driver if metric == "playback_position_s" else RealUxmDriver
+        scope = confirmed_throughput_scope(metric, value, throughput_readback, current=current_throughput)
         provenance = "unverified"
         setup = row.vrt_conducted_setup or {}
         binding = setup.get("binding") or {}
@@ -505,14 +507,19 @@ class VrtExecutionService:
         if mock_only and driver is not None and not simulated_driver:
             raise ValueError("模拟专用资产只接受模拟驱动的回读。")
         simulated_run = row.mode == TestMode.DIGITAL_TWIN.value or binding.get("execution_mode") == "simulated"
-        if mock_only or simulated_run or simulated_driver:
+        if (mock_only or simulated_run or simulated_driver
+                or (metric.endswith("_throughput_mbps") and getattr(throughput_readback, "throughput_scope", None) == "simulated")):
             provenance = "simulated"
-        elif binding.get("execution_mode") == "real" and isinstance(driver, expected_driver) and value is not None:
-            provenance = "server_measured"
+        elif calibrated_setup(row.mode, setup) and type(driver) is expected_driver and value is not None:
+            drivers = get_hal_service().drivers
+            role = "channelEmulator" if metric == "playback_position_s" else "baseStation"
+            if (real_driver_pair(drivers) and drivers.get(role) is driver
+                    and (not metric.endswith("_throughput_mbps") or scope is not None)):
+                provenance = "server_measured"
         observation = RunnerObservation(
             metric=metric, value=value, unit=units[metric], time_s=time_s,
             source=type(driver).__name__ if driver is not None else "无设备",
-            provenance=provenance, sampled_at=sampled_at or _utcnow(),
+            provenance=provenance, throughput_scope=scope if provenance == "server_measured" else None, sampled_at=sampled_at or _utcnow(),
             source_frame_time_s=source_frame_time_s, device_playback_time_s=device_playback_time_s,
         )
         db.add(VrtKpiSample(execution_id=row.id, time_s=time_s,
@@ -621,6 +628,7 @@ class VrtExecutionService:
             current_waypoint_index=runtime.get("current_waypoint_index"),
             current_time_s=runtime.get("current_time_s"),
             current_position=runtime.get("current_position"),
+            conducted_stop_pending=orm.mode == TestMode.CONDUCTED.value and "conducted_shutdown_ports" in hw,
             instruments_connected=hw.get("instruments_connected"),
             instrument_status=hw.get("instrument_status"),
             last_error=orm.error_message,
@@ -633,14 +641,12 @@ class VrtExecutionService:
         kpi_samples: List[VrtKpiSample],
     ) -> TestMetrics:
         observations = [s.observation for s in kpi_samples if getattr(s, "observation", None)]
-        if getattr(orm, "mode", None) == "conducted":
-            setup = orm.vrt_conducted_setup or {}
-            binding = setup.get("binding") or {}
-            if binding.get("execution_mode") != "real" or (setup.get("asset") or {}).get("mock_only"):
-                observations = [
-                    {**item, "provenance": "unverified"} if item.get("provenance") == "server_measured" else item
-                    for item in observations
-                ]
+        trusted_setup = calibrated_setup(getattr(orm, "mode", None), getattr(orm, "vrt_conducted_setup", None))
+        observations = [
+            {**item, "provenance": "unverified"}
+            if item.get("provenance") == "server_measured" and not (trusted_setup and measured_item(item))
+            else item for item in observations
+        ]
         kpi_samples = [s for s in kpi_samples if not getattr(s, "observation", None)]
         return TestMetrics(
             observations=observations,

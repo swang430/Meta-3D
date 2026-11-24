@@ -7,6 +7,7 @@
 import apiClient from './client'
 import type {
   ConductedSelection,
+  ConductedCalibrationRecord,
   ConductedPreparation,
   RunnerObservation,
   RoadTestScenario,
@@ -188,6 +189,19 @@ type ResourceOption = { id: string; name: string; mock_only?: boolean }
 export async function fetchConductedOptions() {
   return (await apiClient.get<Record<'labs' | 'topologies' | 'assets', ResourceOption[]>>(
     `${BASE_URL}/conducted/options`)).data
+}
+
+export async function fetchConductedCalibrations() {
+  return (await apiClient.get<ConductedCalibrationRecord[]>(`${BASE_URL}/conducted/calibrations`)).data
+}
+
+export async function fetchConductedCalibration(id: string) {
+  return (await apiClient.get<ConductedCalibrationRecord & { evidence_b64: string; readings_b64: string }>(
+    `${BASE_URL}/conducted/calibrations/${encodeURIComponent(id)}`)).data
+}
+
+export async function registerConductedCalibration(evidence: { report_file: string }) {
+  return (await apiClient.post<ConductedCalibrationRecord>(`${BASE_URL}/conducted/calibrations`, evidence)).data
 }
 
 export async function prepareConducted(selection: ConductedSelection) {

@@ -1,3 +1,5 @@
+import pytest
+
 from tests.test_road_test_executions import _isolated_db
 
 ROOT = "/api/v1/road-test"
@@ -17,7 +19,8 @@ def test_unready_draft_roundtrip(client):
     assert client.get(url).json()["status"] == "idle"
 
 
-def test_verified_selection_and_changed_wiring(client, sample_topology_data, monkeypatch):
+@pytest.mark.parametrize("physical", [False, True])
+def test_verified_selection_and_changed_wiring(client, sample_topology_data, monkeypatch, tmp_path, physical):
     from types import SimpleNamespace
     from uuid import uuid4
 
@@ -29,6 +32,11 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
 
     scenario = client.get(ROOT + "/scenarios").json()[0]
     scenario = client.get(ROOT + "/scenarios/" + scenario["id"]).json()
+    if physical:
+        scenario["network"].update(band="n78", bandwidth_mhz=100)
+        scenario["base_stations"] = scenario["base_stations"][:1]
+        scenario["step_configuration"] = None
+        scenario = client.post(ROOT + "/scenarios", json=scenario).json()
     data = sample_topology_data
     data["base_station"]["tx_ports"] = data["channel_emulator"]["input_ports"] = 4
     for i in (3, 4):
@@ -39,8 +47,11 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
     path = "route.smu"
     connection, model = uuid4(), uuid4()
     monkeypatch.setattr(api, "resolve_channel_emulator_binding", lambda *args: SimpleNamespace(
-        execution_mode="simulated", status="configured", binding_digest="test",
+        execution_mode="real" if physical else "simulated", status="configured", binding_digest="a" * 64,
         instrument_model_id=str(model), instrument_connection_id=str(connection)))
+    if physical:
+        monkeypatch.setattr(api, "resolve_base_station_binding", lambda *_: SimpleNamespace(
+            execution_mode="real", status="configured", binding_digest="b" * 64, instrument_connection_id=str(uuid4())))
     mapping = [dict(tx=tx, rx=rx, input_port=tx, output_port=rx) for tx in range(1, 5) for rx in (1, 2)]
     preview = client.post(ROOT + "/conducted/prepare", json={"scenario_id": scenario["id"]}).json()
     with _TestingSessionLocal() as db:
@@ -60,9 +71,36 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
         choices = client.get(ROOT + "/conducted/options").json()
         for key, field in (("labs", "lab_profile_id"), ("assets", "asset_id"), ("topologies", "topology_id")):
             assert selection[field] in {r["id"] for r in choices[key]}
+        if physical:
+            import json
+            from tests.test_vrt_port_calibration import _site_files
+            monkeypatch.setenv("VRT_CALIBRATION_APPROVED_DIR", str(tmp_path))
+            current = client.post(ROOT + "/conducted/prepare", json=selection).json()
+            assert not current["ready"]
+            scope = current["binding"]["real_preflight"]["calibration"]["scope"]
+            doc, _ = _site_files(tmp_path)
+            doc["scope"] = scope
+            for port in doc["ports"]:
+                port.update(tx_reference_plane=f'{scope["base_station_id"]}/out/{port["tx"]}',
+                            emulator_input_reference_plane=f'{scope["channel_emulator_id"]}/in/{port["input_port"]}',
+                            emulator_output_reference_plane=f'{scope["channel_emulator_id"]}/out/{port["output_port"]}',
+                            dut_reference_plane=f'{scope["dut_id"]}/in/{port["rx"]}')
+            (tmp_path / "report.json").write_text(json.dumps(doc))
+            imported = client.post(ROOT + "/conducted/calibrations", json={"report_file": "report.json"})
+            assert imported.status_code == 201, imported.text
+            selection["calibration_id"] = imported.json()["id"]
         saved = client.post(ROOT + "/conducted/executions", json=selection).json()["config"]["conducted"]
         assert saved["ready"], saved["reasons"]
         assert saved["asset"]["sha256"] == digest and saved["port_mapping"] == mapping
+        if physical:
+            calibration = saved["binding"]["real_preflight"]["calibration"]
+            assert calibration["applicable"] and len(calibration["ports"]) == 8
+            assert {(p["output_port"], p["emulator_output_setting_dbm"], p["emulator_output_dbm"])
+                    for p in calibration["ports"]} == {(1, -17, -9), (2, -18, -10)}
+            client.post(ROOT + "/conducted/calibrations/" + selection["calibration_id"] + "/revoke",
+                        json={"reason": "更换物理电缆"})
+            changed = client.post(ROOT + "/conducted/prepare", json=selection).json()
+            assert not changed["ready"] and "更换物理电缆" in str(changed["reasons"])
         mapping[0]["input_port"] = 2
         lab.extra_metadata = {"vrt_conducted": [dict(registration, port_mapping=mapping)]}
         from sqlalchemy.orm.attributes import flag_modified

@@ -6,6 +6,7 @@ import {
   archiveExecutionReport, controlExecution, fetchConductedOptions, fetchExecutionDetail,
   fetchExecutionObservations, fetchExecutionStatus, prepareConducted, saveConducted,
 } from '../../api/roadTestService'
+import { ConductedCalibration } from './ConductedCalibration'
 import { ConductedSetup } from './ConductedSetup'
 import type { ConductedPreparation, ConductedSelection, ExecutionStatus } from '../../types/roadTest'
 import { TestReportModal } from './TestReportModal'
@@ -43,6 +44,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
     enabled: opened && matches, refetchInterval: opened && matches ? 2000 : false,
   })
   const status = state.data?.status
+  const stopPending = matches && state.data?.conducted_stop_pending === true
   const terminal = status === 'failed' || status === 'completed' || status === 'stopped'
   const samples = useQuery({ queryKey: ['vrt-samples', id], queryFn: () => fetchExecutionObservations(id),
     enabled: opened && matches, refetchInterval: opened && matches && !terminal ? 2000 : false })
@@ -61,12 +63,19 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
   }
   const start = useMutation({ mutationFn: () => controlExecution(id, 'start'), onSettled: refreshExecution })
   const stop = useMutation({ mutationFn: () => controlExecution(id, 'stop'), onSettled: refreshExecution })
+  const mode = snapshot?.binding?.execution_mode
+  const calibration = snapshot?.binding?.real_preflight?.calibration
+  const canStart = snapshot?.ready === true && !!snapshot.asset && (
+    (mode === 'real' && !snapshot.asset.mock_only && calibration?.applicable === true
+      && !!snapshot.calibration_id && calibration.id === snapshot.calibration_id && !!calibration.evidence_sha256)
+    || (mode === 'simulated' && snapshot.asset.mock_only === true)
+  )
   const controlling = start.isPending || stop.isPending
   const archive = useMutation({ mutationFn: () => archiveExecutionReport(id) })
   function retry() {
     if (!snapshot && detail.data) setSelection(previous => ({ ...previous, scenario_id: detail.data!.scenario_id }))
     if (snapshot) setSelection({ scenario_id: snapshot.scenario_id, direction: 'downlink', lab_profile_id: snapshot.lab_profile_id,
-      topology_id: snapshot.topology_id, asset_id: snapshot.asset_id })
+      topology_id: snapshot.topology_id, asset_id: snapshot.asset_id, calibration_id: snapshot.calibration_id })
     const storedKey = 'vrt-conducted:' + (detail.data?.scenario_id || selection.scenario_id)
     if (sessionStorage.getItem(storedKey) === id) sessionStorage.removeItem(storedKey)
     setId(''); archive.reset(); start.reset(); stop.reset(); save.reset()
@@ -80,8 +89,9 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
         disabled={!!id || save.isPending} placeholder={'请选择' + label} clearable searchable
         data={(options.data?.[list] || []).map(x => ({ value: x.id, label: x.name }))}
         onChange={value => setSelection(previous => ({ ...previous, [field]: value }))} />)}
+      {!id && <ConductedCalibration value={selection.calibration_id || null} disabled={save.isPending}
+        onSelect={calibration_id => setSelection(previous => ({ ...previous, calibration_id }))} />}
       {snapshot && <ConductedSetup snapshot={snapshot} />}
-      {snapshot?.ready && !snapshot.asset?.mock_only && <Alert>当前执行器仅开放八路模拟输入。真实设备的载频、带宽、功率和适用校准仍待核对。</Alert>}
       {!id && <Button disabled={!snapshot} loading={save.isPending} onClick={() => save.mutate()}>保存准备记录</Button>}
       {id && <Text>执行编号 {id} · 服务端状态 {status ? labels[status] : '尚未取得'}</Text>}
       {state.data && <Text>服务端进度 {state.data.progress_percent}% · 已用 {state.data.elapsed_time_s} 秒</Text>}
@@ -89,18 +99,24 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
       {state.data?.warnings.map((message, i) => <Text key={i}>{message}</Text>)}
       {error && <Alert color="red" title="请求失败">{typeof reason === 'string' ? reason : error.message}</Alert>}
       {!terminal && <Group>
-        <Button disabled={!id || !snapshot?.ready || !snapshot.asset?.mock_only || snapshot.binding?.execution_mode !== 'simulated' || status !== 'idle' || controlling || state.isError}
+        <Button disabled={!id || !canStart || detail.isError || status !== 'idle' || controlling || state.isError}
           onClick={() => start.mutate()}>启动传导测试</Button>
         <Button disabled>暂停或恢复（设备支持情况未知）</Button>
         {id && matches && <Button disabled={stop.isPending} onClick={() => stop.mutate()}>停止本次执行</Button>}
       </Group>}
       {id && <Button variant="light" onClick={() => { void detail.refetch(); if (matches) void state.refetch() }}>重新读取执行状态</Button>}
       {samples.data && <ExecutionObservations samples={samples.data} />}
+      {terminal && stopPending && <Alert color="orange" title="设备停止状态待复核">
+        <Stack gap="xs">
+          <Text>本次执行已结束，仍有设备端口未确认停止。请对原执行重新请求停止。</Text>
+          <Button loading={stop.isPending} onClick={() => stop.mutate()}>重新停止并核对设备状态</Button>
+        </Stack>
+      </Alert>}
       {terminal && <Group>
         <Button onClick={() => setReport(true)}>查看报告</Button>
         <Button loading={archive.isPending} disabled={archive.isSuccess} onClick={() => archive.mutate()}>归档报告</Button>
       </Group>}
-      {(terminal || status === 'idle' || (missing && !!selection.scenario_id)) && !controlling && <Button variant="light" onClick={retry}>重新准备一次执行</Button>}
+      {(terminal || status === 'idle' || (missing && !!selection.scenario_id)) && !stopPending && !controlling && <Button variant="light" onClick={retry}>重新准备一次执行</Button>}
       {archive.data && <Group><Text>归档报告编号 {archive.data.id}</Text>
         <Button component="a" href={`/api/v1/reports/${encodeURIComponent(archive.data.id)}/download`} download variant="light">下载归档报告</Button>
       </Group>}

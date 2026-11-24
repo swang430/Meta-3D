@@ -1,4 +1,5 @@
 """Database models"""
+from app.models.vrt_port_calibration import VrtPortCalibration
 from app.models.diagnostic_run import DiagnosticRun  # 新采用记录的采集外键目标也须注册。
 from app.models.route_calibration import RouteCalibrationApplication, RouteCalibrationSelection, RouteCalibrationRevocation
 from app.models.calibration import (

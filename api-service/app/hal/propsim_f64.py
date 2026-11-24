@@ -1767,6 +1767,65 @@ class RealPropsimF64Driver(ChannelEmulatorDriver):
         logger.info(f"[F64] 本地场景已加载 (手册序列): {file_path}")
         return True
 
+    async def read_playback_state(self):
+        """Rev10.2 §20.4.3.14：仅读当前播放状态，未加载时也不访问模型参数。"""
+        async with self._scpi_lock:
+            return await self._query_simulation_state()
+
+    async def read_conducted_group_working_points(self):
+        """逐组读代表通道载频与组带宽（User Reference Rev10.2 §20.4.6.2、§20.4.7.7，MHz）。"""
+        async with self._scpi_lock:
+            if self._topology_source() != "readback":
+                return []
+            points = []
+            for group, channel in enumerate(self._group_repr_channels or (), 1):
+                frequency = await self._readback_center_freq(channel)
+                bandwidth = float(await self._query(f"GROUP:BANDWIDTH:GET? {group}"))
+                points.append((frequency, bandwidth))
+            if await self._first_error() is not None:
+                raise RuntimeError("信道组载频或带宽查询被设备拒绝。")
+            return points
+
+    async def read_conducted_output_setting(self, port: int):
+        """Rev10.2 §20.4.5.4/.5：本端口设定的平均电平及允许区间，单位 dBm。"""
+        async with self._scpi_lock:
+            limits = await self._query_float_pair(f"OUTP:LEV:AMP:LIM? {port}")
+            configured = float(await self._query(f"OUTP:LEV:AMP:CH? {port}"))
+            if (not limits or not all(math.isfinite(v) for v in limits) or not limits[0] <= configured <= limits[1]
+                    or not math.isfinite(configured) or await self._first_error() is not None):
+                return None
+            return configured
+
+    async def read_running_output_average_dbm(self, port: int):
+        """Rev10.2 §20.4.5.22：选项 1 返回输出端最近的 0.5 秒平均测量。
+        只在 §20.4.3.14 的 RUNNING 回读内使用，不作为参考面峰值或停发证据。
+        """
+        async with self._scpi_lock:
+            if await self._query_simulation_state() != "RUNNING":
+                return None
+            raw = await self._query_with_retry(f"OUTP:MEAS:RES:GET? {port},1", retries=3, delay_s=0.5)
+            if raw is None or await self._first_error() is not None:
+                return None
+            power = float(raw)
+            return power if math.isfinite(power) else None
+
+    async def set_conducted_output_enabled(self, port: int, enabled: bool) -> bool:
+        """User Reference Rev10.2 §20.4.5.1/.2：指定输出口写 0/1，再独立查询该口。"""
+        async with self._scpi_lock:
+            value = int(enabled)
+            await self._write(f"OUTPUT:ENABLE {port},{value}")
+            actual = (await self._query(f"OUTPUT:ENABLE? {port}")).strip()
+            error = await self._first_error()
+            return actual == str(value) and error is None
+
+    async def close_conducted_project(self) -> bool:
+        """User Reference Rev10.2 §20.4.3.18、.14：关闭工程并确认 CLOSED。"""
+        async with self._scpi_lock:
+            state = await self._close_and_read_state()
+            self._apply_state_truth(state)
+            error = await self._first_error()
+            return state == "CLOSED" and error is None
+
     async def confirm_scenario_loaded(self) -> Dict[str, Any]:
         """用 F64 自身状态回读确认 `.smu` 已加载，而不是只相信脚本缓存。"""
         if self._local_control_reserved or not self._visa_resource:

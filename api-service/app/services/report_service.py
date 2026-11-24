@@ -21,6 +21,7 @@ from app.models.report import (
     ReportFormat,
 )
 from app.models.test_plan import TestPlan, TestCase, TestExecution
+from app.services.road_test.measurement_evidence import calibrated_setup, measured_item, throughput_summary
 from app.services.pdf_generator import PDFGenerator
 from app.services.report_data_collector import ReportDataCollector
 from app.services.mimo_ota.path_loss_application import (
@@ -395,6 +396,21 @@ def _is_sha256_digest(value: Any) -> bool:
     )
 
 
+def _vrt_execution_summary(data):
+    result = data.get("overall_result")
+    return {
+        "total_executions": 1, "pending": 0,
+        **{key: int(result == key) for key in ("passed", "failed", "undetermined", "incomplete")},
+        "pass_rate": data.get("pass_rate"), "total_duration_sec": data.get("duration_s", 0),
+        "first_execution": data.get("start_time"), "last_execution": data.get("end_time"),
+    }
+
+
+def _vrt_statistics(kpis):
+    return {kpi["name"]: {field: kpi.get(field) for field in ("mean", "median", "std", "min", "max", "count")}
+            for kpi in kpis if kpi.get("name")}
+
+
 def report_has_vrt_archive_trust(content_data: Any) -> bool:
     """Accept only the exact server-written JSON integer VRT marker."""
     if not isinstance(content_data, dict):
@@ -402,20 +418,32 @@ def report_has_vrt_archive_trust(content_data: Any) -> bool:
     marker = content_data.get(VRT_ARCHIVE_TRUST_FIELD)
     if type(marker) is not int or marker not in (1, VRT_ARCHIVE_TRUST_SCHEMA_VERSION):
         return False
-    # 旧归档的绑定可能取自客户端配置，重新归档时只能从服务端专列恢复。
-    if marker == 1 and (content_data.get("conducted_setup") is not None or (
-        content_data.get("mode") == "conducted"
-        and any(isinstance(item, dict) and item.get("provenance") == "server_measured"
-                for item in (content_data.get("observations") or []))
-    )):
+    observations = content_data.get("observations") or []
+    if not isinstance(observations, list) or any(not isinstance(item, dict) for item in observations):
         return False
-    # 旧报告可能只凭摘要标记采信整批浏览器样本。已有正式数值须有逐项设备回读。
-    has_measurements = (content_data.get("kpi_summary") or content_data.get("time_series")
-                        or content_data.get("pass_rate") is not None or content_data.get("overall_result") == "passed")
-    if has_measurements:
-        return any(isinstance(item, dict) and item.get("provenance") == "server_measured"
-                   and item.get("value") is not None for item in (content_data.get("observations") or []))
-    return True
+    measured = [item for item in observations if item.get("provenance") == "server_measured"]
+    # 旧归档的绑定可能取自客户端配置，重新归档时只能从服务端专列恢复。
+    if marker == 1 and (content_data.get("conducted_setup") is not None or measured):
+        return False
+    if measured and not (calibrated_setup(content_data.get("mode"), content_data.get("conducted_setup"))
+                         and all(measured_item(item) for item in measured)):
+        return False
+    # 目前没有正式通过阈值；统计只能由同一指标、同一单位的设备回读重算。
+    if content_data.get("pass_rate") is not None or content_data.get("overall_result") == "passed" or content_data.get("time_series"):
+        return False
+    expected = [summary.model_dump() for summary in throughput_summary(measured)]
+    if content_data.get("mode") == "conducted":
+        status = content_data.get("status")
+        result = {"completed": "undetermined", "failed": "failed", "stopped": "incomplete"}.get(status)
+        if not result or content_data.get("overall_result") != result:
+            return False
+        if content_data.get("chart_data"):
+            return False
+        if "statistics" in content_data and content_data["statistics"] != _vrt_statistics(expected):
+            return False
+        if "execution_summary" in content_data and content_data["execution_summary"] != _vrt_execution_summary(content_data):
+            return False
+    return (content_data.get("kpi_summary") or []) == expected
 
 
 def _parse_report_execution_ids(report: TestReport) -> tuple[List[UUID], bool]:
@@ -1054,45 +1082,9 @@ class ReportService:
                 
                 # 1. Execution Summary
                 if 'execution_summary' not in report_data_dict:
-                    _result = report_data_dict.get('overall_result')
-                    report_data_dict['execution_summary'] = {
-                        'total_executions': 1,
-                        'passed': 1 if _result == 'passed' else 0,
-                        'failed': 1 if _result == 'failed' else 0,
-                        'pending': 0,
-                        # P1-48: 四态里的后两态在这里不属于 passed/failed/pending。
-                        # 不显式记的话，PDF 那边 total=1 而三类全 0，
-                        # 分布图会画出满宽灰条、图例却写 Pending(0)，自相矛盾。
-                        #
-                        # ⚠️ 两者**分开记**（外审 P2）：上一版把 incomplete 也算进
-                        # undetermined，被 stop 掉的执行会在 PDF 上印成「未判定」——
-                        # 那等于说「测完了但结果不可信」，而它其实是**根本没测完**。
-                        # 这两个状态前几轮才刚区分开，别在摘要这层又合回去。
-                        'undetermined': 1 if _result == 'undetermined' else 0,
-                        'incomplete': 1 if _result == 'incomplete' else 0,
-                        # 默认值不能是 0 —— 0 会被读成「一条都没过」（P1-48）
-                        'pass_rate': report_data_dict.get('pass_rate'),
-                        'total_duration_sec': report_data_dict.get('duration_s', 0),
-                        'first_execution': report_data_dict.get('start_time'),
-                        'last_execution': report_data_dict.get('end_time')
-                    }
-
-                # 2. Statistics (Map kpi_summary -> statistics)
+                    report_data_dict['execution_summary'] = _vrt_execution_summary(report_data_dict)
                 if 'statistics' not in report_data_dict and 'kpi_summary' in report_data_dict:
-                    stats = {}
-                    for kpi in report_data_dict.get('kpi_summary', []):
-                        name = kpi.get('name')
-                        if name:
-                            stats[name] = {
-                                'metric_name': name,
-                                'mean': kpi.get('mean', 0),
-                                'median': kpi.get('median', kpi.get('mean', 0)),  # Use median if available, fallback to mean
-                                'std': kpi.get('std', 0),
-                                'min': kpi.get('min', 0),
-                                'max': kpi.get('max', 0),
-                                'count': kpi.get('count', 0)
-                            }
-                    report_data_dict['statistics'] = stats
+                    report_data_dict['statistics'] = _vrt_statistics(report_data_dict['kpi_summary'])
 
                 # 3. Chart Data (Map time_series -> chart_data)
                 if 'chart_data' not in report_data_dict and 'time_series' in report_data_dict:
