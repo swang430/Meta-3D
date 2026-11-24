@@ -149,11 +149,9 @@ def resolve(db, selection, *, playback_files=None):
             c=calibration
             expiry=datetime.fromisoformat(c['valid_until'])
             frequency=(scenario.step_configuration.network_config.frequency_mhz if scenario.step_configuration and scenario.step_configuration.network_config else None)
-            if frequency is None:
-                bands = {'n1':2100,'n3':1800,'n7':2600,'n28':700,'n78':3500,'n79':4700,'n257':28000,'n258':26000,'n260':39000,'n261':28000,'B1':2100,'B3':1800,'B7':2600,'B20':800,'B28':700}
-                frequency=bands.get(scenario.network.band)
-                if frequency is None:
-                    raise ValueError('场景缺少可核对的中心频率。')
+            # 频段名称只确定频率范围，不能证明本次中心频率。
+            if type(frequency) not in (int, float) or not math.isfinite(frequency) or frequency <= 0:
+                raise ValueError('场景缺少可核对的中心频率，校准适用性尚未确认。')
             numeric=[c[k] for k in ('frequency_min_mhz','frequency_max_mhz','bandwidth_mhz','quiet_zone_diameter_m')]
             if any(type(v) not in (int,float) or not math.isfinite(v) or v<=0 for v in numeric):
                 raise ValueError('校准范围数值无效。')

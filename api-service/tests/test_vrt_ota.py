@@ -1,18 +1,22 @@
+import asyncio
 import hashlib
 import json
 from datetime import datetime, timedelta, timezone
-from uuid import uuid4
+from uuid import UUID, uuid4
 import pytest
 from tests.test_road_test_executions import _isolated_db, _TestingSessionLocal
 ROOT = '/api/v1/road-test'
 
 
-def setup_ota(client, tmp_path):
+def setup_ota(client, tmp_path, *, frequency_mhz=3500):
     from app.models.chamber import ChamberConfiguration
     from app.models.probe import Probe
     from app.models.lab_profile import LabProfile
     sid = client.get(ROOT+'/scenarios').json()[0]['id']
     scenario = client.get(ROOT+'/scenarios/'+sid).json()
+    scenario['step_configuration'] = {'network_config': {'frequency_mhz': frequency_mhz}}
+    scenario = client.post(ROOT+'/scenarios', json=scenario).json()
+    sid = scenario['id']
     (tmp_path/'route.asc').write_bytes(b'ota waveform')
     raw = json.dumps(dict(mode='ota', direction='downlink', links=[dict(file='route.asc',sha256=hashlib.sha256(b'ota waveform').hexdigest())])).encode()
     (tmp_path/'manifest.json').write_bytes(raw)
@@ -171,3 +175,55 @@ def test_restart_recovers_ota_and_releases_mode_exclusion(client,tmp_path,status
     url=ROOT+'/executions/'+ota['execution_id']
     assert client.post(url+'/control',json={'action':'start'}).is_success
     assert client.post(url+'/control',json={'action':'stop'}).is_success
+
+
+@pytest.mark.parametrize('probe_count', [16, 32])
+def test_ota_many_probes_preserves_loaded_communication_dimensions(client, tmp_path, monkeypatch, probe_count):
+    from app.models.chamber import ChamberConfiguration
+    from app.models.probe import Probe
+    from app.models.lab_profile import LabProfile
+    from app.services.instrument_hal_service import get_hal_service
+    sel, reg, lab_id = setup_ota(client, tmp_path)
+    with _TestingSessionLocal() as db:
+        chamber = db.get(ChamberConfiguration, UUID(sel['chamber_id']))
+        chamber.num_probes = chamber.ce_num_ota_ports = probe_count
+        for n in range(2, probe_count + 1):
+            probe = Probe(chamber_config_id=chamber.id, probe_number=n, ring=3, polarization='H',
+                          position=dict(azimuth=n, elevation=0, radius=4), channel_port=n)
+            db.add(probe); db.flush()
+            reg['probe_mapping'].append(dict(probe_id=str(probe.id), output_port=n,
+                                            polarization='H', position=dict(probe.position)))
+        db.get(LabProfile, lab_id).extra_metadata = {'vrt_ota': [reg]}
+        db.commit()
+    channel = get_hal_service().drivers['channelEmulator']
+    original = channel.load_channel
+    async def load(*args, **kwargs):
+        result = await original(*args, **kwargs)
+        await channel.set_mimo_config(2, 4)
+        return result
+    monkeypatch.setattr(channel, 'load_channel', load)
+    created = client.post(ROOT+'/ota/executions', json=sel).json()
+    assert created['config']['ota']['ready'], created
+    url = ROOT+'/executions/'+created['execution_id']
+    started = client.post(url+'/control', json={'action': 'start'})
+    try:
+        assert started.is_success, started.text
+        assert asyncio.run(channel.get_channel_state())['mimo_config'] == {'tx': 2, 'rx': 4}
+    finally:
+        client.post(url+'/control', json={'action': 'stop'})
+
+
+@pytest.mark.parametrize('frequency', [None, 0, -1, 3600])
+def test_ota_calibration_requires_explicit_covered_center_frequency(client, tmp_path, frequency):
+    from app.models.lab_profile import LabProfile
+    sel, reg, lab_id = setup_ota(client, tmp_path, frequency_mhz=frequency)
+    reg['calibration'].update(frequency_min_mhz=3490, frequency_max_mhz=3510)
+    with _TestingSessionLocal() as db:
+        db.get(LabProfile, lab_id).extra_metadata = {'vrt_ota': [reg]}
+        db.commit()
+    preview = client.post(ROOT+'/ota/prepare', json=sel).json()
+    assert preview['ready'] is False
+    assert any('校准' in reason for reason in preview['reasons'])
+    created = client.post(ROOT+'/ota/executions', json=sel).json()
+    assert created['config']['ota']['ready'] is False
+    assert client.post(ROOT+'/executions/'+created['execution_id']+'/control', json={'action': 'start'}).status_code == 409

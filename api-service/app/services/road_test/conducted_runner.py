@@ -105,8 +105,11 @@ async def _mock_playback(snapshot, staged_directory, station, channel, run):
             raise RuntimeError("模拟基站未确认连接。")
         if run.stop.is_set():
             raise PlaybackStopRequested("启动播放前已收到停止请求。")
-        rx_ports = len(snapshot.get("probe_mapping", [])) or 2
-        if not await channel.set_mimo_config(4, rx_ports) or not await channel.start_emulation():
+        # 传导准备已核验四发二收的八路组合；OTA 探头是暗室输出映射，
+        # 不能作为通信天线数。OTA 保留工程加载后的通信配置。
+        if snapshot["asset"]["kind"] == "asc_manifest" and not await channel.set_mimo_config(4, 2):
+            raise RuntimeError("模拟驱动拒绝传导通信配置。")
+        if not await channel.start_emulation():
             raise RuntimeError("模拟驱动拒绝启动播放。")
         yield
     finally:
