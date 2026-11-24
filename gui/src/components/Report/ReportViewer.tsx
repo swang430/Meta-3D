@@ -1,3 +1,4 @@
+import { OtaSetup } from '../VirtualRoadTest/OtaSetup'
 import { ConductedSetup } from '../VirtualRoadTest/ConductedSetup'
 import { ExecutionObservations } from '../VirtualRoadTest/ExecutionObservations'
 /**
@@ -139,8 +140,9 @@ export function ReportViewer({ reportId, contentData, title }: Props) {
         <ModelInput input={content.simulation_input} />
         {content.simulation_timeline && <SimulationTimeline timeline={content.simulation_timeline} />}
       </Alert>}
+      {content.ota_setup && <OtaSetup snapshot={content.ota_setup} />}
       {content.conducted_setup && <ConductedSetup snapshot={content.conducted_setup} />}
-      {(content.execution?.mode === 'conducted' || content.conducted_setup) &&
+      {(content.execution?.mode === 'conducted' || content.conducted_setup || content.execution?.mode === 'ota' || content.ota_setup) &&
         <ExecutionObservations samples={content.observations || []} />}
     <ReportContent
       content={content}

@@ -42,6 +42,7 @@ import {
 import ScenarioLibrary from './ScenarioLibrary'
 import { OTAMapper } from '../OTAMapper'
 import { DigitalTwinExecutionModal } from './DigitalTwinExecutionModal'
+import { OtaExecutionModal } from './OtaExecutionModal'
 import { ConductedExecutionModal } from './ConductedExecutionModal'
 import { TestReportModal } from './TestReportModal'
 import { TestMode } from '../../types/roadTest'
@@ -71,7 +72,7 @@ const TEST_MODES = [
     label: 'OTA测试',
     icon: IconRadar2,
     color: 'orange',
-    description: 'MPAC暗室，精度最高',
+    description: '核对暗室与探头；真实场测单列待验',
   },
 ]
 
@@ -134,7 +135,7 @@ export function VirtualRoadTest() {
         </Tabs.List>
 
         <Tabs.Panel value="library" pt="md">
-          <ScenarioLibrary testMode={selectedMode} />
+          <ScenarioLibrary key={selectedMode} testMode={selectedMode} />
         </Tabs.Panel>
 
         <Tabs.Panel value="history" pt="md">
@@ -173,6 +174,7 @@ const MODE_LABELS: Record<TestMode, string> = {
  */
 function ExecutionHistory() {
   const [twin, setTwin] = useState<{ id: string; name: string } | null>(null)
+  const [ota, setOta] = useState<{ id: string; name: string } | null>(null)
   const [conducted, setConducted] = useState<{ id: string; name: string } | null>(null)
   const [reportModalOpen, setReportModalOpen] = useState(false)
   const [selectedExecutionId, setSelectedExecutionId] = useState<string | null>(null)
@@ -270,7 +272,7 @@ function ExecutionHistory() {
                   </Table.Td>
                   <Table.Td>
                     <Badge size="sm" variant="light">
-                      {MODE_LABELS[exec.mode] || exec.mode}{exec.mode === 'conducted' && (exec.conducted?.binding?.execution_mode === 'simulated'
+                      {MODE_LABELS[exec.mode] || exec.mode}{exec.mode === 'ota' && '（模拟硬件，现场待验）'}{exec.mode === 'conducted' && (exec.conducted?.binding?.execution_mode === 'simulated'
                         ? '（模拟硬件）' : exec.conducted?.binding?.execution_mode === 'real' ? '（真实设备绑定）' : '（绑定待确认）')}
                     </Badge>
                   </Table.Td>
@@ -301,6 +303,7 @@ function ExecutionHistory() {
                   <Table.Td>
                     <Group gap="xs">
                       {exec.mode === 'digital_twin' && <Button size="xs" onClick={() => setTwin({ id: exec.execution_id, name: exec.scenario_name })}>回看模拟执行</Button>}
+                      {exec.mode === 'ota' && <Button size="xs" variant="light" onClick={() => setOta({ id: exec.execution_id, name: exec.scenario_name })}>查看执行</Button>}
                       {exec.mode === 'conducted' && <Button size="xs" variant="light" onClick={() =>
                         setConducted({ id: exec.execution_id, name: exec.scenario_name })}>查看执行</Button>}
                       {isCompleted && (
@@ -326,6 +329,8 @@ function ExecutionHistory() {
       {twin && <DigitalTwinExecutionModal initialId={twin.id} scenario={twin} onClose={() => setTwin(null)} />}
       {conducted && <ConductedExecutionModal key={conducted.id} opened initialId={conducted.id}
         scenario={{ id: '', name: conducted.name }} onClose={() => setConducted(null)} />}
+      {ota && <OtaExecutionModal key={ota.id} opened initialId={ota.id}
+        scenario={{ id: '', name: ota.name }} onClose={() => setOta(null)} />}
       {/* Report Modal */}
       {selectedExecutionId && (
         <TestReportModal

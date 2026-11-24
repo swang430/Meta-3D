@@ -218,6 +218,7 @@ class ExecutionControl(BaseModel):
 class ExecutionSummary(BaseModel):
     """Execution summary for list view"""
     conducted: Optional[Dict[str, Any]] = None
+    ota: Optional[Dict[str, Any]] = None
     execution_id: str
     mode: TestMode
     status: ExecutionStatus
@@ -403,6 +404,7 @@ class ExecutionReport(BaseModel):
     simulation_input: Optional[dict] = None
     simulation_timeline: Optional[TwinTimeline] = None
     conducted_setup: Optional[Dict[str, Any]] = None
+    ota_setup: Optional[Dict[str, Any]] = None
     observations: List[RunnerObservation] = Field(default_factory=list)
     execution_id: str = Field(description="Execution ID")
     scenario_name: str = Field(description="Scenario name")
@@ -510,6 +512,9 @@ class ConductedAvailability(ModeAvailability):
 
 
 class OtaAvailability(ModeAvailability):
+    simulated_available: bool
+    real_available: bool
+    requires_preparation: bool
     requires_mpac: bool
 
 

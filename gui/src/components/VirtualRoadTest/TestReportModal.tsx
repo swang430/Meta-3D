@@ -27,6 +27,7 @@ function convertToReportContentData(report: ExecutionReport): ReportContentData 
     simulation_input: report.simulation_input,
     simulation_timeline: report.simulation_timeline,
     conducted_setup: report.conducted_setup,
+    ota_setup: report.ota_setup,
     observations: report.observations,
     execution_id: report.execution_id,
     title: report.scenario_name,

@@ -82,6 +82,7 @@ class VrtExecutionService:
         created_by: str = "api",
         twin_input: Optional[Dict[str, Any]] = None,
         conducted_setup: Optional[Dict[str, Any]] = None,
+        ota_setup: Optional[Dict[str, Any]] = None,
     ) -> TestExecutionORM:
         """Create a new VRT execution row in IDLE state."""
         row = TestExecutionORM(
@@ -92,6 +93,7 @@ class VrtExecutionService:
             config=config or {},
             vrt_twin_input=twin_input,
             vrt_conducted_setup=conducted_setup,
+            vrt_ota_setup=ota_setup,
             notes=notes,
             executed_by=created_by,
             vrt_runtime_status={"progress_percent": 0.0, "elapsed_time_s": 0.0},
@@ -519,7 +521,7 @@ class VrtExecutionService:
         expected_driver = RealPropsimF64Driver if metric == "playback_position_s" else RealUxmDriver
         scope = confirmed_throughput_scope(metric, value, throughput_readback, current=current_throughput)
         provenance = "unverified"
-        setup = row.vrt_conducted_setup or {}
+        setup = (row.vrt_ota_setup if row.mode == "ota" else row.vrt_conducted_setup) or {}
         binding = setup.get("binding") or {}
         mock_only = (setup.get("asset") or {}).get("mock_only") is True or binding.get("mock_only") is True
         simulated_driver = is_mock_driver(driver)
@@ -611,6 +613,9 @@ class VrtExecutionService:
         config.pop("digital_twin", None)
         if orm.mode == "digital_twin" and orm.vrt_twin_input:
             config["digital_twin"] = orm.vrt_twin_input
+        config.pop("ota", None)
+        if orm.mode == "ota" and orm.vrt_ota_setup is not None:
+            config["ota"] = orm.vrt_ota_setup
         config.pop("conducted", None)
         if orm.mode == "conducted" and orm.vrt_conducted_setup is not None:
             config["conducted"] = orm.vrt_conducted_setup
@@ -719,6 +724,7 @@ class VrtExecutionService:
         runtime = orm.vrt_runtime_status or {}
         return ExecutionSummary(
             conducted=orm.vrt_conducted_setup if orm.mode == "conducted" else None,
+            ota=orm.vrt_ota_setup if orm.mode == "ota" else None,
             execution_id=str(orm.id),
             mode=TestMode(orm.mode) if orm.mode else TestMode.DIGITAL_TWIN,
             status=ExecutionStatus(orm.status),

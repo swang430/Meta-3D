@@ -6,6 +6,8 @@
 
 import apiClient from './client'
 import type {
+  OtaSelection,
+  OtaPreparation,
   ConductedSelection,
   ConductedCalibrationRecord,
   ConductedPreparation,
@@ -173,6 +175,9 @@ export interface SystemCapabilities {
     requires_topology: boolean
   }
   ota: {
+    simulated_available: boolean
+    real_available: boolean
+    requires_preparation: boolean
     available: boolean
     max_bandwidth_mhz: number
     max_mimo_order: string
@@ -234,4 +239,17 @@ export async function fetchTwinComparison(id: string, conductedId: string) {
   return (await apiClient.get<TwinComparison>(`${BASE_URL}/executions/${id}/comparison`, {
     params: { conducted_execution_id: conductedId },
   })).data
+}
+
+
+export async function fetchOtaOptions() {
+  return (await apiClient.get<Record<'labs' | 'chambers' | 'assets', ResourceOption[]>>(`${BASE_URL}/ota/options`)).data
+}
+
+export async function prepareOta(selection: OtaSelection) {
+  return (await apiClient.post<OtaPreparation>(`${BASE_URL}/ota/prepare`, selection)).data
+}
+
+export async function saveOta(selection: OtaSelection) {
+  return (await apiClient.post<TestExecution>(`${BASE_URL}/ota/executions`, selection)).data
 }
