@@ -30,6 +30,7 @@ import {
   type SMUProjectSyncPreview,
 } from '../../api/channelAssetService'
 import { PortEvidencePanel } from './PortEvidencePanel'
+import { MpdbPurposePanel } from './MpdbPurposePanel'
 import { MpdbBudgetPanel } from './MpdbBudgetPanel'
 import { MpdbComparisonPanel } from './MpdbComparisonPanel'
 import { MpdbProjectPanel } from './MpdbProjectPanel'
@@ -330,9 +331,11 @@ export function ChannelWorkbench() {
             { value: 'files', label: '查看工程文件' },
             { value: 'clusters', label: '核验聚簇结果' },
             { value: 'ports', label: '端口成员与时延分析' },
+            { value: 'purpose', label: '用途与独立留出评估' },
             { value: 'budget', label: '抽头预算比较' },
             { value: 'comparison', label: '比较原始数据与传导工程' },
           ]} />
+          <div hidden={reviewTask !== 'purpose'}><MpdbPurposePanel /></div>
           <div hidden={reviewTask !== 'budget'}><MpdbBudgetPanel /></div>
           <div hidden={reviewTask !== 'comparison'}><MpdbComparisonPanel /></div>
           <div hidden={reviewTask !== 'files'}><ImtBundlePanel /></div>

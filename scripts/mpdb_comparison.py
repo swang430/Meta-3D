@@ -58,7 +58,7 @@ def read_asc(path, carrier):
     return np.stack(data, axis=1), common, manifest
 
 
-def analyze(args):
+def prepare_comparison(args):
     from mimo_ota_simulator.channel_comparison import (
         frequency_response, member_taps, compare_responses, power_summary, recover_asc_frames)
     if not (math.isfinite(args.bandwidth_mhz) and 0 < args.bandwidth_mhz <= 10000
@@ -132,6 +132,15 @@ def analyze(args):
             recovered = recover_asc_frames(data, rate_hz=header['rate_hz'], source_frame_count=len(frames))
         except ValueError as exc:
             raise ValueError(f'无法唯一恢复源帧：{exc}') from exc
+    return dict(digest=digest,ports=ports,rays=rays,frames=frames,labels=labels,recovered=recovered,source_meta=source_meta)
+
+
+def analyze(args, *, prepared=None):
+    from mimo_ota_simulator.channel_comparison import frequency_response, member_taps, compare_responses, power_summary
+    data=prepare_comparison(args) if prepared is None else prepared
+    digest,ports,rays,frames,labels,recovered,source_meta=(data[key] for key in ('digest','ports','rays','frames','labels','recovered','source_meta'))
+    keys=list(zip(ports['frame_id'],ports['tx_ant'],ports['rx_ant'],strict=True))
+    lids=ports['link_id']
     offsets = np.arange(-(args.points//2),args.points//2+1)*(args.bandwidth_mhz*1e6/(args.points-1))
     lookup = dict(zip(keys,lids,strict=True))
     output = []
@@ -140,6 +149,7 @@ def analyze(args):
         raw, grouped, asc, right = [], [], [], []
         powers = {'raw':[], 'members':[], 'asc':[]}
         used = []
+        asc_used = []
         for p,(tx,rx) in enumerate(PORTS):
             ident = lookup[frame,tx,rx]
             mask = (rays['link_id'] == ident) & (abs(rays['h']) > 0)
@@ -150,6 +160,7 @@ def analyze(args):
             taps = member_taps(h, delay, lab, tap_budget=24)
             used.append(int(taps['used_taps']))
             ah, ad = recovered['coefficients'][index,p], recovered['delays_s'][index,p]
+            asc_used.append(int(np.count_nonzero(abs(ah)>0)))
             raw.append(frequency_response(h,delay,offsets))
             grouped.append(frequency_response(taps['coefficients'],taps['delays_s'],offsets))
             asc.append(frequency_response(ah,ad,offsets))
@@ -164,7 +175,7 @@ def analyze(args):
         center = args.points//2
         denom = abs(raw[:,center])
         result.update(frame=frame, sample_position=float(recovered['sample_positions'][index]),
-            asc_time_s=recovered['times_s'][index],used_taps=used,power=powers,
+            asc_time_s=recovered['times_s'][index],used_taps=used,asc_used_taps=asc_used,power=powers,
             left_right_relative_difference=float(np.max(abs(asc-right))/amplitude) if amplitude else None,
             carrier_max_relative_error=float(np.max(abs(asc[:,center]-raw[:,center])/denom)) if (denom>0).all() else None)
         output.append(result)

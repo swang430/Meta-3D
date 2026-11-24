@@ -573,3 +573,118 @@ def download_budget_comparison(comparison_id: UUID, artifact: Literal['report.zi
         data = package.read('points.csv')
     return Response(data,media_type='text/csv; charset=utf-8',headers={
         'Content-Disposition':f'attachment; filename="channel-budget-comparison-{comparison_id}.csv"'})
+
+
+@router.post('/purpose-evaluations')
+def evaluate_channel_purpose(
+    archive: UploadFile = File(...), members: UploadFile = File(...),
+    asc: UploadFile | None = File(None),
+    bandwidth_mhz: float = Form(100, gt=0, le=10000, allow_inf_nan=False),
+    points: int = Form(41, ge=3, le=257),
+    amplitude_floor: float = Form(1e-8, gt=0, allow_inf_nan=False),
+    selection_start: int = Form(0, ge=0), selection_end: int = Form(25, ge=0),
+    holdout_start: int = Form(26, ge=0), holdout_end: int | None = Form(None, ge=0, description="省略时采用实际源帧与上传ASC实际恢复范围的共同末帧；显式不可用帧会被拒绝。"),
+    objective: Literal['phase','matrix'] = Form('phase'),
+    mode: Literal['conducted','ota'] = Form('conducted'),
+    tap_budget_max: int = Form(31, ge=1, le=31),
+    matrix_nmse_p95_max: float = Form(1., ge=0, allow_inf_nan=False),
+    phase_error_p95_max_deg: float = Form(60., ge=0, le=180, allow_inf_nan=False),
+    manual_candidate: Literal['independent-24','independent-26','independent-31','shared-24','shared-26','shared-31','existing-asc'] | None = Form(None),
+):
+    """比较已有文件，返回摘要及独立下载，不修改工程或设备。"""
+    if manual_candidate == 'existing-asc' and asc is None:
+        raise HTTPException(422, '人工选择已有 ASC 时须上传真实 ASC 压缩包。')
+    if not (selection_start <= selection_end < holdout_start and holdout_start == selection_end + 1 and (holdout_end is None or holdout_start <= holdout_end)):
+        raise HTTPException(422, '选择集和留出集须为相邻、不重叠的连续源帧区间。')
+    if points % 2 == 0:
+        raise HTTPException(422, '频点数须为包含中心频点的奇数。')
+    script = ROOT / 'scripts/mpdb_purpose.py'
+    if not script.is_file():
+        raise HTTPException(503, '当前部署缺少候选方案目的评估组件。')
+    base = storage()
+    for old in base.glob('purpose-evaluation-*.zip'):
+        if old.stat().st_mtime < time.time() - 86400:
+            old.unlink(missing_ok=True)
+    ident = uuid4()
+    with tempfile.TemporaryDirectory(prefix='mpdb-purpose-evaluation-') as tmp:
+        stage = Path(tmp)
+        command = [sys.executable, str(script), '--output', str(stage/'result'),
+            '--bandwidth-mhz', str(bandwidth_mhz), '--points', str(points),
+            '--amplitude-floor', str(amplitude_floor)]
+        for key, value in dict(selection_start=selection_start,selection_end=selection_end,
+                holdout_start=holdout_start,holdout_end=holdout_end,objective=objective,
+                mode=mode,tap_budget_max=tap_budget_max,matrix_nmse_p95_max=matrix_nmse_p95_max,
+                phase_error_p95_max_deg=phase_error_p95_max_deg).items():
+            if value is not None:
+                command.extend(['--'+key.replace('_','-'),str(value)])
+        if manual_candidate is not None:
+            command.extend(['--manual-candidate',manual_candidate])
+        try:
+            for upload, option, limit in ((archive,'archive',LIMIT),(members,'members',32*1024**2)):
+                local = stage/option
+                with local.open('xb') as dest:
+                    while chunk := upload.file.read(1024**2):
+                        if dest.tell()+len(chunk) > limit:
+                            raise ValueError(f'{option} 文件超过允许大小')
+                        dest.write(chunk)
+                command.extend(['--'+option,str(local)])
+            if asc is not None:
+                local = stage/'asc'
+                with local.open('xb') as dest:
+                    while chunk := asc.file.read(1024**2):
+                        if dest.tell()+len(chunk)>LIMIT:
+                            raise ValueError('ASC 文件超过允许大小')
+                        dest.write(chunk)
+                command.extend(['--asc',str(local)])
+            env = worker_environment(ROOT)
+            env.pop('HYPERRT_PATH',None)
+            python = ROOT/'channel-engine-service/.venv/bin/python'
+            if python.is_file():
+                command[0] = str(python)
+            code,message = run_worker(command,env)
+            if code:
+                logger.warning('候选方案目的评估失败：%s',message[-2000:])
+                raise HTTPException(422,'比较未完成，请检查同源成员表、原始 MPDB 和源帧依据。')
+            result = stage/'result'
+            summary = json.loads((result/'summary.json').read_text(encoding='utf-8'))
+            if (summary.get('schema') != 'mpdb-purpose/1' or summary.get('formal_verdict') is not None
+                    or summary.get('alignment_status') != 'unverified'
+                    or summary.get('hardware_verified') is not False):
+                raise HTTPException(502,'比较程序返回的分析状态无效。')
+            package = stage/'package.zip'
+            with zipfile.ZipFile(package,'w',compression=zipfile.ZIP_DEFLATED) as z:
+                for name in ('summary.json','report.json','points.csv'):
+                    z.write(result/name,name)
+            # 只有所有结果文件齐全才发布；打包与移动在同一存储目录完成。
+            destination = base/f'purpose-evaluation-{ident}.zip'
+            with tempfile.NamedTemporaryFile(dir=base,delete=False) as target:
+                unpublished = Path(target.name)
+                try:
+                    with package.open('rb') as source:
+                        shutil.copyfileobj(source,target)
+                    target.flush()
+                    unpublished.replace(destination)
+                finally:
+                    unpublished.unlink(missing_ok=True)
+            prefix = f'/api/v1/channel-assets/mpdb-projects/purpose-evaluations/{ident}'
+            return dict(**summary,comparison_id=str(ident),download_url=prefix+'/report.zip',points_url=prefix+'/points.csv')
+        except subprocess.TimeoutExpired as exc:
+            raise HTTPException(504,'候选方案目的评估超时。') from exc
+        except (OSError,ValueError,KeyError,zipfile.BadZipFile) as exc:
+            raise HTTPException(422,f'无法完成文件比较：{exc}') from exc
+
+
+
+
+@router.get('/purpose-evaluations/{comparison_id}/{artifact}')
+def download_purpose_evaluation(comparison_id: UUID, artifact: Literal['report.zip','points.csv']):
+    from fastapi.responses import Response
+    path = storage()/f'purpose-evaluation-{comparison_id}.zip'
+    if not path.is_file() or path.stat().st_mtime < time.time()-86400:
+        raise HTTPException(404,'比较结果不存在或已过期，请重新比较。')
+    if artifact == 'report.zip':
+        return FileResponse(path,filename=f'channel-purpose-evaluation-{comparison_id}.zip',media_type='application/zip')
+    with zipfile.ZipFile(path) as package:
+        data = package.read('points.csv')
+    return Response(data,media_type='text/csv; charset=utf-8',headers={
+        'Content-Disposition':f'attachment; filename="channel-purpose-evaluation-{comparison_id}.csv"'})
