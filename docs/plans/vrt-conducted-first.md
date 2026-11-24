@@ -30,11 +30,11 @@
 
 ### GUI、执行器与隔离验收共用的传导接口
 
-前缀为 `/api/v1/road-test/conducted`。GET `/options` 返回 labs、topologies、assets（各项含 id、name）。POST `/prepare` 与 POST `/executions` 共用请求字段 scenario_id、lab_profile_id、topology_id、asset_id、direction。预览直接返回快照，建档返回执行详情，快照在 config.conducted；历史列表行的 conducted 保存同一份快照。ready 仅说明准备检查结果。启动仍通过执行控制接口并重新解析。
+`GET /api/v1/road-test/conducted/options` 返回实验室、接线方案和工程列表。准备预览与保存分别使用 `POST /api/v1/road-test/conducted/prepare` 和 `POST /api/v1/road-test/conducted/executions`。两者接收 scenario_id、lab_profile_id、topology_id、asset_id 和 direction，选择现场校准记录时同时提交 calibration_id。预览直接返回快照，建档返回执行详情，快照在 config.conducted；历史列表行的 conducted 保存同一份快照。ready 仅说明准备检查结果。启动仍通过执行控制接口并重新解析。
 
 仅模拟资产取自所选 LabProfile.extra_metadata.vrt_conducted 数组的一条登记。每条包含 scenario_id、scenario_version、scenario_sha256、direction、topology_id、asset_id、sha256、port_mapping；模拟登记额外包含 kind="asc_manifest"、manifest_dir（服务端工程目录）、name。sha256 为 manifest.json 原始字节的 SHA-256，asset_id 为 UUID。port_mapping 各行含从 1 开始的 tx、rx、input_port、output_port。asset.links 保留清单中从 0 开始的 tx、rx、file、sha256。每次解析重验八条文件摘要。asset.mock_only=true、asset.mock_ref 是模拟驱动标识；该分支没有 instrument_path，不能交给真实驱动。
 
-### 本批八路输入与真实执行的差距
+### 首次八路模拟验收时的工程与现场证据（PR #613）
 
 本批 RT-IMT-2030 下行工程清单 SHA-256 为 `2b085a23350abd08b84476bdf6f7874dc034e6a8eb980aa2ca393324488c1f2e`，每路文件头登记 6188 个响应、24 个抽头。清单明确标记 `smu_built=false` 和 `hardware_verified=false`。
 
@@ -55,3 +55,19 @@
 登记时从准备接口取实际场景内容摘要。保存时冻结该场景，启动按冻结时长播放，历史和报告也从同一份场景取数。场景内容被修改后，旧登记须重新核对；已经执行的记录仍使用原场景。
 
 场景冻结复测：执行 `e23dbf3b-6f65-4238-aaeb-b6947437101b` 的归档 `f535b110-054a-4001-ad31-ea3baa8336cb` 含 111 条模拟采样。下载 PDF 后逐项核对场景、清单、八个 ASC 共十个摘要。修改场景名称后，从改名后的场景卡重新打开，执行窗口仍显示保存时的名称。
+
+## P1-87 现场验收记录要求
+
+下行四发二收的八路 ASC 用于复核源数据。进场时另行登记 F64 可播放工程、实际设备编号、四个基站发射口、F64 输入与输出口、两个车载接收口，以及电缆的实接关系。《PROPSIM User Reference》Rev 10.2 §20.4.3.1 规定按文件名装载，§20.4.3.14 可查播放状态。工程内容须核对部署记录及实际部署文件摘要，播放状态无法证明文件内容。
+
+现场在登记的频率、带宽和发射功率下，复核 F64 输入和车载接收口的功率余量。车载接收口须覆盖四路同时播放的情况。分别记录设备允许上限、测量不确定度、测量参考面和校准有效期。
+
+正常结束、中途取消和设备拒绝操作均须留存两台设备各自的停机回读。目标小区关闭只能证明该小区状态，F64 停止播放只能证明播放状态。现场须另行记录实际端口功率及其测量依据，方可签认物理停发。
+
+### 逐端口传导校准的登记与复查
+
+现场计量人员将已审核的报告及对应仪器导出数据保存在独立的服务端目录。通过环境变量 `VRT_CALIBRATION_APPROVED_DIR` 配置其绝对路径。目录由实验室审核人员管理，API 服务按只读方式访问，普通用户上传目录不应作为审核目录。该目录是报告获准采用的来源；导入表单只接受文件名。未配置目录、原件被移除或内容变化时，启动前检查会给出原因。已有固定路线的仿真器至参考天线采集不能证明基站物理口输出。
+
+- `POST /api/v1/road-test/conducted/calibrations` 接收 `{"report_file":"现场报告.json"}`。列表和详情支持 GET，详情保留报告及原始 CSV 的 Base64 字节。`POST /{id}/revoke` 接收 reason。重复导入同一原件保留原记录和撤销状态。
+- 先用准备接口查看 `binding.real_preflight.calibration.scope`。其中 tx_power_dbm 是场景的小区配置工作点。实际基站各物理口读数在 ports 的 base_station_output_dbm；仿真器实际输出在 emulator_output_dbm。两段电缆损耗 tx_cable_loss_db 和 rx_cable_loss_db 分别按各自输出参考面与输入参考面的实测功率差计算。
+- 报告采用 `app/services/road_test/port_calibration.py` 中的 CalibrationEvidence 格式。八行 CSV 列为 tx、rx、input_port、output_port、source、meter_serial、base_station_output_dbm、emulator_input_dbm、emulator_output_dbm、dut_input_dbm。报告绑定 CSV 原始字节的 SHA-256、仪器序列号、计量证书、有效期、各端口参考面、允许输入上限及其出处。车载端实测峰值须对应八路同时播放。安全余量等于允许输入上限减去实测峰值和测量不确定度。

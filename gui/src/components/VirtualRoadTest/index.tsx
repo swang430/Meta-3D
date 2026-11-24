@@ -268,7 +268,8 @@ function ExecutionHistory() {
                   </Table.Td>
                   <Table.Td>
                     <Badge size="sm" variant="light">
-                      {MODE_LABELS[exec.mode] || exec.mode}{exec.conducted?.binding?.execution_mode === 'simulated' && '（模拟硬件）'}
+                      {MODE_LABELS[exec.mode] || exec.mode}{exec.mode === 'conducted' && (exec.conducted?.binding?.execution_mode === 'simulated'
+                        ? '（模拟硬件）' : exec.conducted?.binding?.execution_mode === 'real' ? '（真实设备绑定）' : '（绑定待确认）')}
                     </Badge>
                   </Table.Td>
                   <Table.Td>

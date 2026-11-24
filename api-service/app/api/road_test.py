@@ -41,7 +41,6 @@ from app.schemas.road_test import (
     ExecutionStatus,
     # Report models
     ExecutionReport,
-    KPISummary,
     ScenarioInfo,
     NetworkInfo,
     EnvironmentInfo,
@@ -57,11 +56,13 @@ from app.schemas.road_test import (
     CustomConfigHighlight,
     TrajectoryPoint,
 )
+from app.schemas.road_test.execution import ExecutionArchiveReceipt, ExecutionControlReceipt, RoadTestAvailability
 from app.data.scenario_library import (
     get_all_scenarios,
     get_scenario_by_id,
     get_scenarios_by_category,
 )
+from app.services.road_test.measurement_evidence import real_driver_pair, throughput_summary
 from app.services.road_test.vrt_service import vrt_service
 from app.services.road_test.network_topology_service import network_topology_service
 from app.services.road_test.vrt_execution_service import vrt_execution_service
@@ -611,7 +612,8 @@ async def get_execution(execution_id: str, db: Session = Depends(get_db)):
     return vrt_execution_service.to_test_execution(row)
 
 
-@router.post("/executions/{execution_id}/control")
+@router.post("/executions/{execution_id}/control", response_model=ExecutionControlReceipt,
+             responses={409: {"description": "本次执行的设备、校准或状态不允许该操作。"}})
 async def control_execution(
     execution_id: str,
     control: ExecutionControl,
@@ -831,7 +833,8 @@ async def get_execution_report(execution_id: str, db: Session = Depends(get_db))
         raise HTTPException(status_code=500, detail=f"Report generation failed: {str(e)}")
 
 
-@router.post("/executions/{execution_id}/archive-report")
+@router.post("/executions/{execution_id}/archive-report", response_model=ExecutionArchiveReceipt,
+             responses={409: {"description": "执行尚未到达终态，或尚未取得可信的归档文件。"}})
 async def archive_execution_report(execution_id: str, db: Session = Depends(get_db)):
     """Create/reuse the server-owned archive for a terminal VRT execution."""
     row = vrt_execution_service.get(db, execution_id)
@@ -1218,13 +1221,7 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
     try:
         phases = []
         events = []
-        kpi_summary = []
-        for metric, name in (("dl_throughput_mbps", "下行吞吐量"), ("ul_throughput_mbps", "上行吞吐量")):
-            values = [item.value for item in observations if item.metric == metric
-                      and item.provenance == "server_measured" and item.value is not None]
-            if values:
-                kpi_summary.append(KPISummary(name=name, unit="Mbps", mean=sum(values) / len(values),
-                                              min=min(values), max=max(values), passed=None))
+        kpi_summary = throughput_summary([item.model_dump() for item in observations])
 
     except Exception as e:
         logger.error(f"Error generating metrics/phases: {e}")
@@ -1461,7 +1458,7 @@ async def stream_execution_metrics(websocket: WebSocket, execution_id: str):
 
 # ===== System Information =====
 
-@router.get("/capabilities")
+@router.get("/capabilities", response_model=RoadTestAvailability)
 async def get_capabilities():
     """
     Get system capabilities for each test mode
@@ -1470,6 +1467,7 @@ async def get_capabilities():
 
     drivers = get_hal_service().drivers
     simulated = all(is_mock_driver(drivers.get(key)) for key in ("baseStation", "channelEmulator"))
+    real = real_driver_pair(drivers)
     return {
         "digital_twin": {
             "available": True,
@@ -1478,9 +1476,9 @@ async def get_capabilities():
             "acceleration_factor": 10.0
         },
         "conducted": {
-            "available": simulated,
+            "available": simulated or real,
             "simulated_available": simulated,
-            "real_available": False,
+            "real_available": real,
             "requires_preparation": True,
             "max_bandwidth_mhz": None,
             "max_mimo_order": "4x2",

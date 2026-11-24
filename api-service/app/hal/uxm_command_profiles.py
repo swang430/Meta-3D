@@ -469,6 +469,9 @@ class UxmLteNrIratProfile(UxmTestApp):
     # === Live-verified at CAICT 2026-05-13 ===
     CELL_BAND = "BSE:CONFig:NR5G:{cell}:BAND"
     CELL_DL_ARFCN = "BSE:CONFig:NR5G:{cell}:DL:ARFCN"
+    # UXM5G_SCPI_01_NR_Core.md → NR Cell > Config > Downlink > NR DL Frequency。
+    # 单位 Hz；Custom FR 下此值是独立配置的实际下行中频。
+    CELL_DL_FREQUENCY = "BSE:CONFig:NR5G:{cell}:DL:FREQuency"
     CELL_DL_BW = "BSE:CONFig:NR5G:{cell}:DL:BW"        # value form "BW40"
     CELL_UL_BW = "BSE:CONFig:NR5G:{cell}:UL:BW"
     # 2026-08-07 现场手工拼写探针已在 LTE_NR_IRAT / CELL1 上直接回读成功；

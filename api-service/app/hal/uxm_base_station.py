@@ -1550,6 +1550,26 @@ class RealUxmDriver(BaseStationDriver):
             center_arfcn=self._arfcn, bandwidth_mhz=self._bandwidth_mhz
         )
 
+    @property
+    def conducted_cell(self):
+        """当前驱动控制的小区编号，用于停发交接核对。"""
+        return self._cell_id
+
+    async def read_conducted_working_point(self):
+        """UXM5G NR Cell > Config > Downlink：NR DL Frequency、DL Channel Bandwidth、
+        DL Reference Signal Power Per Bandwidth。功率为本小区整带宽设置（dBm）。
+        """
+        if not getattr(self._cmds, "SUPPORTS_CONFIG_READBACK", False):
+            return None
+        values = []
+        for field in ("CELL_DL_FREQUENCY", "CELL_DL_BW", "DL_POWER_CHANNEL"):
+            command = self._cmd(field, cell=self._cell_id)
+            if not command:
+                return None
+            values.append(self._query(command.rstrip("?") + "?").strip())
+        frequency, bandwidth, power = values
+        return float(frequency), float(bandwidth.upper().removeprefix("BW")), float(power)
+
     async def read_live_frequency_identity(self):
         """开关 1 (base_station_config_mode=inherit) 的知情继承核对源: 从仪器**读回**
         当前实际 ARFCN + BW 构造频率标识 — 不是下发记录 (继承模式没下发,

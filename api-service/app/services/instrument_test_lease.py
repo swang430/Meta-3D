@@ -446,6 +446,7 @@ class InstrumentTestLease:
         self,
         purpose: str,
         *,
+        recovery_execution_id: str | None = None,
         measurement_attempt_id: str | None = None,
         control_f64: bool = True,
         control_uxm: bool = True,
@@ -565,6 +566,10 @@ class InstrumentTestLease:
             # 校验必须与 HAL reload 共用同一把协调锁，并且排在 cache clear / Remote
             # acquire 之前。否则“保存了新地址、活动 driver 仍是旧地址”的窗口会先
             # 对旧仪表产生控制 I/O，随后才报配置冲突。
+            from app.services.execution_exclusion_guard import conducted_stop_blocker
+            blocker = conducted_stop_blocker(recovery_execution_id)
+            if blocker and (control_f64 or control_uxm):
+                raise InstrumentTestLeaseError(blocker)
             hal = self._hal()
             # Resolve and validate the common base-station control contract
             # before cache clearing or any instrument I/O.
@@ -763,6 +768,10 @@ class InstrumentTestLease:
     async def hal_mutation_guard(self) -> AsyncIterator[None]:
         """让 HAL reload/mode switch 与测试取得/使用/释放完整串行。"""
         async with self._coordinated():
+            from app.services.execution_exclusion_guard import conducted_stop_blocker
+            blocker = conducted_stop_blocker()
+            if blocker:
+                raise InstrumentTestLeaseError(blocker)
             yield
 
     @asynccontextmanager
@@ -814,6 +823,7 @@ def active_base_station_lease_identity() -> ActiveBaseStationLeaseIdentity | Non
 async def instrument_test_lease(
     purpose: str,
     *,
+    recovery_execution_id: str | None = None,
     measurement_attempt_id: str | None = None,
     control_f64: bool = True,
     control_uxm: bool = True,
@@ -823,6 +833,7 @@ async def instrument_test_lease(
 ) -> AsyncIterator[InstrumentTestLeaseOutcome]:
     async with _LEASE.hold(
         purpose,
+        recovery_execution_id=recovery_execution_id,
         measurement_attempt_id=measurement_attempt_id,
         control_f64=control_f64,
         control_uxm=control_uxm,

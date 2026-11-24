@@ -8,7 +8,7 @@ def test_real_preflight_separates_bindings_working_point_and_calibration(monkeyp
     from app.api import road_test_conducted as api
     from tests.test_smu_project_inventory import _OLD_SCD
 
-    station = SimpleNamespace(status="not_applicable", execution_mode=station_mode,
+    station = SimpleNamespace(status="configured", execution_mode=station_mode,
                               binding_digest="station", instrument_connection_id="uxm")
     monkeypatch.setattr(api, "resolve_base_station_binding", lambda *_: station)
     asset = SimpleNamespace(payload={"scd_config": dict(_OLD_SCD, bandwidth_mhz=100)})

@@ -985,7 +985,49 @@ export interface CustomConfigHighlight {
   description?: string
 }
 
+export interface ConductedCalibrationRecord {
+  report_number: string
+  report_file: string
+  id: string
+  issuer: string
+  revoked_at: string | null
+  revocation_reason: string | null
+  evidence_sha256: string
+}
+
+export interface PortMeasurement {
+  peak_dbm: number
+  uncertainty_db: number
+  max_safe_input_dbm: number
+}
+
+export interface ConductedCalibrationCheck {
+  id: string | null
+  evidence_sha256?: string | null
+  applicable: boolean
+  report_number?: string
+  issuer?: string
+  required_margin_db?: number
+  valid_until?: string
+  reasons: string[]
+  ports: {
+    tx: number
+    rx: number
+    input_port: number
+    output_port: number
+    base_station_output_dbm: number
+    emulator_output_dbm: number
+    tx_cable_loss_db: number
+    rx_cable_loss_db: number
+    emulator_input: PortMeasurement
+    dut_input: PortMeasurement
+    emulator_input_margin_db: number
+    dut_input_margin_db: number
+  }[]
+}
+
 export interface ConductedSelection {
+  calibration_id?: string | null
   scenario_id: string
   direction: 'downlink'
   lab_profile_id: string | null
@@ -994,7 +1036,7 @@ export interface ConductedSelection {
 }
 
 export interface ConductedPreparation extends ConductedSelection {
-  binding?: { execution_mode: 'simulated' | 'real' | null } | null
+  binding?: { execution_mode: 'simulated' | 'real' | null; real_preflight?: { calibration?: ConductedCalibrationCheck } | null } | null
   scenario_version: string
   scenario_sha256?: string
   scenario_snapshot?: { name: string }

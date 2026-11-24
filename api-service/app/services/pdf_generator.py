@@ -1040,13 +1040,10 @@ class PDFGenerator:
         for metric_name, stats in statistics.items():
             if isinstance(stats, dict):
                 table_rows.append([
-                    Paragraph(metric_name, self.styles['BodyText']),
-                    f"{stats.get('mean', 0):.3f}",
-                    f"{stats.get('median', 0):.3f}",
-                    f"{stats.get('std', 0):.3f}",
-                    f"{stats.get('min', 0):.3f}",
-                    f"{stats.get('max', 0):.3f}",
-                    str(stats.get('count', 0)),
+                    Paragraph(escape(metric_name), self.styles['BodyText']),
+                    *(f"{stats[key]:.3f}" if stats.get(key) is not None else "未提供"
+                      for key in ("mean", "median", "std", "min", "max")),
+                    str(stats["count"]) if stats.get("count") is not None else "未提供",
                 ])
 
         if len(table_rows) > 1:
@@ -1351,6 +1348,11 @@ class PDFGenerator:
                 details.append(f"场景内容摘要（SHA-256）：{setup['scenario_sha256']}")
             if asset.get("mock_only") or binding.get("mock_only"):
                 details.append("本次绑定仅供模拟驱动使用。")
+            calibration = (binding.get("real_preflight") or {}).get("calibration") or {}
+            if calibration.get("id"):
+                details.append(f"本次执行的传导校准记录：{calibration['id']}")
+                if calibration.get("evidence_sha256"):
+                    details.append(f"校准原文摘要（SHA-256）：{calibration['evidence_sha256']}")
             if asset.get("sha256"):
                 details.append(f"资产摘要（SHA-256）：{asset['sha256']}")
             for link in asset.get("links", []):
@@ -1392,7 +1394,7 @@ class PDFGenerator:
             mean = kpi.get('mean', 0)
             min_val = kpi.get('min', 0)
             max_val = kpi.get('max', 0)
-            target = kpi.get('target', 'N/A')
+            target = kpi.get('target')
             passed = kpi.get('passed', None)
 
             # Format result with color indicator
@@ -1411,7 +1413,7 @@ class PDFGenerator:
                 Paragraph(f'{mean:.2f}' if isinstance(mean, (int, float)) else str(mean), self.styles['BodyText']),
                 Paragraph(f'{min_val:.2f}' if isinstance(min_val, (int, float)) else str(min_val), self.styles['BodyText']),
                 Paragraph(f'{max_val:.2f}' if isinstance(max_val, (int, float)) else str(max_val), self.styles['BodyText']),
-                Paragraph(str(target), self.styles['BodyText']),
+                Paragraph(str(target) if target is not None else '未设定', self.styles['BodyText']),
                 Paragraph(f'<font color="{result_color}">{result_text}</font>', self.styles['BodyText'])
             ])
 

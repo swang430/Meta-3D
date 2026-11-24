@@ -121,6 +121,7 @@ class RunnerObservation(BaseModel):
     value: str | float | bool | None
     unit: str
     source: str
+    throughput_scope: Optional[Literal["pcell"]] = Field(None, description="仅在指定小区吞吐量回读有效时记录。")
     provenance: Literal["server_measured", "simulated", "unverified"]
     sampled_at: UTCDateTime
     time_s: float = Field(ge=0, allow_inf_nan=False)
@@ -461,3 +462,43 @@ class StreamSubscription(BaseModel):
         None,
         description="Desired sample rate (will be limited by executor)"
     )
+
+
+class ModeAvailability(BaseModel):
+    available: bool
+    max_bandwidth_mhz: Optional[float]
+    max_mimo_order: str
+
+
+class DigitalTwinAvailability(ModeAvailability):
+    acceleration_factor: float
+
+
+class ConductedAvailability(ModeAvailability):
+    simulated_available: bool
+    real_available: bool = Field(description="当前驱动组合支持真机分支；具体场景须通过准备和启动复核。")
+    requires_preparation: bool
+    requires_topology: bool
+
+
+class OtaAvailability(ModeAvailability):
+    requires_mpac: bool
+
+
+class RoadTestAvailability(BaseModel):
+    digital_twin: DigitalTwinAvailability
+    conducted: ConductedAvailability
+    ota: OtaAvailability
+
+
+
+class ExecutionControlReceipt(BaseModel):
+    status: Literal["success"]
+    execution_id: str
+    action: str
+
+
+class ExecutionArchiveReceipt(BaseModel):
+    id: str
+    title: str
+    status: str
