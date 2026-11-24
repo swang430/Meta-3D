@@ -1,12 +1,11 @@
 export const candidates=['independent-24','independent-26','independent-31','shared-24','shared-26','shared-31']
 export const ascCandidates=[...candidates,'existing-asc']
-export type PurposeParameters={selection_start:number;selection_end:number;holdout_start:number;holdout_end:number;tap_budget_max:number;matrix_nmse_p95_max:number;phase_error_p95_max_deg:number;objective:string;mode:string;manual_candidate:string}
+export type PurposeParameters={selection_start:number;selection_end:number;holdout_start:number;holdout_end:number|null;tap_budget_max:number;matrix_nmse_p95_max:number;phase_error_p95_max_deg:number;objective:string;mode:string;manual_candidate:string}
 export function purposeParameters(p:PurposeParameters,hasAsc=false) {
- const frames=[p.selection_start,p.selection_end,p.holdout_start,p.holdout_end]
- if(!frames.every(v=>Number.isInteger(v)&&v>=0)||p.selection_start>p.selection_end||p.holdout_start>p.holdout_end||p.holdout_start!==p.selection_end+1) throw Error('选择集与留出集须为非空、相邻且不重叠的连续源帧区间。')
+ const frames=[p.selection_start,p.selection_end,p.holdout_start,...(p.holdout_end===null?[]:[p.holdout_end])]
+ if(!frames.every(v=>Number.isInteger(v)&&v>=0)||p.selection_start>p.selection_end||(p.holdout_end!==null&&p.holdout_start>p.holdout_end)||p.holdout_start!==p.selection_end+1) throw Error('选择集与留出集须为非空、相邻且不重叠的连续源帧区间。')
  if(!Number.isInteger(p.tap_budget_max)||p.tap_budget_max<1||p.tap_budget_max>31||!Number.isFinite(p.matrix_nmse_p95_max)||p.matrix_nmse_p95_max<0||!Number.isFinite(p.phase_error_p95_max_deg)||p.phase_error_p95_max_deg<0||p.phase_error_p95_max_deg>180) throw Error('预算须为 1–31 的整数，矩阵阈值须非负，相位阈值须在 0–180 度。')
  if(!['phase','matrix'].includes(p.objective)||!['conducted','ota'].includes(p.mode)||(p.manual_candidate!==''&&!(hasAsc?ascCandidates:candidates).includes(p.manual_candidate))) throw Error('目标、模式或人工候选无效。')
- if(hasAsc&&p.holdout_end>36) throw Error('上传 ASC 后共同范围为源帧 0–36，留出末帧不得超过 36。')
  return p
 }
 export type Worst={frame_id:number;offset_hz:number;value:number;port_pair?:number[]}
@@ -22,7 +21,12 @@ export function readPurpose(raw:unknown):Purpose {
  const sameKeys=(value:unknown)=>!!value&&typeof value==='object'&&Object.keys(value).sort().join(',')===[...expected].sort().join(',')
  if(!sameKeys(e.candidate_parameters)||!sameKeys(e.selection)) throw Error('结果须完整包含六个固定成员候选，上传 ASC 时须包含第七个候选。')
  if(hasAsc&&(typeof e.provenance.asc_sha256!=='string'||!/^[a-f0-9]{64}$/.test(e.provenance.asc_sha256))) throw Error('ASC 候选缺少来源哈希。')
- if(!Array.isArray(r.common_frame_ids)||r.common_frame_ids.length!==(hasAsc?37:38)||r.common_frame_ids.some((v,i)=>v!==i)) throw Error('共同源帧范围不符合六或七候选约定。')
+ const validIds=(v:unknown):v is number[]=>Array.isArray(v)&&v.every((f,i)=>Number.isInteger(f)&&f>=0&&(i===0||f>v[i-1]))
+ const reference=e.provenance.existing_asc_reference as {applicable_frames?:unknown}|undefined
+ if(!validIds(r.frame_ids)||r.frame_ids.length!==r.source_frame_count||!validIds(r.common_frame_ids)||(hasAsc&&!validIds(reference?.applicable_frames))) throw Error('来源或共同源帧范围无效。')
+ const recovered=hasAsc?new Set(reference!.applicable_frames as number[]):new Set(r.frame_ids)
+ const common=r.frame_ids.filter(f=>recovered.has(f))
+ if(common.length!==r.common_frame_ids.length||common.some((f,i)=>f!==(r.common_frame_ids as number[])[i])) throw Error('共同源帧须符合实际来源与 ASC 恢复帧的交集。')
  if(![e.plan_fingerprint,e.selection_fingerprint,e.selection_input_fingerprint].every(s=>typeof s==='string'&&/^[a-f0-9]{64}$/.test(s))) throw Error('结果缺少冻结指纹。')
  if(r.status==='no_candidate_meets_constraints'&&(e.selected_candidate!==null||e.holdout!==null)) throw Error('无候选达标时不得展示建议或建议留出。')
  if(r.status==='selected'&&(!expected.includes(e.selected_candidate??'')||!e.holdout)) throw Error('建议结果缺少独立留出。')

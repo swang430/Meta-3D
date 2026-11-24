@@ -93,7 +93,7 @@ def test_optional_asc_is_forwarded_and_uses_common_frame_default(tmp_path,monkey
     def worker(command,env):
         assert '--asc' in command
         assert Path(command[command.index('--asc')+1]).read_bytes()==b'actual asc upload'
-        assert command[command.index('--holdout-end')+1]=='36'
+        assert '--holdout-end' not in command
         assert command[command.index('--manual-candidate')+1]=='existing-asc'
         return 1,'intentional rejection after forwarding'
     monkeypatch.setattr(projects,'run_worker',worker)
@@ -119,6 +119,12 @@ def test_real_seven_candidates_survive_both_downloads(tmp_path,monkeypatch):
         response=client.post(URL,files={'archive':('source.zip',a),'members':('members.npz',m),'asc':('asc.zip',existing)},data={'manual_candidate':'existing-asc'})
     assert response.status_code==200,response.text
     summary=response.json()
+    for stats in (summary['evaluation']['selection']['existing-asc'],summary['evaluation']['manual_holdout']):
+        changes=stats['changes_against_same_strategy_baseline']
+        for metric in ('matrix_nmse','phase_error_deg'):
+            evidence=changes.get(metric) if changes is not None else None
+            assert evidence['status']=='unverified' and evidence['coverage']==0
+            assert all(evidence[key] is None for key in ('improved','worse','unchanged'))
     package=client.get(summary['download_url'].removeprefix('/api/v1'))
     points=client.get(summary['points_url'].removeprefix('/api/v1'))
     assert package.status_code==points.status_code==200
@@ -138,3 +144,35 @@ def test_real_seven_candidates_survive_both_downloads(tmp_path,monkeypatch):
     assert report['excluded_source_frame_review']['existing_asc'] is None
     assert report['evaluation']['provenance']['existing_asc_reference']['unmatched_frames']==[37]
     assert len(rows)==173840
+
+
+@pytest.mark.parametrize('with_asc',[False,True])
+def test_real_two_frame_upload_resolves_omitted_end_from_files(tmp_path,monkeypatch,with_asc):
+    import contextlib,sys
+    root=Path(__file__).resolve().parents[2]
+    if str(root) not in sys.path:sys.path.insert(0,str(root))
+    from scripts.tests.test_mpdb_purpose import two_frame_input
+    engine=Path('/private/tmp/p2110-ce')
+    if not (engine/'mimo_ota_simulator/candidate_evaluation.py').is_file():pytest.skip('缺本片CE')
+    args=two_frame_input(tmp_path,with_asc)
+    monkeypatch.setenv('CHANNEL_ENGINE_PATH',str(engine))
+    monkeypatch.setattr(projects,'storage',lambda:tmp_path)
+    for end in (None,2):
+        with contextlib.ExitStack() as stack:
+            files={key:(key,stack.enter_context(path.open('rb'))) for key,path in [('archive',args.archive),('members',args.members)]+([('asc',args.asc)] if with_asc else [])}
+            settings=dict(selection_start=0,selection_end=0,holdout_start=1,points=3,manual_candidate=args.manual_candidate)
+            if end is not None:settings['holdout_end']=end
+            response=client.post(URL,files=files,data=settings)
+        if end is not None:
+            assert response.status_code==422,response.text
+            assert len(list(tmp_path.glob('purpose-evaluation-*.zip')))==1
+            continue
+        assert response.status_code==200,response.text
+        body=response.json()
+        assert body['evaluation']['plan']['holdout_frames']==[1]
+        assert body['common_frame_ids']==[0,1]
+        assert len(body['evaluation']['candidate_parameters'])==(7 if with_asc else 6)
+        if with_asc:
+            assert body['evaluation']['provenance']['existing_asc_reference']['applicable_frames']==[0,1]
+            assert body['evaluation']['provenance']['existing_asc_reference']['unmatched_frames']==[]
+        assert client.get(body['points_url'].removeprefix('/api/v1')).status_code==200

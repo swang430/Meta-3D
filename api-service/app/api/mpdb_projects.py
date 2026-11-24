@@ -583,7 +583,7 @@ def evaluate_channel_purpose(
     points: int = Form(41, ge=3, le=257),
     amplitude_floor: float = Form(1e-8, gt=0, allow_inf_nan=False),
     selection_start: int = Form(0, ge=0), selection_end: int = Form(25, ge=0),
-    holdout_start: int = Form(26, ge=0), holdout_end: int | None = Form(None, ge=0),
+    holdout_start: int = Form(26, ge=0), holdout_end: int | None = Form(None, ge=0, description="省略时采用实际源帧与上传ASC实际恢复范围的共同末帧；显式不可用帧会被拒绝。"),
     objective: Literal['phase','matrix'] = Form('phase'),
     mode: Literal['conducted','ota'] = Form('conducted'),
     tap_budget_max: int = Form(31, ge=1, le=31),
@@ -592,11 +592,9 @@ def evaluate_channel_purpose(
     manual_candidate: Literal['independent-24','independent-26','independent-31','shared-24','shared-26','shared-31','existing-asc'] | None = Form(None),
 ):
     """比较已有文件，返回摘要及独立下载，不修改工程或设备。"""
-    if holdout_end is None:
-        holdout_end = 36 if asc is not None else 37
     if manual_candidate == 'existing-asc' and asc is None:
         raise HTTPException(422, '人工选择已有 ASC 时须上传真实 ASC 压缩包。')
-    if not (selection_start <= selection_end < holdout_start <= holdout_end and holdout_start == selection_end + 1):
+    if not (selection_start <= selection_end < holdout_start and holdout_start == selection_end + 1 and (holdout_end is None or holdout_start <= holdout_end)):
         raise HTTPException(422, '选择集和留出集须为相邻、不重叠的连续源帧区间。')
     if points % 2 == 0:
         raise HTTPException(422, '频点数须为包含中心频点的奇数。')
@@ -617,7 +615,8 @@ def evaluate_channel_purpose(
                 holdout_start=holdout_start,holdout_end=holdout_end,objective=objective,
                 mode=mode,tap_budget_max=tap_budget_max,matrix_nmse_p95_max=matrix_nmse_p95_max,
                 phase_error_p95_max_deg=phase_error_p95_max_deg).items():
-            command.extend(['--'+key.replace('_','-'),str(value)])
+            if value is not None:
+                command.extend(['--'+key.replace('_','-'),str(value)])
         if manual_candidate is not None:
             command.extend(['--manual-candidate',manual_candidate])
         try:

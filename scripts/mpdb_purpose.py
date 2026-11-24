@@ -15,27 +15,35 @@ def analyze(args):
     # 先固定来源和源帧范围，后计算；全帧扫描只提供描述性逐点数据。
     digest,ports,_=budget.read_downlink(args.archive)
     members_digest=hashlib.sha256(args.members.read_bytes()).hexdigest()
-    holdout_end=args.holdout_end if args.holdout_end is not None else (36 if getattr(args,'asc',None) is not None else 37)
+    available=set(map(int,ports['frame_id']))
+    common=sorted(available)
+    asc_report=None
+    prepared=None
+    if getattr(args,'asc',None) is not None:
+        if __package__:
+            from .mpdb_comparison import analyze as compare_existing, prepare_comparison
+        else:
+            from mpdb_comparison import analyze as compare_existing, prepare_comparison
+        # 只解析来源与帧对齐，不计算误差；据此固定范围后才开始候选计算。
+        prepared=prepare_comparison(args)
+        recovered=prepared['recovered']
+        aligned=prepared['frames'][:len(recovered['sample_positions'])]
+        common=sorted(available & set(aligned))
+    if not common:
+        raise ValueError('没有可用于选择和留出复核的共同源帧')
+    holdout_end=args.holdout_end if args.holdout_end is not None else common[-1]
     plan=EvaluationPlan(source_sha256=digest,members_sha256=members_digest,
         selection_frames=tuple(range(args.selection_start,args.selection_end+1)),
         holdout_frames=tuple(range(args.holdout_start,holdout_end+1)),
         budget_limit=args.tap_budget_max,matrix_p95_limit=args.matrix_nmse_p95_max,
         phase_p95_limit_deg=args.phase_error_p95_max_deg,objective=args.objective,mode=args.mode)
-    available=set(map(int,ports['frame_id']))
-    if not set(plan.selection_frames+plan.holdout_frames)<=available:
+    planned=set(plan.selection_frames+plan.holdout_frames)
+    if not planned<=available:
         raise ValueError('选择集或留出集包含不存在的原始源帧')
-    asc_report=None
-    if getattr(args,'asc',None) is not None:
-        if __package__:
-            from .mpdb_comparison import analyze as compare_existing
-        else:
-            from mpdb_comparison import analyze as compare_existing
-        asc_report=compare_existing(args)
-        common=sorted(available & {f['frame'] for f in asc_report['frames']})
-        if not set(plan.selection_frames+plan.holdout_frames)<=set(common):
-            raise ValueError('ASC 候选只支持共同可对齐源帧；真实样本请设置留出26–36，37帧单列。')
-    else:
-        common=sorted(available)
+    if not planned<=set(common):
+        raise ValueError('ASC 候选的指定范围包含无法共同对齐的源帧，请调整范围；缺证帧另行查看。')
+    if prepared is not None:
+        asc_report=compare_existing(args,prepared=prepared)
     scan=budget.analyze(args)
     candidates={}
     for strategy in budget.STRATEGIES:
@@ -60,7 +68,7 @@ def analyze(args):
             declared_applicable_frames=[f for f in scan['frame_ids'] if f<=36] if known_source else [],unmatched_frames=[f for f in scan['frame_ids'] if f==37] if known_source else scan['frame_ids'],status='unverified',known_sample_source_matched=known_source))
     if asc_report is not None:
         candidates['existing-asc']=dict(strategy='existing_asc',requested_taps=24,frames={
-            f['frame']:dict(used_taps=f['asc_used_taps'],metrics=dict(methods=dict(candidate=f['methods']['Lauraycs'])),delta={})
+            f['frame']:dict(used_taps=f['asc_used_taps'],metrics={**f,'methods':dict(candidate=f['methods']['Lauraycs'])})
             for f in asc_report['frames']})
         provenance['asc_sha256']=asc_report['source']['asc']
         provenance['existing_asc_reference']=dict(status='unverified',applicable_frames=common,

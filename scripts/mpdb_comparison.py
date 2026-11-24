@@ -58,7 +58,7 @@ def read_asc(path, carrier):
     return np.stack(data, axis=1), common, manifest
 
 
-def analyze(args):
+def prepare_comparison(args):
     from mimo_ota_simulator.channel_comparison import (
         frequency_response, member_taps, compare_responses, power_summary, recover_asc_frames)
     if not (math.isfinite(args.bandwidth_mhz) and 0 < args.bandwidth_mhz <= 10000
@@ -132,6 +132,15 @@ def analyze(args):
             recovered = recover_asc_frames(data, rate_hz=header['rate_hz'], source_frame_count=len(frames))
         except ValueError as exc:
             raise ValueError(f'无法唯一恢复源帧：{exc}') from exc
+    return dict(digest=digest,ports=ports,rays=rays,frames=frames,labels=labels,recovered=recovered,source_meta=source_meta)
+
+
+def analyze(args, *, prepared=None):
+    from mimo_ota_simulator.channel_comparison import frequency_response, member_taps, compare_responses, power_summary
+    data=prepare_comparison(args) if prepared is None else prepared
+    digest,ports,rays,frames,labels,recovered,source_meta=(data[key] for key in ('digest','ports','rays','frames','labels','recovered','source_meta'))
+    keys=list(zip(ports['frame_id'],ports['tx_ant'],ports['rx_ant'],strict=True))
+    lids=ports['link_id']
     offsets = np.arange(-(args.points//2),args.points//2+1)*(args.bandwidth_mhz*1e6/(args.points-1))
     lookup = dict(zip(keys,lids,strict=True))
     output = []
