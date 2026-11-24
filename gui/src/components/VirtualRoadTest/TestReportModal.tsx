@@ -24,6 +24,8 @@ interface Props {
 function convertToReportContentData(report: ExecutionReport): ReportContentData {
   return {
     source: 'road_test',
+    simulation_input: report.simulation_input,
+    simulation_timeline: report.simulation_timeline,
     conducted_setup: report.conducted_setup,
     observations: report.observations,
     execution_id: report.execution_id,

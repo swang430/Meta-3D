@@ -1059,7 +1059,23 @@ export interface RunnerObservation {
   device_playback_time_s: number | null
 }
 
+export interface TwinTimeline {
+  provenance: string
+  formal_kpi: boolean
+  points: { source_frame_time_s: number; dl_throughput_mbps: number; provenance: string }[]
+}
+
+export interface TwinInput {
+  acceleration_factor: number
+  model_version: string
+  model_parameters: { seed: number }
+  scenario_sha256: string
+  scenario_snapshot: Record<string, unknown>
+}
+
 export interface ExecutionReport {
+  simulation_timeline?: TwinTimeline | null
+  simulation_input?: TwinInput | null
   conducted_setup?: ConductedPreparation | null
   observations?: RunnerObservation[]
   execution_id: string

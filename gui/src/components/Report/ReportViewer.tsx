@@ -7,6 +7,7 @@ import { ExecutionObservations } from '../VirtualRoadTest/ExecutionObservations'
  * Can be used by both test plan management and virtual road test modules
  */
 
+import { ModelInput, SimulationTimeline } from '../VirtualRoadTest/SimulationTimeline'
 import { CopyableId } from '../CopyableId'
 import { useQuery } from '@tanstack/react-query'
 import {
@@ -133,6 +134,11 @@ export function ReportViewer({ reportId, contentData, title }: Props) {
     <Stack>
       {!contentData && report && !report.road_test_execution_id && report.test_execution_ids?.length === 1 &&
         <CalibrationAuditExport key={report.id} reportId={report.id} />}
+      {(content.mode === 'digital_twin' || content.execution?.mode === 'digital_twin') && <Alert title="数字孪生模拟报告">
+        模拟样本不参与正式性能判定。
+        <ModelInput input={content.simulation_input} />
+        {content.simulation_timeline && <SimulationTimeline timeline={content.simulation_timeline} />}
+      </Alert>}
       {content.conducted_setup && <ConductedSetup snapshot={content.conducted_setup} />}
       {(content.execution?.mode === 'conducted' || content.conducted_setup) &&
         <ExecutionObservations samples={content.observations || []} />}

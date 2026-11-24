@@ -80,6 +80,7 @@ class VrtExecutionService:
         config: Optional[Dict[str, Any]] = None,
         notes: Optional[str] = None,
         created_by: str = "api",
+        twin_input: Optional[Dict[str, Any]] = None,
         conducted_setup: Optional[Dict[str, Any]] = None,
     ) -> TestExecutionORM:
         """Create a new VRT execution row in IDLE state."""
@@ -89,6 +90,7 @@ class VrtExecutionService:
             scenario_id=scenario_id,
             topology_id=topology_id,
             config=config or {},
+            vrt_twin_input=twin_input,
             vrt_conducted_setup=conducted_setup,
             notes=notes,
             executed_by=created_by,
@@ -172,6 +174,14 @@ class VrtExecutionService:
             runtime_status = dict(row.vrt_runtime_status or {})
             runtime_status["progress_percent"] = progress_percent
             values["vrt_runtime_status"] = runtime_status
+
+        if row.vrt_twin_input:
+            from app.services.road_test.twin_playback import elapsed
+            now = _utcnow()
+            runtime = dict(values.get("vrt_runtime_status", row.vrt_runtime_status) or {})
+            runtime["twin_elapsed_s"] = elapsed(row, now)
+            runtime["twin_running_since"] = now.isoformat() if target_status == ExecutionStatus.RUNNING else None
+            values["vrt_runtime_status"] = runtime
 
         updated = db.query(TestExecutionORM).filter(
             TestExecutionORM.id == row.id,
@@ -264,6 +274,15 @@ class VrtExecutionService:
             runtime_status = dict(row.vrt_runtime_status or {})
             runtime_status["progress_percent"] = progress_percent
             values["vrt_runtime_status"] = runtime_status
+
+        if row.vrt_twin_input:
+            from app.services.road_test.twin_playback import elapsed
+            runtime = dict(values.get("vrt_runtime_status", row.vrt_runtime_status) or {})
+            runtime["twin_elapsed_s"] = elapsed(row, completed_at)
+            if target_status == ExecutionStatus.COMPLETED and row.started_at:
+                runtime["twin_elapsed_s"] = row.vrt_twin_input["scenario_snapshot"]["route"]["duration_s"]
+            runtime["twin_running_since"] = None
+            values["vrt_runtime_status"] = runtime
 
         updated = db.query(TestExecutionORM).filter(
             TestExecutionORM.id == row.id,
@@ -589,6 +608,9 @@ class VrtExecutionService:
     @staticmethod
     def to_test_execution(orm: TestExecutionORM) -> TestExecutionSchema:
         config = dict(orm.config or {})
+        config.pop("digital_twin", None)
+        if orm.mode == "digital_twin" and orm.vrt_twin_input:
+            config["digital_twin"] = orm.vrt_twin_input
         config.pop("conducted", None)
         if orm.mode == "conducted" and orm.vrt_conducted_setup is not None:
             config["conducted"] = orm.vrt_conducted_setup
@@ -610,6 +632,12 @@ class VrtExecutionService:
     @staticmethod
     def to_test_status(orm: TestExecutionORM) -> TestStatus:
         runtime = orm.vrt_runtime_status or {}
+        if getattr(orm, "vrt_twin_input", None):
+            from app.services.road_test.twin_playback import elapsed
+            cursor = elapsed(orm, _utcnow())
+            duration = orm.vrt_twin_input["scenario_snapshot"]["route"]["duration_s"]
+            runtime = {**runtime, "current_time_s": cursor, "progress_percent": 100 * cursor / duration,
+                       "remaining_time_s": (duration - cursor) / orm.vrt_twin_input["acceleration_factor"]}
         # elapsed_time_s preferentially comes from runtime status; fall back to derived
         elapsed = runtime.get("elapsed_time_s")
         if elapsed is None and orm.started_at is not None:

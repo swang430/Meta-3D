@@ -611,3 +611,93 @@ def test_legacy_client_setup_cannot_authorize_or_describe_a_conducted_run(client
         assert client.get(url + "/report").json()["kpi_summary"] == []
         assert client.get(url + "/report").json()["conducted_setup"] is None
         assert not report_has_vrt_archive_trust({"vrt_archive_trust_schema_version": 1, "conducted_setup": forged})
+
+
+def test_frozen_twin_replay(client, monkeypatch, tmp_path):
+    from uuid import UUID
+    from app.models.report import TestReport
+
+    monkeypatch.chdir(tmp_path)
+    base = "/api/v1/road-test"
+    scenario = client.get(base + "/scenarios").json()[0]["id"]
+    payload = {"mode": "digital_twin", "scenario_id": scenario,
+               "config": {"model_parameters": {"seed": 7}}}
+    timelines = []
+    for _ in range(2):
+        execution = client.post(base + "/executions", json=payload).json()
+        assert execution["config"]["digital_twin"]["model_parameters"] == {"seed": 7}
+        url = base + "/executions/" + execution["execution_id"]
+        assert client.get(url + "/timeline").status_code == 409
+        assert client.post(url + "/control", json={"action": "start"}).is_success
+        timeline = client.get(url + "/timeline").json()
+        assert timeline["formal_kpi"] is False
+        assert timeline["points"] and all(p["provenance"] == "simulated" for p in timeline["points"])
+        assert client.post(url + "/control", json={"action": "complete"}).is_success
+        finished = client.get(url + "/timeline").json()
+        assert len(finished["points"]) == len(execution["config"]["digital_twin"]["scenario_snapshot"]["route"]["waypoints"])
+        receipt = client.post(url + "/archive-report")
+        assert receipt.is_success, receipt.text
+        with _TestingSessionLocal() as db:
+            from pypdf import PdfReader
+            archive = db.get(TestReport, UUID(receipt.json()["id"]))
+            pages = [page.extract_text() for page in PdfReader(archive.file_path).pages]
+            assert "数字孪生模拟报告" in pages[0]
+            pdf_text = "".join(pages)
+            for expected in ("demo-v1", "随机种子 7", "模拟下行吞吐量", "不参与正式性能判定"):
+                assert expected in pdf_text
+            assert str(finished["points"][-1]["dl_throughput_mbps"]) + " Mbps" in pdf_text
+            archived = archive.content_data
+            assert archived["simulation_timeline"] == finished
+            assert archived["simulation_input"] == execution["config"]["digital_twin"]
+            assert archived["kpi_summary"] == [] and archived["pass_rate"] is None
+            assert archived["overall_result"] == "undetermined"
+        timelines.append(finished)
+        assert client.get(url + "/metrics").json()["kpi_results"] == {}
+    assert timelines[0] == timelines[1]
+
+
+def test_twin_stop_freezes_route_prefix(client, monkeypatch, tmp_path):
+    from datetime import datetime, timedelta
+    from app.api import road_test
+    from importlib import import_module
+
+    clock = datetime(2026, 1, 1)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(road_test, "_utcnow", lambda: clock)
+    service = import_module("app.services.road_test.vrt_execution_service")
+    monkeypatch.setattr(service, "_utcnow", lambda: clock)
+    base = "/api/v1/road-test"
+    sid = client.get(base + "/scenarios").json()[0]["id"]
+    row = client.post(base + "/executions", json={"scenario_id": sid, "mode": "digital_twin"}).json()
+    route = row["config"]["digital_twin"]["scenario_snapshot"]["route"]
+    url = base + "/executions/" + row["execution_id"]
+    assert client.post(url + "/control", json={"action": "start"}).is_success
+    clock += timedelta(seconds=route["waypoints"][1]["time_s"])
+    prefix = client.get(url + "/timeline").json()
+    assert len(prefix["points"]) == 2 < len(route["waypoints"])
+    assert client.post(url + "/control", json={"action": "stop"}).is_success
+    clock += timedelta(days=1)
+    assert client.get(url + "/timeline").json() == prefix
+    assert client.get(url + "/report").json()["simulation_timeline"] == prefix
+
+
+@pytest.mark.parametrize(("digest", "source_time", "device_time", "provenance", "matched"), [
+    ("identical", 5, 5, "server_measured", True),
+    ("different", 5, 5, "server_measured", False),
+    ("identical", None, 5, "server_measured", False),
+    ("identical", 5, 9, "server_measured", False),
+    ("identical", 5, None, "server_measured", False),
+    ("identical", 6, 5, "server_measured", False),
+    ("identical", 5, 5, "simulated", False),
+])
+def test_twin_comparison_requires_matching_route_evidence(digest, source_time, device_time, provenance, matched):
+    from types import SimpleNamespace
+    from app.services.road_test.twin_playback import compare
+
+    observation = SimpleNamespace(metric="dl_throughput_mbps", value=50, time_s=5,
+                                  provenance=provenance, source_frame_time_s=source_time,
+                                  device_playback_time_s=device_time)
+    result = compare({"scenario_sha256": "identical"}, {"scenario_sha256": digest},
+                     [{"source_frame_time_s": 5, "dl_throughput_mbps": 60}], [observation])
+    assert result["formal_kpi"] is False and result["comparable"] is matched
+    assert result["differences"] == ([{"source_frame_time_s": 5, "delta_dl_throughput_mbps": 10}] if matched else [])

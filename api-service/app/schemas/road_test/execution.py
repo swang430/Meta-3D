@@ -374,8 +374,34 @@ class TrajectoryPoint(BaseModel):
     time_s: Optional[float] = Field(None, description="Time in seconds")
 
 
+class TwinPoint(BaseModel):
+    source_frame_time_s: float
+    dl_throughput_mbps: float
+    provenance: Literal["simulated"]
+
+
+class TwinTimeline(BaseModel):
+    points: List[TwinPoint]
+    provenance: Literal["simulated"]
+    formal_kpi: Literal[False]
+
+
+class TwinDifference(BaseModel):
+    source_frame_time_s: float
+    delta_dl_throughput_mbps: float
+
+
+class TwinComparison(BaseModel):
+    comparable: bool
+    reason: str
+    differences: List[TwinDifference]
+    formal_kpi: Literal[False]
+
+
 class ExecutionReport(BaseModel):
     """Complete execution report"""
+    simulation_input: Optional[dict] = None
+    simulation_timeline: Optional[TwinTimeline] = None
     conducted_setup: Optional[Dict[str, Any]] = None
     observations: List[RunnerObservation] = Field(default_factory=list)
     execution_id: str = Field(description="Execution ID")

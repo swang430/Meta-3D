@@ -1337,6 +1337,20 @@ class PDFGenerator:
         terminal = {"failed": "执行失败", "stopped": "执行中止", "completed": "执行完成"}
         if data.get("status") in terminal:
             elements.append(Paragraph(terminal[data["status"]], self.styles["BodyText"]))
+        if data.get("mode") == "digital_twin":
+            elements.append(Paragraph("数字孪生模拟回放。以下模拟样本不参与正式性能判定。", self.styles["BodyText"]))
+            inputs = data.get("simulation_input") or {}
+            if inputs:
+                seed = (inputs.get("model_parameters") or {}).get("seed", "未知")
+                model = inputs.get("model_version", "未知")
+                speed = inputs.get("acceleration_factor", "未知")
+                details = f"模型版本 {model}，随机种子 {seed}，回放倍率 {speed}。"
+                elements.append(Paragraph(escape(details), self.styles["BodyText"]))
+            timeline = data.get("simulation_timeline") or {}
+            for point in timeline.get("points", []):
+                text = (f"路线时刻 {point['source_frame_time_s']} s，"
+                        f"模拟下行吞吐量 {point['dl_throughput_mbps']} Mbps")
+                elements.append(Paragraph(escape(text), self.styles["BodyText"]))
         setup = data.get("conducted_setup")
         if setup:
             asset = setup.get("asset") or {}
