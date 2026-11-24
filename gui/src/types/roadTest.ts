@@ -787,6 +787,7 @@ export interface TestExecution {
 }
 
 export interface ExecutionSummary {
+  ota?: OtaPreparation | null
   conducted?: { binding?: { execution_mode?: string | null } | null } | null
   execution_id: string
   mode: TestMode
@@ -1077,6 +1078,7 @@ export interface ExecutionReport {
   simulation_timeline?: TwinTimeline | null
   simulation_input?: TwinInput | null
   conducted_setup?: ConductedPreparation | null
+  ota_setup?: OtaPreparation | null
   observations?: RunnerObservation[]
   execution_id: string
   scenario_name: string
@@ -1117,4 +1119,27 @@ export interface ExecutionReport {
   custom_config_highlights?: CustomConfigHighlight[]
   generated_at: string
   notes?: string
+}
+
+
+export interface OtaSelection {
+  scenario_id: string
+  direction: 'downlink'
+  lab_profile_id: string | null
+  chamber_id: string | null
+  asset_id: string | null
+}
+
+export interface OtaPreparation extends OtaSelection {
+  scenario_version: string
+  scenario_sha256: string
+  scenario_snapshot: { name: string }
+  lab_name: string | null
+  chamber: { id: string; name: string; quiet_zone_diameter_m: number | null } | null
+  asset: { id: string; name: string; sha256: string; mock_only: boolean; links: { file: string; sha256: string }[] } | null
+  binding: { execution_mode: string; mock_only: boolean }
+  probe_mapping: { probe_id: string; output_port: number; polarization: string; position: { azimuth: number; elevation: number; radius: number } }[]
+  calibration: { mock_only: boolean; frequency_min_mhz: number; frequency_max_mhz: number; bandwidth_mhz: number; quiet_zone_diameter_m: number; valid_until: string } | null
+  ready: boolean
+  reasons: string[]
 }

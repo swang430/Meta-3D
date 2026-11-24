@@ -66,7 +66,7 @@ async def lifespan(app: FastAPI):
         logger.info("Database initialized successfully")
     except Exception as e:
         logger.error(f"Database initialization failed: {e}")
-        raise RuntimeError("无法读取传导执行的停止记录，设备控制服务未启动。") from e
+        raise RuntimeError("无法读取传导和 OTA 执行的恢复记录，设备控制服务未启动。") from e
 
     # 门审 #217 F4 的后继: 复位计划链遗留的僵尸行。ARCH-1 S4b 删掉了
     # test_plan_runner, 该职责由 test_case_runner 接管 (三类行: TestPlan /
@@ -260,6 +260,8 @@ app.include_router(report.router, prefix=settings.api_v1_prefix, tags=["Reports"
 # Phase 3.7: Virtual Road Test
 from app.api import road_test_conducted
 app.include_router(road_test_conducted.router, prefix=settings.api_v1_prefix)
+from app.api import road_test_ota
+app.include_router(road_test_ota.router, prefix=settings.api_v1_prefix)
 app.include_router(road_test.router, prefix=settings.api_v1_prefix, tags=["Virtual Road Test"])
 
 # Alert system

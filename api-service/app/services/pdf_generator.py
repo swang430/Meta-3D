@@ -1351,7 +1351,19 @@ class PDFGenerator:
                 text = (f"路线时刻 {point['source_frame_time_s']} s，"
                         f"模拟下行吞吐量 {point['dl_throughput_mbps']} Mbps")
                 elements.append(Paragraph(escape(text), self.styles["BodyText"]))
-        setup = data.get("conducted_setup")
+        setup = data.get("conducted_setup") or data.get("ota_setup")
+        ota = data.get("ota_setup")
+        if ota:
+            elements.append(Paragraph("OTA 模拟运行，模拟样本不参与正式性能判定；真实暗室现场待验。", self.styles["BodyText"]))
+            chamber = ota.get("chamber") or {}
+            elements.append(Paragraph(escape(f"暗室：{chamber.get('name') or '未登记'}"), self.styles["BodyText"]))
+            for probe in ota.get("probe_mapping", []):
+                detail = (f"探头 {probe['probe_id']}，输出端口 {probe['output_port']}，"
+                          f"极化 {probe['polarization']}，位置 {probe['position']}")
+                elements.append(Paragraph(escape(detail), self.styles["BodyText"]))
+            calibration = ota.get("calibration")
+            if calibration:
+                elements.append(Paragraph(escape(f"OTA 模拟校准范围：{calibration}"), self.styles["BodyText"]))
         if setup:
             asset = setup.get("asset") or {}
             binding = setup.get("binding") or {}

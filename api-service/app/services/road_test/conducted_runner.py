@@ -105,7 +105,8 @@ async def _mock_playback(snapshot, staged_directory, station, channel, run):
             raise RuntimeError("模拟基站未确认连接。")
         if run.stop.is_set():
             raise PlaybackStopRequested("启动播放前已收到停止请求。")
-        if not await channel.set_mimo_config(4, 2) or not await channel.start_emulation():
+        rx_ports = len(snapshot.get("probe_mapping", [])) or 2
+        if not await channel.set_mimo_config(4, rx_ports) or not await channel.start_emulation():
             raise RuntimeError("模拟驱动拒绝启动播放。")
         yield
     finally:
@@ -290,7 +291,7 @@ async def control(db, row, action):
     key = str(row.id)
     run = _active.get(key)
     if action in ("pause", "resume", "complete"):
-        raise HTTPException(409, "该传导执行不支持手动暂停、恢复或标记完成。")
+        raise HTTPException(409, "该虚拟路测不支持手动暂停、恢复或标记完成。")
     if action == "stop":
         if run:
             run.stop.set()
@@ -315,22 +316,30 @@ async def control(db, row, action):
         raise HTTPException(409, "当前执行没有可控制的播放任务。")
     if action != "start" or row.status != "idle" or run:
         raise HTTPException(409, "当前执行状态不允许启动。")
-    from app.api.road_test_conducted import Selection, resolve
-    saved = row.vrt_conducted_setup
+    if row.mode == "ota":
+        from app.api.road_test_ota import Selection, resolve
+        saved = row.vrt_ota_setup
+    else:
+        from app.api.road_test_conducted import Selection, resolve
+        saved = row.vrt_conducted_setup
     if not isinstance(saved, dict):
-        raise HTTPException(409, "请先保存本次传导测试的准备记录。")
+        raise HTTPException(409, "请先保存本次所选模式的准备记录。")
     selected = {k: saved.get(k) for k in Selection.model_fields}
-    selected.update(scenario_id=row.scenario_id, topology_id=row.topology_id)
+    selected.update(scenario_id=row.scenario_id)
+    if row.mode == "conducted":
+        selected["topology_id"] = row.topology_id
     playback_files = {}
     try:
         selection = Selection.model_validate(selected)
     except ValidationError as exc:
-        raise HTTPException(409, "保存的传导准备记录不完整，请重新准备。") from exc
+        raise HTTPException(409, "保存的准备记录不完整，请重新准备。") from exc
     fresh = resolve(db, selection, playback_files=playback_files)
     if not fresh["ready"] or fresh != saved:
         raise HTTPException(409, "；".join(fresh["reasons"]) or "准备记录已变化，请重新保存。")
     physical = (fresh.get("binding") or {}).get("execution_mode") == "real"
     directory = playback_files.get("directory")
+    if row.mode == "ota" and (physical or _unsettled(db)):
+        raise HTTPException(409, "真实 OTA 仍待现场验收，或已有设备尚未确认安全停止。")
     if physical:
         if fresh["scenario_snapshot"]["network"]["type"] != "5G_NR":
             raise HTTPException(409, "本次设备回读流程仅适用于 5G NR 下行场景。")
@@ -339,7 +348,7 @@ async def control(db, row, action):
         if not calibrated_setup("conducted", fresh) or not real_driver_pair(get_hal_service().drivers):
             raise HTTPException(409, "真实执行需要匹配的 UXM、F64 和已核验的逐路校准。")
     elif not (fresh["asset"].get("mock_only") is True and directory and fresh["binding"]["execution_mode"] == "simulated"):
-        raise HTTPException(409, "此次模拟执行需要明确绑定八路文件的模拟专用资产。")
+        raise HTTPException(409, "此次模拟执行需要明确绑定已核对文件的模拟专用资产。")
     duration = saved["scenario_snapshot"]["route"]["duration_s"]
     if not math.isfinite(duration) or duration <= 0:
         raise HTTPException(409, "场景缺少有效的路线时长。")
@@ -374,11 +383,17 @@ async def shutdown_conducted_runs():
 def recover_conducted_runs(db):
     restore_conducted_stops([str(row.id) for row in _unsettled(db)])
     rows = db.query(TestExecution).filter(
-        TestExecution.mode == "conducted",
+        TestExecution.mode.in_(("conducted", "ota")),
         TestExecution.status.in_(("initializing", "running", "paused")),
     ).all()
     for row in rows:
         state = row.hardware_status or {}
+        # 重启只能终止失去控制权的任务，不能凭数据库记录宣称设备已停止。
+        row.hardware_status = {**state, "vrt_restart_recovery": {
+            "previous_status": row.status,
+            "recovered_at": datetime.now(timezone.utc).isoformat(),
+            "device_stop_verified": state.get("conducted_stop_confirmed") is True,
+        }}
         reason = ("服务曾中断，停止回读已保存，执行收尾未完成。"
                   if state.get("conducted_stop_confirmed") is True
                   else "服务曾中断，本次执行已结束，未取得设备停止回读。")

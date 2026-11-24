@@ -288,6 +288,7 @@ class TestExecution(Base):
     notes = Column(Text, comment="Operator notes")
     config = Column(_JSONB, comment="Executor config snapshot (immutable once execution starts)")
     vrt_twin_input = Column(JSON, nullable=True, comment="数字孪生建档时冻结的场景和模型输入")
+    vrt_ota_setup = Column(JSON, nullable=True, comment="仅由服务端 OTA 准备接口写入")
     vrt_conducted_setup = Column(JSON, nullable=True, comment="仅由服务端传导准备接口写入")
     vrt_runtime_status = Column(_JSONB, comment="Live progress: {progress_percent, current_waypoint_index, current_position, elapsed/remaining}")
     execution_logs = Column(_JSONB, comment="Array of {timestamp, level, message, source}")

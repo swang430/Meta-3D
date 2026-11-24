@@ -189,6 +189,7 @@ export interface ReportContentData {
   simulation_input?: import('./roadTest').TwinInput | null
   simulation_timeline?: import('./roadTest').TwinTimeline | null
   conducted_setup?: import('./roadTest').ConductedPreparation | null
+  ota_setup?: import('./roadTest').OtaPreparation | null
   observations?: import('./roadTest').RunnerObservation[]
   /** 只读原执行冻结投影；不可用当前配置重建。 */
   calibration_traceability?: {

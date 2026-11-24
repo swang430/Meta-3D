@@ -534,6 +534,8 @@ async def validate_topology(topology_id: str, db: Session = Depends(get_db)):
 # ===== Test Execution =====
 
 def _execution_scenario(db: Session, row):
+    if row.mode == "ota":
+        return (row.vrt_ota_setup or {}).get("scenario_snapshot")
     if row.mode == TestMode.CONDUCTED.value:
         # 旧传导记录没有可信快照，只能显示当时保存的场景标识。
         return (row.vrt_conducted_setup or {}).get("scenario_snapshot")
@@ -582,6 +584,8 @@ async def create_execution(
     if not scenario:
         raise HTTPException(status_code=404, detail=f"Scenario '{execution_create.scenario_id}' not found")
 
+    if "ota" in execution_create.config:
+        raise HTTPException(400, "请通过 OTA 建档接口保存服务端核对的暗室准备资料。")
     if "conducted" in execution_create.config:
         raise HTTPException(400, "请通过传导建档接口保存服务端核对的准备资料。")
 
@@ -635,7 +639,17 @@ async def control_execution(
     action = control.action.value if hasattr(control.action, "value") else control.action
     logger.info("[Control] %s requested for %s (current=%s)", action, execution_id, current.value)
 
-    if row.mode == TestMode.CONDUCTED.value:
+    if action in ("start", "resume"):
+        from app.models.test_plan import TestExecution as ExecutionRow
+        busy = db.query(ExecutionRow.id).filter(
+            ExecutionRow.mode.in_(["digital_twin", "conducted", "ota"]),
+            ExecutionRow.status.in_(["initializing", "running", "paused"]),
+            ExecutionRow.id != row.id,
+        ).first()
+        if busy:
+            raise HTTPException(409, "已有虚拟路测正在执行，请先停止原执行再切换模式。")
+
+    if row.mode in (TestMode.CONDUCTED.value, TestMode.OTA.value):
         from app.services.road_test.conducted_runner import control as control_conducted
 
         await control_conducted(db, row, action)
@@ -783,8 +797,8 @@ async def submit_execution_metrics(
     if row is None:
         raise HTTPException(status_code=404, detail=f"Execution '{execution_id}' not found")
 
-    if row.mode == TestMode.CONDUCTED.value:
-        raise HTTPException(status_code=409, detail="传导测试的采样和进度由服务器记录。")
+    if row.mode in (TestMode.CONDUCTED.value, TestMode.OTA.value):
+        raise HTTPException(status_code=409, detail="传导和 OTA 测试的采样和进度由服务器记录。")
 
     # 1. Convert TimeSeriesPoint → KPIMetrics for the KPI samples table
     kpi_samples = [
@@ -1389,6 +1403,7 @@ async def _generate_execution_report(execution_id: str, db: Session) -> Executio
             duration_s=execution.duration_s,
             # Results
             conducted_setup=row.vrt_conducted_setup if row.mode == "conducted" else None,
+            ota_setup=row.vrt_ota_setup if row.mode == "ota" else None,
             simulation_input=row.vrt_twin_input,
             simulation_timeline=twin_playback.timeline(row, _utcnow()) if row.vrt_twin_input else None,
             observations=observations,
@@ -1516,7 +1531,10 @@ async def get_capabilities():
             "requires_topology": True
         },
         "ota": {
-            "available": False,  # Requires MPAC
+            "available": simulated,
+            "simulated_available": simulated,
+            "real_available": False,
+            "requires_preparation": True,
             "max_bandwidth_mhz": 100,
             "max_mimo_order": "4x4",
             "requires_mpac": True
