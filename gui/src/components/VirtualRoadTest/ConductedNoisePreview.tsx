@@ -1,3 +1,4 @@
+import { noiseInputError } from './noiseInputError'
 import { useRef, useState } from 'react'
 import { Alert, FileInput, Stack, Table, Text } from '@mantine/core'
 import { previewConductedNoise, buildConductedNoise } from '../../api/roadTestService'
@@ -22,7 +23,8 @@ export function ConductedNoisePreview() {
         if (turn.current === request) setWave(new Blob([JSON.stringify(output)],{type:'application/json'}))
       }
     } catch (e) {
-      if (turn.current===request) setError(e instanceof Error ? e.message : '无法读取仿真文件')
+      if (turn.current !== request) return
+      setError(noiseInputError(e))
     }
   }
   return <details><summary>按系统仿真预览干扰和噪声</summary><Stack gap="xs">
