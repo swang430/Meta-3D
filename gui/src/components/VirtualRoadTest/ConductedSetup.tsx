@@ -17,6 +17,12 @@ export function ConductedSetup({ snapshot }: { snapshot: ConductedPreparation })
     </Table.Tr></Table.Thead><Table.Tbody>{snapshot.port_mapping.map(p => <Table.Tr key={p.tx + '-' + p.rx}>
       {[p.tx,p.input_port,p.output_port,p.rx].map((v,i) => <Table.Td key={i}>{v}</Table.Td>)}
     </Table.Tr>)}</Table.Tbody></Table>}
+    {snapshot.binding?.receiver_power_plan && <Stack gap={2}>
+      <Text>接收插口功率预测，所有端口和帧使用同一偏移 {snapshot.binding.receiver_power_plan.common_offset_db.toFixed(2)} dB。</Text>
+      {snapshot.binding.receiver_power_plan.predictions.filter(row=>row.frame===snapshot.binding!.receiver_power_plan!.reference_frame).map(row=>
+        <Text key={row.rx}>源帧 {row.frame}，源端口 {row.rx} → 实物插口 {row.physical_rx}：参考目标（实测依据见校准） {row.target_dut_dbm?.toFixed(2) ?? '未核验'} dBm，
+          仿真器输出口 {row.output_port ?? "未核验"} 目标 {row.f64_connector_target_dbm?.toFixed(2) ?? '未核验'} dBm。设定回读与本次插口实测待取得。</Text>)}
+    </Stack>}
     {check && <CalibrationDetails check={check} />}
     {Array.isArray(snapshot.reasons) && snapshot.reasons.filter(message => !check?.reasons.includes(message)).map(message => <Text c="red" key={message}>{message}</Text>)}
   </Stack>

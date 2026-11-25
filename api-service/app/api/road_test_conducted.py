@@ -30,6 +30,12 @@ router = APIRouter(prefix="/road-test/conducted", tags=["Virtual Road Test"])
 router.include_router(vrt_port_calibration.router)
 
 
+class ReceiverPowerRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    reference_frame: int = Field(ge=0)
+    targets_dbm: dict[int, float] = Field(default_factory=dict)
+
+
 class Selection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scenario_id: str = Field(min_length=1)
@@ -38,6 +44,7 @@ class Selection(BaseModel):
     topology_id: UUID | None = None
     asset_id: UUID | None = None
     calibration_id: UUID | None = None
+    receiver_power: ReceiverPowerRequest | None = None
 
 
 def _options(db, model):
@@ -170,6 +177,8 @@ def real_preflight(db, hal, lab, asset, network, *, calibration_id=None, scope=N
 
 def resolve(db: Session, selection: Selection, *, playback_files=None):
     ids = selection.model_dump(mode="json")
+    if selection.receiver_power is None:
+        ids.pop("receiver_power")
     if selection.calibration_id is None:
         ids.pop("calibration_id")
     scenario = get_scenario_by_id(selection.scenario_id) or _get_custom_scenario(db, selection.scenario_id)
@@ -271,6 +280,20 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                 reasons.append("工程所属的仪器型号或连接与实验室绑定不一致。")
         if str(asset.payload["scd_config"].get("mimo", "")).lower() != "4x2":
             reasons.append("工程登记的天线规模与下行四发二收不一致。")
+    if selection.receiver_power is not None:
+        from app.services.road_test.receiver_power_plan import registered_plan
+        try:
+            if not summary or len(matches) != 1 or not binding:
+                raise ValueError("请先选定与当前场景、工程和端口匹配的登记")
+            calibration = (binding.get("real_preflight") or {}).get("calibration") or {}
+            plan = registered_plan(matches[0], summary["sha256"], scenario.network.bandwidth_mhz,
+                                   selection.receiver_power.reference_frame,
+                                   selection.receiver_power.targets_dbm, calibration)
+            binding["receiver_power_plan"] = plan
+            if binding.get("execution_mode") == "real" and not plan["verified_operating_point"]:
+                reasons.append("需核对工程电平参考面、输出范围及目标平均功率工作点，方可按此预测发射。")
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            reasons.append(f"接收功率计划未通过核对：{exc}")
     return {**ids, "scenario_version": scenario.version, "scenario_sha256": scenario_sha256,
             "scenario_snapshot": scenario_snapshot, "lab_name": lab.name if lab else None,
             "asset": summary, "binding": binding, "port_mapping": mapping, "ready": not reasons, "reasons": reasons}
