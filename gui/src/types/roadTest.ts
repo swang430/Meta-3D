@@ -1029,6 +1029,7 @@ export interface ConductedCalibrationCheck {
 }
 
 export interface ConductedSelection {
+  receiver_power?: {reference_frame: number; targets_dbm: Record<string,number>} | null
   calibration_id?: string | null
   scenario_id: string
   direction: 'downlink'
@@ -1038,7 +1039,7 @@ export interface ConductedSelection {
 }
 
 export interface ConductedPreparation extends ConductedSelection {
-  binding?: { execution_mode: 'simulated' | 'real' | null; real_preflight?: { calibration?: ConductedCalibrationCheck } | null } | null
+  binding?: { receiver_power_plan?: {reference_frame:number;common_offset_db:number;predictions:{rx:number;physical_rx:number;output_port:number|null;frame:number;target_dut_dbm:number|null;f64_connector_target_dbm:number|null}[]}; execution_mode: 'simulated' | 'real' | null; real_preflight?: { calibration?: ConductedCalibrationCheck } | null } | null
   scenario_version: string
   scenario_sha256?: string
   scenario_snapshot?: { name: string }

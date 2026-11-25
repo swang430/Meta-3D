@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Button, Group, Modal, Select, Stack, Text } from '@mantine/core'
+import { Alert, Button, Checkbox, NumberInput, Group, Modal, Select, Stack, Text } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import {
@@ -75,7 +75,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
   function retry() {
     if (!snapshot && detail.data) setSelection(previous => ({ ...previous, scenario_id: detail.data!.scenario_id }))
     if (snapshot) setSelection({ scenario_id: snapshot.scenario_id, direction: 'downlink', lab_profile_id: snapshot.lab_profile_id,
-      topology_id: snapshot.topology_id, asset_id: snapshot.asset_id, calibration_id: snapshot.calibration_id })
+      topology_id: snapshot.topology_id, asset_id: snapshot.asset_id, calibration_id: snapshot.calibration_id, receiver_power: snapshot.receiver_power })
     const storedKey = 'vrt-conducted:' + (detail.data?.scenario_id || selection.scenario_id)
     if (sessionStorage.getItem(storedKey) === id) sessionStorage.removeItem(storedKey)
     setId(''); archive.reset(); start.reset(); stop.reset(); save.reset()
@@ -91,6 +91,19 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
         onChange={value => setSelection(previous => ({ ...previous, [field]: value }))} />)}
       {!id && <ConductedCalibration value={selection.calibration_id || null} disabled={save.isPending}
         onSelect={calibration_id => setSelection(previous => ({ ...previous, calibration_id }))} />}
+      {!id && <Checkbox label="按接收插口功率准备" checked={!!selection.receiver_power}
+        onChange={e => { const enabled = e.currentTarget.checked; setSelection(prev => ({...prev, receiver_power: enabled ? {reference_frame:0, targets_dbm:{}} : null})) }} />}
+      {!id && selection.receiver_power && <>
+        <NumberInput label="参考源帧" min={0} allowDecimal={false} value={selection.receiver_power.reference_frame}
+          onChange={v => typeof v === 'number' && setSelection(prev=>({...prev, receiver_power:{...prev.receiver_power!,reference_frame:v}}))} />
+        {[0,1].map(rx=><NumberInput key={rx} label={`源接收口 ${rx} 的目标平均功率（dBm，可留空以采用场景功率）`}
+          value={selection.receiver_power?.targets_dbm[rx] ?? ''} onChange={v=>setSelection(prev=>{
+            const targets={...prev.receiver_power!.targets_dbm}
+            if(typeof v==='number') targets[rx]=v
+            else delete targets[rx]
+            return {...prev,receiver_power:{...prev.receiver_power!,targets_dbm:targets}}
+          })} />)}
+      </>}
       {snapshot && <ConductedSetup snapshot={snapshot} />}
       {!id && <Button disabled={!snapshot} loading={save.isPending} onClick={() => save.mutate()}>保存准备记录</Button>}
       {id && <Text>执行编号 {id} · 服务端状态 {status ? labels[status] : '尚未取得'}</Text>}
