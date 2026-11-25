@@ -1,3 +1,4 @@
+import { isAxiosError } from 'axios'
 import { useRef, useState } from 'react'
 import { Alert, FileInput, Stack, Table, Text } from '@mantine/core'
 import { previewConductedNoise, buildConductedNoise } from '../../api/roadTestService'
@@ -22,7 +23,15 @@ export function ConductedNoisePreview() {
         if (turn.current === request) setWave(new Blob([JSON.stringify(output)],{type:'application/json'}))
       }
     } catch (e) {
-      if (turn.current===request) setError(e instanceof Error ? e.message : '无法读取仿真文件')
+      if (turn.current !== request) return
+      const detail = isAxiosError(e) ? e.response?.data?.detail : undefined
+      const reasons = Array.isArray(detail) ? detail.flatMap(issue => {
+        if (typeof issue?.msg !== 'string') return []
+        const location = Array.isArray(issue.loc) ? issue.loc.filter((part: unknown) => part !== 'body').join('.') : ''
+        return [location ? `${location}：${issue.msg}` : issue.msg]
+      }).join('；') : ''
+      setError((typeof detail === 'string' && detail.trim()) || reasons ||
+        (e instanceof Error ? e.message : '无法读取仿真文件'))
     }
   }
   return <details><summary>按系统仿真预览干扰和噪声</summary><Stack gap="xs">
