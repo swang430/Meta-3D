@@ -215,7 +215,12 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None, pa
     basis, power_rows = power_basis(power_reference, db_hash, float(fc[0]), tx_ports, rx_ports, coefficients, frames, complex_source=np.iscomplexobj(h))
     save(stage / "carrier-power.json", dict(basis=basis, rows=power_rows))
     bandwidth = basis["bandwidth_hz"] or 20e6
-    q = spectral_matrix(power_reference, basis, tx_ports, rx_ports) if np.iscomplexobj(h) else None
+    power_warning = None
+    try:
+        q = spectral_matrix(power_reference, basis, tx_ports, rx_ports) if np.iscomplexobj(h) else None
+    except (ValueError, OverflowError) as exc:
+        q = None
+        power_warning = str(exc)
     records = list(basis["links"].values())
     phase_verified = np.iscomplexobj(h) and all(
         record.get("relative_ray_phase") == "preserved" and record.get("carrier_phase_convention") == "included_in_coefficient"
@@ -228,7 +233,8 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None, pa
     fidelity["candidate_basis_supported"] = (
         tx_ports == [0,1,2,3] and rx_ports == [0,1] and antenna["source"] == "source_H"
         and origin == "reference_members")
-    fidelity["receiver_power_verified"] = q is not None
+    fidelity["receiver_power_unverified_reason"] = power_warning or fidelity["integration_warning"]
+    fidelity["receiver_power_verified"] = fidelity["receiver_band_power_mw"] is not None
     fidelity["bandwidth_source"] = "power_reference" if basis["bandwidth_hz"] else "offline_20mhz_analysis_grid"
     save(stage / "conducted-fidelity.json", fidelity)
     return dict(fidelity_summary={k:v for k,v in fidelity.items() if k not in ("rows","offsets_hz","receiver_band_power_mw")}, antenna_projection=antenna, power_basis=basis, source=source, clustering_method=origin, direction="downlink", mode="conducted", tx_ports=tx_ports, rx_ports=rx_ports, frames=frames, links=links,

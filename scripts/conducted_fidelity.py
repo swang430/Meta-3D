@@ -21,8 +21,12 @@ def spectral_matrix(reference, basis, tx_ports, rx_ports):
         values.append(arr)
     q = values[0] + 1j * values[1]
     scale = max(np.max(abs(q)), np.finfo(float).tiny)
-    if np.max(abs(q-q.conj().T)) > 1e-12*scale or min(np.linalg.eigvalsh(q)) < 0:
+    eigenvalues, vectors = np.linalg.eigh((q + q.conj().T)/2)
+    tolerance = 8 * n * np.finfo(float).eps * scale
+    if np.max(abs(q-q.conj().T)) > tolerance or eigenvalues.min() < -tolerance:
         raise ValueError("发射谱矩阵必须是厄米半正定矩阵")
+    if eigenvalues.min() < 0:
+        q = (vectors * np.maximum(eigenvalues, 0)) @ vectors.conj().T
     for i, t in enumerate(tx_ports):
         psd = (basis.get("tx_psd_dbm_per_hz") or {}).get(str(t))
         if psd is not None and not np.isclose(10**(psd/10), q[i,i].real, rtol=1e-8, atol=0):
@@ -72,6 +76,7 @@ def compare_export(stage, links, frames, lookup, ids, coefficients, delays, band
     peak_phase = None
     peak_error = None
     rx_power = []
+    power_error = None
     excluded = 0
     tables = {}
     for link in links:
@@ -98,12 +103,18 @@ def compare_export(stage, links, frames, lookup, ids, coefficients, delays, band
                 peak_error = detail
             curves[tx, rx] = (ref, asc)
             paths[tx, rx] = ((coefficients[selected], delays[selected]), (taps[:,1]+1j*taps[:,2], taps[:,0]*1e-9))
-        if q is not None:
+        if q is not None and power_error is None:
             for rx in sorted({r for _, r in tables}):
                 spectra = []
                 for side in (0, 1):
                     components = [paths[t, rx][side] for t in sorted({t for t, _ in tables})]
-                    spectra.append(integrated_power(components, q, bandwidth_hz))
+                    try:
+                        spectra.append(integrated_power(components, q, bandwidth_hz))
+                    except (ValueError, FloatingPointError, OverflowError) as exc:
+                        power_error = str(exc)
+                        break
+                if power_error:
+                    break
                 rx_power.append(dict(frame=frame, rx=rx, source_mw=spectra[0], asc_mw=spectra[1]))
         for a, b in pairs:
             ar, ac = curves[a]
@@ -121,4 +132,4 @@ def compare_export(stage, links, frames, lookup, ids, coefficients, delays, band
                 rows=records, worst_complex=peak_error, numeric_worst_phase=peak_phase, worst_phase=peak_phase if physical_phase else None,
                 numeric_phase_p95_deg=p95, phase_p95_deg=p95 if physical_phase else None,
                 numeric_phase_count=len(phase_errors), phase_count=len(phase_errors) if physical_phase else 0, excluded_phase_count=excluded,
-                receiver_band_power_mw=rx_power if q is not None else None, formal_measurement=False)
+                integration_warning=power_error, receiver_band_power_mw=rx_power if q is not None and power_error is None else None, formal_measurement=False)
