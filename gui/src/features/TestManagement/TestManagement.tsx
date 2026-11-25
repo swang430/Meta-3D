@@ -24,13 +24,15 @@
  */
 
 import { useState } from 'react'
-import { Container, Tabs, Title, Stack, Text } from '@mantine/core'
+import { Button, SegmentedControl, Container, Tabs, Title, Stack, Text } from '@mantine/core'
 import { IconChecklist, IconChartBar, IconRoute } from '@tabler/icons-react'
 import { TestCaseLibrary } from '../../components/TestPlanManagement/TestCaseLibrary'
 import { TestCaseCreateModal } from '../../components/TestPlanManagement/TestCaseCreateModal'
 import { TestCaseEditModal } from '../../components/TestPlanManagement/TestCaseEditModal'
 import { HistoryTab } from './components/HistoryTab'
-import { VirtualRoadTest } from '../../components/VirtualRoadTest'
+import { VirtualRoadTest, type ExecutionLink } from '../../components/VirtualRoadTest'
+
+import { VirtualExecutionHistory } from '../../components/VirtualRoadTest/VirtualExecutionHistory'
 
 interface TestManagementProps {
   /** P1-39: 执行历史里点「查看日志」时回调, 参数是完整 `execution_id`。 */
@@ -39,6 +41,9 @@ interface TestManagementProps {
 
 export function TestManagement({ onViewLogs }: TestManagementProps = {}) {
   const [activeTab, setActiveTab] = useState<string | null>('caseLibrary')
+  const [source, setSource] = useState("case")
+  const [execution, setExecution] = useState<ExecutionLink>()
+  const [scene, setScene] = useState<{ id: string; name: string } | null>(null)
   // 「新建用例」两步流状态: 创建弹窗开关 / 建完待编辑的新用例 id / 库刷新纪元
   const [creating, setCreating] = useState(false)
   const [newCaseId, setNewCaseId] = useState<string | null>(null)
@@ -80,12 +85,25 @@ export function TestManagement({ onViewLogs }: TestManagementProps = {}) {
 
           {/* History Tab */}
           <Tabs.Panel value="history" pt="md">
-            <HistoryTab onViewLogs={onViewLogs} />
+            <Stack>
+              <SegmentedControl value={source} onChange={setSource} data={[
+                { value: 'case', label: '常规测试' }, { value: 'vrt', label: '虚拟路测' },
+              ]} />
+              {source === 'case' ? <HistoryTab onViewLogs={onViewLogs} /> : <>
+                {scene && <Button variant="subtle" onClick={() => setScene(null)}>当前场景：{scene.name} · 查看全部场景</Button>}
+                <VirtualExecutionHistory key={execution?.id} scenarioId={scene?.id} initialExecution={execution} scenarioName={scene?.name} onDismiss={() => setExecution(undefined)} />
+              </>}
+            </Stack>
           </Tabs.Panel>
 
           {/* Virtual Road Test Tab — VRT consolidated as TestCase derivative */}
           <Tabs.Panel value="virtualRoadTest" pt="md">
-            <VirtualRoadTest />
+            <VirtualRoadTest onViewHistory={(selected, run) => {
+              setExecution(run)
+              setScene(selected)
+              setSource('vrt')
+              setActiveTab('history')
+            }} />
           </Tabs.Panel>
         </Tabs>
 

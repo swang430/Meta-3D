@@ -138,9 +138,12 @@ class VrtExecutionService:
         mode: Optional[TestMode] = None,
         status: Optional[ExecutionStatus] = None,
         limit: int = 1000,
+        scenario_id: Optional[str] = None,
     ) -> List[TestExecutionORM]:
         """List VRT executions. Filters out non-VRT TestExecution rows by requiring `mode IS NOT NULL`."""
         query = db.query(TestExecutionORM).filter(TestExecutionORM.mode.isnot(None))
+        if scenario_id is not None:
+            query = query.filter(TestExecutionORM.scenario_id == scenario_id)
         if mode is not None:
             query = query.filter(TestExecutionORM.mode == mode.value)
         if status is not None:

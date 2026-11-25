@@ -8,6 +8,7 @@
  * source_type payload 编辑器) 是 S4-2~S4-4; 旧编辑器 (AssetProfiles CDL tab / 仪器抽屉 SCD
  * 卡片) deprecate + 浏览器闭环是 S4-5/S4-6。
  */
+import { OTAMapper } from '../../components/OTAMapper'
 import { useEffect, useState } from 'react'
 import {
   ActionIcon, Alert, Badge, Box, Button, Code, Group, LoadingOverlay, Modal, Paper,
@@ -164,6 +165,7 @@ export function ChannelWorkbench() {
       onConfirm: () => deleteMutation.mutate(a.id),
     })
 
+  const [showMapper, setShowMapper] = useState(false)
   const assets = (assetsQuery.data ?? []).filter(a => filter !== 'rt_dynamic' || isRtScene(a))
 
   return (
@@ -200,6 +202,8 @@ export function ChannelWorkbench() {
         </Group>
       </Group>
 
+      <Button variant="subtle" onClick={() => setShowMapper(!showMapper)}>{showMapper ? '收起探头权重试算' : '探头权重试算'}</Button>
+      {showMapper && <OTAMapper />}
       <SegmentedControl
         value={filter}
         onChange={(v) => setFilter(v as SourceFilter)}

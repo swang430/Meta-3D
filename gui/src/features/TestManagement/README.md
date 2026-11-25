@@ -18,7 +18,7 @@
 | Tab | value | 内容由谁提供 |
 |-----|-------|-------------|
 | 测试用例库 | `caseLibrary` | `components/TestPlanManagement/TestCaseLibrary`（`enableExecute` 开着 —— 执行按钮在这里） |
-| 执行历史 | `history` | `./components/HistoryTab` |
+| 执行历史 | `history` | 常规测试与虚拟路测共用入口，分别保留原有的执行详情与报告 |
 | 虚拟路测 | `virtualRoadTest` | `components/VirtualRoadTest` |
 
 ## 目录结构（实况）

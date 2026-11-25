@@ -10,6 +10,7 @@ import { ModelInput, SimulationTimeline, ThroughputPlot } from './SimulationTime
 
 interface Props {
   scenario: { id: string; name: string }
+  onViewExecution?: (id: string) => void
   initialId?: string
   onClose: () => void
 }
@@ -20,7 +21,7 @@ function reason(error: unknown) {
   return typeof detail === 'string' ? detail : value.message || '读取失败，请重试。'
 }
 
-export function DigitalTwinExecutionModal({ scenario, initialId, onClose }: Props) {
+export function DigitalTwinExecutionModal({ scenario, initialId, onViewExecution, onClose }: Props) {
   const client = useQueryClient()
   const [id, setId] = useState(() => initialId || sessionStorage.getItem('vrt-twin:' + scenario.id) || '')
   const [seed, setSeed] = useState<number | string>(0)
@@ -98,7 +99,8 @@ export function DigitalTwinExecutionModal({ scenario, initialId, onClose }: Prop
       {result && <><Text>{result.reason}</Text>{result.comparable && result.formal_kpi === false ?
         result.differences.map((d, i) => <Text key={i}>{d.source_frame_time_s} 秒 · 下行吞吐率差值（模拟减实测） {d.delta_dl_throughput_mbps} Mbps</Text>) :
         <Text>对照未核验。</Text>}</>}
-      {report && <TestReportModal opened executionId={id} onClose={() => setReport(false)} />}
+      {matches && onViewExecution && <Button variant="light" onClick={() => onViewExecution(id)}>在执行历史中查看本次执行</Button>}
+    {report && <TestReportModal opened executionId={id} onClose={() => setReport(false)} />}
     </Stack>
   </Modal>
 }

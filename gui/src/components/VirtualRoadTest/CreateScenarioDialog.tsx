@@ -398,11 +398,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
                     📋 测试步骤预配置（可选）
                   </Text>
                   <Text size="sm">
-                    虚拟路测包含固定的7个标准步骤。您可以在此预配置某些步骤的参数（如暗室ID、频率、KPI阈值等），未配置的步骤将使用系统默认值。
-                  </Text>
-                  <Text size="sm" c="dimmed">
-                    注意：转换为测试计划后，所有7个步骤都会出现，但会应用您配置的参数。
-                  </Text>
+                    可以保存场景的预设参数。执行前，请在所选测试方式的准备页核对实际使用的工程和设备。</Text>
                 </Stack>
               </Alert>
               <StepConfigurationEditor
