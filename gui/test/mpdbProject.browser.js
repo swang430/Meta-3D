@@ -67,14 +67,16 @@
     uploads === 1 && builds.at(-1).speed_m_s === 7 && builds.at(-1).rate_quality === 'dense',
     '重复上传或播放参数错误',
   )
-  const review = page.getByText('查看或核验已有工程', { exact: true })
+  const review = page.getByText('检查已有工程', { exact: true })
   const history = review.locator('..')
   check(!(await history.getByText('选择工程目录').isVisible()), '已有工程默认展开')
   await review.click()
   await history.getByText('选择工程目录').waitFor()
-  check(!(await history.getByText('从原始文件导入轨迹').count()), '计算工具混入工程复查')
-  await page.getByText('核验聚簇结果', { exact: true }).first().click()
+  check(!(await history.getByText('从原始文件导入轨迹').isVisible()), '计算工具混入工程复查')
+  await page.getByText('检查聚簇异常', { exact: true }).first().click()
   await page.getByRole('heading', { name: '聚簇结果核验' }).waitFor()
+  await history.getByText('工程师离线分析', {exact:true}).click()
+  await history.getByText('从原始文件导入轨迹').waitFor()
   await review.click()
   check(
     (await download.isVisible()) && (await speed.inputValue()) === '7',

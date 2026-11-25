@@ -64,6 +64,7 @@ type SourceFilter = 'all' | ChannelSourceType
 
 export function ChannelWorkbench() {
   const [reviewTask, setReviewTask] = useState('files')
+  const [analysisTask, setAnalysisTask] = useState('response')
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState<SourceFilter>('all')
   const [includeInactive, setIncludeInactive] = useState(false)
@@ -325,27 +326,35 @@ export function ChannelWorkbench() {
       <div hidden={filter !== 'rt_dynamic'}>
       <MpdbProjectPanel />
       <details>
-        <summary>查看或核验已有工程</summary>
+        <summary>检查已有工程</summary>
         <Stack mt="sm">
-          <SegmentedControl aria-label="选择复查内容" value={reviewTask} onChange={setReviewTask} data={[
+          <SegmentedControl aria-label="选择检查内容" value={reviewTask} onChange={setReviewTask} data={[
             { value: 'files', label: '查看工程文件' },
-            { value: 'clusters', label: '核验聚簇结果' },
-            { value: 'ports', label: '端口成员与时延分析' },
-            { value: 'purpose', label: '用途与独立留出评估' },
-            { value: 'budget', label: '抽头预算比较' },
-            { value: 'comparison', label: '比较原始数据与传导工程' },
+            { value: 'clusters', label: '检查聚簇异常' },
           ]} />
-          <div hidden={reviewTask !== 'purpose'}><MpdbPurposePanel /></div>
-          <div hidden={reviewTask !== 'budget'}><MpdbBudgetPanel /></div>
-          <div hidden={reviewTask !== 'comparison'}><MpdbComparisonPanel /></div>
           <div hidden={reviewTask !== 'files'}><ImtBundlePanel /></div>
-          <div hidden={reviewTask !== 'ports'}><PortEvidencePanel /></div>
           <div hidden={reviewTask !== 'clusters'}><ClusterVerificationPanel /></div>
+          <details>
+            <summary>工程师离线分析</summary>
+            <Stack mt="sm">
+              <SegmentedControl aria-label="选择分析内容" value={analysisTask} onChange={setAnalysisTask} data={[
+                { value: 'response', label: '按轨迹计算各频点响应' },
+                { value: 'ports', label: '端口成员与时延分析' },
+                { value: 'purpose', label: '用途与独立留出评估' },
+                { value: 'budget', label: '抽头预算比较' },
+                { value: 'comparison', label: '比较原始数据与传导工程' },
+              ]} />
+              <div hidden={analysisTask !== 'response'}>
+                <Text size="sm">输入聚簇轨迹，计算每帧在各频点的模型响应。</Text>
+                <ClusterResponsePanel />
+              </div>
+              <div hidden={analysisTask !== 'ports'}><PortEvidencePanel /></div>
+              <div hidden={analysisTask !== 'purpose'}><MpdbPurposePanel /></div>
+              <div hidden={analysisTask !== 'budget'}><MpdbBudgetPanel /></div>
+              <div hidden={analysisTask !== 'comparison'}><MpdbComparisonPanel /></div>
+            </Stack>
+          </details>
         </Stack>
-      </details>
-      <details>
-        <summary>逐帧频率响应分析（可选）</summary>
-        <ClusterResponsePanel />
       </details>
       </div>
       <ChannelAssetForm opened={formOpen} asset={editingAsset} onClose={() => setFormOpen(false)} />
