@@ -86,6 +86,11 @@ export function readProject(
           (usable.length < bundle.metrics.length ? '缺少完整对照数值的 ' +
             (bundle.metrics.length - usable.length) + ' 项未核验。' : '')
       }
+      if (role === 'conducted') {
+        const basis = (manifest as {power_basis?: {tx_power_dbm?: Record<string,number>; tx_psd_dbm_per_hz?: Record<string,number>}}).power_basis
+        return summary + (basis?.tx_power_dbm ? '已登记发射参考。各路载频预测见 carrier-power.json，依据缺失的链路留空。' :
+          basis?.tx_psd_dbm_per_hz ? '已登记发射功率谱；缺少单音发射功率，载频预测留空。' : '缺发射参考，只能使用相对系数。')
+      }
       return summary + bundle.phaseSummary
     } catch (error) {
       return label + '未核验：' + (error instanceof Error ? error.message : '清单格式无效')
