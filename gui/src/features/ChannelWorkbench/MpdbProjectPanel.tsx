@@ -180,7 +180,7 @@ export function MpdbProjectPanel() {
           </>
         ) : (
           <>
-            <FileInput label="暗室安装登记或开发接线设计" description="选择本暗室的安装登记 JSON，已在实验室登记时可省略。"
+            <FileInput label="暗室安装登记或开发接线设计" description="现场工程可使用实验室保存的安装登记。开发工程请选择与本实验室接线设计一致的 JSON 文件。"
               accept=".json" disabled={!!busy} clearable onChange={async f => {
                 const id = ++fileRevision.current
                 setError(''); setChamber(null); setProjects({}); setInstallation(f ? {} : null)
@@ -194,7 +194,7 @@ export function MpdbProjectPanel() {
               placeholder="请选择" onChange={(v)=>{setChoice((v || '') as TimingMode);setProjects({})}}
               data={[{value:'constant',label:'假定恒速，由各段位移推算时长'},{value:'segments',label:'逐段输入时长，支持变速或停车'}]}/>}
             <Button variant="subtle" disabled={!!busy || !source} onClick={()=>refreshChamber(v=>v+1)}>重新核对暗室配置</Button>
-            {chamber?.routes && <details><summary>查看逐路接线与采用的校准</summary>{chamber.routes.map(row=><Text key={row}>{row}</Text>)}</details>}
+            {chamber?.routes && <details><summary>{chamber.design ? "查看逐路设计接线" : "查看逐路接线与采用的校准"}</summary>{chamber.routes.map(row=><Text key={row}>{row}</Text>)}</details>}
             <Group grow>
               {selected==='constant' && <TextInput
                 label="操作员假定的恒定速度（m/s）"

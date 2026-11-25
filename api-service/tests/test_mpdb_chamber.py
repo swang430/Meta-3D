@@ -54,3 +54,41 @@ def test_downlink_wiring_uses_mode_edges_when_active_list_empty():
     topology.nodes[0]["params"]["port_roles"]["RF2"] = "ul"
     topology.connections[0]["direction"] = "DL"
     assert not input_wiring(topology)
+
+
+def design_fixture():
+    room, probes, *_ = inputs()
+    design = dict(chamber_id="room", lab_profile_id="lab", tx_inputs={"0":"in1", "1":"in2"},
+                  input_wiring={f"in{i}": dict(id=f"d{i}", source="bs", source_pin=f"DL{i}",
+                               target="ce", target_pin=f"in{i}") for i in (1,2)},
+                  probe_azimuth_zenith_deg=[[42,105]], fit_points_m=[[0,0,0]],
+                  check_points_m=[[0.1,0,0]], probe_connections=[dict(index=0,radius_m=3.5,feeds={
+                      basis:dict(probe_uuid=p.id, probe_number=p.probe_number, polarization=p.polarization,
+                                 ce_port=str(p.channel_port),value_db=8,source_id="old",measurement_provenance="real")
+                      for basis,p in zip(("theta","phi"),probes)})], calibration_status="real")
+    return room, probes, design
+
+
+def test_design_drops_measurement_claims():
+    from app.services.mpdb_chamber import design_geometry
+    room, probes, design = design_fixture()
+    result = design_geometry(room, probes, design, [0,1], 3550)
+    feed = result["probe_connections"][0]["feeds"]["theta"]
+    assert result["calibration_status"] == "unverified" and not result["hardware_verified"]
+    assert feed["value_db"] is None and feed["measurement_provenance"] == "unverified"
+    assert "source_id" not in feed
+
+
+@pytest.mark.parametrize("fault", ["same_probe", "output_alias", "input"])
+def test_design_rejects_shared_connections(fault):
+    from app.services.mpdb_chamber import design_geometry
+    room, probes, design = design_fixture()
+    feeds = design["probe_connections"][0]["feeds"]
+    if fault == "same_probe":
+        feeds["phi"] = feeds["theta"]
+    elif fault == "output_alias":
+        feeds["phi"]["ce_port"] = "B1"
+    else:
+        design["tx_inputs"]["1"] = "in1"
+    with pytest.raises(ValueError):
+        design_geometry(room, probes, design, [0,1], 3550)
