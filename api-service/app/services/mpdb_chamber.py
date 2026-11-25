@@ -28,6 +28,11 @@ def chamber_geometry(db, frequency_mhz, tx_ports, installation=None):
     probes = db.query(Probe).filter_by(chamber_config_id=chamber.id, is_active=True).all()
     if not probes:
         raise ValueError(f"{chamber.name} 没有启用的探头")
+    if installation and installation.get("geometry_source") == "chamber_wiring_design":
+        design = (lab.extra_metadata or {}).get("mpdb_ota_wiring_design")
+        if not design or installation != design or design["chamber_id"] != str(chamber.id):
+            raise ValueError("所选接线设计与当前实验室登记不一致")
+        return design_geometry(chamber, probes, design, tx_ports, frequency_mhz)
     disconnected = sorted(p.probe_number for p in probes if p.is_connected is not True)
     if disconnected:
         raise ValueError(f"{chamber.name} 的启用探头尚未确认连接：" + "、".join(map(str, disconnected)))
@@ -41,6 +46,82 @@ def chamber_geometry(db, frequency_mhz, tx_ports, installation=None):
         raise ValueError("缺少当前实验室的射频拓扑")
     snapshot["input_wiring"] = input_wiring(topology)
     return assemble_geometry(chamber, probes, installation, snapshot, tx_ports)
+
+
+def design_geometry(chamber, probes, design, tx_ports, frequency_mhz):
+    """设计只能提供空间位置和接线，不能提供硬件或测量证据。"""
+    inputs = {}
+    wiring = {}
+    sources = set()
+    for tx in tx_ports:
+        port = design["tx_inputs"].get(str(tx))
+        edge = design["input_wiring"].get(port)
+        if not isinstance(port, str) or not port.strip() or not isinstance(edge, dict):
+            raise ValueError(f"发射端口 {tx} 缺少设计输入接线")
+        fields = ("id", "source", "source_pin", "target", "target_pin")
+        if not all(isinstance(edge.get(k), str) and edge[k].strip() for k in fields):
+            raise ValueError(f"发射端口 {tx} 的设计接线信息不完整")
+        source = (edge["source"], edge["source_pin"])
+        if port in wiring or edge["target_pin"] != port or source in sources:
+            raise ValueError(f"发射端口 {tx} 的设计输入接线不一致或重复")
+        sources.add(source)
+        inputs[str(tx)] = port
+        wiring[port] = {k:edge[k] for k in fields}
+
+    available = {str(p.id):p for p in probes}
+    outputs = set()
+    connections = []
+    angles = design["probe_azimuth_zenith_deg"]
+    positions = design["probe_connections"]
+    if len(angles) != len(positions) or not positions:
+        raise ValueError("接线设计的位置与探头数量不一致")
+    for i, item in enumerate(positions):
+        feeds = {}
+        if item["index"] != i or set(item["feeds"]) != {"theta", "phi"}:
+            raise ValueError(f"设计位置 {i} 的编号或双极化接线不完整")
+        polarizations = set()
+        for basis, f in item["feeds"].items():
+            p = available.pop(f["probe_uuid"], None)
+            if p is None or not isinstance(f["ce_port"], str) or not f["ce_port"].strip():
+                raise ValueError(f"设计位置 {i} 的探头或输出缺失、重复")
+            pos = p.position or {}
+            if (p.probe_number != f["probe_number"] or p.polarization != f["polarization"]
+                    or not all(_finite(pos.get(k)) for k in ("azimuth", "elevation", "radius"))
+                    or not -90 <= pos["elevation"] <= 90 or pos["radius"] <= 0
+                    or [pos["azimuth"], 90-pos["elevation"]] != angles[i]
+                    or pos["radius"] != item["radius_m"]):
+                raise ValueError(f"探头 {p.probe_number} 的安装位置或极化已改变")
+            output = RealPropsimF64Driver._ce_port_to_output_num(f["ce_port"])
+            if output in outputs:
+                raise ValueError(f"设计重复使用 F64 输出 {output}")
+            outputs.add(output)
+            polarizations.add(p.polarization)
+            feed = {k:f[k] for k in ("probe_uuid","probe_number","polarization","ce_port",
+                                     "net_port","design_slot","design_pin") if k in f}
+            feeds[basis] = dict(feed, value_db=None, measurement_provenance="unverified")
+        if polarizations != {"V", "H"}:
+            raise ValueError(f"设计位置 {i} 缺少两条独立的极化通路")
+        connections.append(dict(index=i, radius_m=item["radius_m"], feeds=feeds))
+    if available:
+        raise ValueError("接线设计未包含全部启用探头")
+    points = {}
+    for key in ("fit_points_m", "check_points_m"):
+        rows = design[key]
+        if not isinstance(rows,list) or not rows or not all(isinstance(v,list) and len(v)==3
+                and all(map(_finite,v)) for v in rows):
+            raise ValueError("设计缺少有效的拟合或核对点")
+        points[key] = rows
+    if set(map(tuple,points["fit_points_m"])) & set(map(tuple,points["check_points_m"])):
+        raise ValueError("拟合点与独立核对点不能重合")
+    layout = dict(geometry_source="chamber_wiring_design", field_model="plane_wave",
+                  chamber_id=str(chamber.id), chamber_name=chamber.name, lab_profile_id=design["lab_profile_id"],
+                  frequency_mhz=frequency_mhz, tx_inputs=inputs, input_wiring=wiring,
+                  hardware_verified=False, calibration_status="unverified",
+                  compensation="设计接线未使用实测路径补偿", basis_assumption="极化轴及正方向按设计，实装待核对",
+                  probe_azimuth_zenith_deg=angles, probe_connections=connections, **points)
+    layout["configuration_sha256"] = hashlib.sha256(json.dumps(
+        layout, sort_keys=True, allow_nan=False).encode()).hexdigest()
+    return layout
 
 
 def input_wiring(topology):

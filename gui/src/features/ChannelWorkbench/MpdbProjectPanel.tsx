@@ -42,7 +42,7 @@ export function MpdbProjectPanel() {
   const fileRevision = useRef(0)
   const [revision, refreshChamber] = useState(0)
   const [installation, setInstallation] = useState<Record<string,unknown> | null>(null)
-  const [chamber, setChamber] = useState<{ source: string; name?: string; count?: number; digest?: string; routes?: string[]; error?: string } | null>(null)
+  const [chamber, setChamber] = useState<{ source: string; name?: string; design?: boolean; count?: number; digest?: string; routes?: string[]; error?: string } | null>(null)
   useEffect(() => {
     if (mode !== 'ota' || !source) return
     let current = true
@@ -50,9 +50,9 @@ export function MpdbProjectPanel() {
     const url = root+'/'+source.source_id+'/ota-chamber'
     const request = installation ? client.post(url, installation) : client.get(url)
     request.then(({data}) => {
-      if (current) setChamber({source:source.source_id,name:data.chamber_name,count:data.probe_connections.length, digest:data.configuration_sha256,
-        routes:Object.entries(data.tx_inputs).map(([tx,input])=>"发射端口 "+tx+" → F64 输入 "+input).concat(data.probe_connections.flatMap((p:{index:number;feeds:Record<string,{probe_number:number;ce_port:string;value_db:number}>}) => Object.entries(p.feeds).map(([pol,f])=>
-          "工程探头 "+p.index+" "+pol+" → 实物探头 "+f.probe_number+"，输出 "+f.ce_port+"，路径损耗 "+f.value_db+" dB")))})
+      if (current) setChamber({source:source.source_id,name:data.chamber_name,design:data.geometry_source === 'chamber_wiring_design',count:data.probe_connections.length, digest:data.configuration_sha256,
+        routes:Object.entries(data.tx_inputs).map(([tx,input])=>"发射端口 "+tx+" → F64 输入 "+input).concat(data.probe_connections.flatMap((p:{index:number;feeds:Record<string,{probe_number:number;ce_port:string;value_db:number|null}>}) => Object.entries(p.feeds).map(([pol,f])=>
+          "工程探头 "+p.index+" "+pol+" → 实物探头 "+f.probe_number+"，输出 "+f.ce_port+(f.value_db == null ? "，路径损耗未实测" : "，路径损耗 "+f.value_db+" dB"))))})
     }).catch(e => {
       if (current) setChamber({source:source.source_id,error:e.response?.data?.detail || '无法读取当前暗室配置'})
     })
@@ -180,7 +180,7 @@ export function MpdbProjectPanel() {
           </>
         ) : (
           <>
-            <FileInput label="实际暗室安装登记" description="选择本暗室的安装登记 JSON，已在实验室登记时可省略。"
+            <FileInput label="暗室安装登记或开发接线设计" description="现场工程可使用实验室保存的安装登记。开发工程请选择与本实验室接线设计一致的 JSON 文件。"
               accept=".json" disabled={!!busy} clearable onChange={async f => {
                 const id = ++fileRevision.current
                 setError(''); setChamber(null); setProjects({}); setInstallation(f ? {} : null)
@@ -194,7 +194,7 @@ export function MpdbProjectPanel() {
               placeholder="请选择" onChange={(v)=>{setChoice((v || '') as TimingMode);setProjects({})}}
               data={[{value:'constant',label:'假定恒速，由各段位移推算时长'},{value:'segments',label:'逐段输入时长，支持变速或停车'}]}/>}
             <Button variant="subtle" disabled={!!busy || !source} onClick={()=>refreshChamber(v=>v+1)}>重新核对暗室配置</Button>
-            {chamber?.routes && <details><summary>查看逐路接线与采用的校准</summary>{chamber.routes.map(row=><Text key={row}>{row}</Text>)}</details>}
+            {chamber?.routes && <details><summary>{chamber.design ? "查看逐路设计接线" : "查看逐路接线与采用的校准"}</summary>{chamber.routes.map(row=><Text key={row}>{row}</Text>)}</details>}
             <Group grow>
               {selected==='constant' && <TextInput
                 label="操作员假定的恒定速度（m/s）"
@@ -215,7 +215,7 @@ export function MpdbProjectPanel() {
                 data={[{value:'standard',label:'标准'},{value:'dense',label:'加密（两倍更新率）'}]}/>
             <Alert color="yellow">
               {chamber?.source === source?.source_id && chamber ? chamber.error ||
-                ('当前暗室：'+chamber.name+'，已核对 '+chamber.count+' 个双极化位置的接线和路径校准。')
+                (chamber.design ? '开发工程：'+chamber.name+'，按登记的设计接线生成。现场连接及路径损耗未核验。' : '当前暗室：'+chamber.name+'，已核对 '+chamber.count+' 个双极化位置的接线和路径校准。')
                 : '选择文件后读取当前暗室、探头接线和本次载频的校准记录。'}
               生成时再次核对。ASC 保留空间权重，播放前须核对路径补偿。实际播放效果待现场验证。
             </Alert>
