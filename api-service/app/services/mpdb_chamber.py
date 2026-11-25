@@ -28,6 +28,28 @@ def chamber_geometry(db, frequency_mhz, tx_ports, installation=None):
     probes = db.query(Probe).filter_by(chamber_config_id=chamber.id, is_active=True).all()
     if not probes:
         raise ValueError(f"{chamber.name} 没有启用的探头")
+    if installation and installation.get("geometry_source") == "chamber_wiring_design":
+        design = (lab.extra_metadata or {}).get("mpdb_ota_wiring_design")
+        if not design or installation != design or design["chamber_id"] != str(chamber.id):
+            raise ValueError("所选接线设计与当前实验室登记不一致")
+        feeds = {f["probe_uuid"]: (i, f) for i, item in enumerate(design["probe_connections"])
+                 for f in item["feeds"].values()}
+        if set(feeds) != {str(p.id) for p in probes}:
+            raise ValueError("启用探头已改变，请更新接线设计")
+        for p in probes:
+            i, feed = feeds[str(p.id)]
+            pos = p.position or {}
+            if (p.probe_number != feed["probe_number"] or p.polarization != feed["polarization"]
+                    or [pos.get("azimuth"), 90 - pos["elevation"]] != design["probe_azimuth_zenith_deg"][i]
+                    or pos.get("radius") != design["probe_connections"][i]["radius_m"]):
+                raise ValueError(f"探头 {p.probe_number} 的位置或极化与接线设计不一致")
+        if not all(str(t) in design["tx_inputs"] for t in tx_ports):
+            raise ValueError("本次 MPDB 的发射端口超出接线设计范围")
+        layout = {**design, "tx_inputs": {str(t): design["tx_inputs"][str(t)] for t in tx_ports},
+                  "frequency_mhz": frequency_mhz, "hardware_verified": False}
+        layout["configuration_sha256"] = hashlib.sha256(json.dumps(
+            layout, sort_keys=True, allow_nan=False).encode()).hexdigest()
+        return layout
     disconnected = sorted(p.probe_number for p in probes if p.is_connected is not True)
     if disconnected:
         raise ValueError(f"{chamber.name} 的启用探头尚未确认连接：" + "、".join(map(str, disconnected)))
