@@ -1178,6 +1178,8 @@ class MIMOOTAConfiguration(BaseModel):
         # channel_asset_id 设了 → measure resolver 会用资产派生 engine_mode 覆盖, stale
         # external_asc (asc_source_path 已清) 不应在此 fail (Codex 0b913fe P2: 本 validator
         # 在 resolver 覆盖 engine 之前跑; 资产路由交给 resolver)。
+        if self.asc_manifest_sha256 and self.f64_bypass_mode is not None and not self.f64_fade_after_attach:
+            raise ValueError("整段模拟播放核对不能使用全程直通配置")
         if self.asc_manifest_sha256 and (self.engine_mode != "external_asc" or self.channel_asset_id):
             raise ValueError("八路清单摘要只能用于明确选择外部 ASC 的模拟用例")
         if getattr(self, "channel_asset_id", None):

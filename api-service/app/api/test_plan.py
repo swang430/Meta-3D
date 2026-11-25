@@ -353,7 +353,8 @@ def get_case_execution_status(
         execution_id=execution.id,
         status=execution.status or "unknown",
         source_test_case_id=cfg.get("source_test_case_id"),
-        asc_playback_evidence=cfg.get("asc_playback_evidence"),
+        asc_playback_evidence=(execution.hardware_status or {}).get("asc_playback_evidence")
+        if execution.executed_by == "test_case_runner" else None,
         phase_progress=list(cfg.get("phase_progress") or []),
         failed_phase=cfg.get("failed_phase"),
         # 内审 F4: error_message 三个读方同一规则 (列优先 config 兜底,

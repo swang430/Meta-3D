@@ -65,11 +65,11 @@ async def test_simulated_cursor_stops_at_last_response_or_cancellation(monkeypat
     driver.simulated_playback_elapsed.side_effect = [0.25, 2.]
     strategy = ExternalAscPathStrategy(driver, None, [], ".")
     strategy.playback_evidence = dict(rate_hz=4, last_asc_response_index=4, first_to_last_response_s=1.)
-    row = SimpleNamespace(id=None, status="running", config={"asc_playback_evidence": {"device_load_accepted": None}})
+    row = SimpleNamespace(id=None, status="running", hardware_status={"asc_playback_evidence": {"device_load_accepted": None}})
     context = SimpleNamespace(db=Mock(), test_execution=row)
 
     def write(values, synchronize_session):
-        row.config = next(iter(values.values()))
+        row.hardware_status = next(iter(values.values()))
         return 1
 
     context.db.query.return_value.filter.return_value.update.side_effect = write
@@ -81,10 +81,10 @@ async def test_simulated_cursor_stops_at_last_response_or_cancellation(monkeypat
     monkeypatch.setattr(asyncio, "sleep", advance)
     if cancel:
         with pytest.raises(ValueError, match="已停止"):
-            await strategy.finish_simulated_pass(context)
+            await strategy._record_simulated_pass(context.db, context.test_execution)
     else:
-        await strategy.finish_simulated_pass(context)
-    record = row.config["asc_playback_evidence"]
+        await strategy._record_simulated_pass(context.db, context.test_execution)
+    record = row.hardware_status["asc_playback_evidence"]
     assert record["simulated_response_index"] == (1 if cancel else 4)
     assert record["simulated_last_response_reached"] is (not cancel)
     assert record["device_load_accepted"] is None
@@ -109,3 +109,13 @@ async def test_cancel_after_file_verification_prevents_mock_load(bundle):
     with pytest.raises(ValueError, match="已停止"):
         await strategy.generate_and_load({}, {})
     driver.load_channel.assert_not_awaited()
+
+
+def test_pinned_bundle_rejects_full_bypass_before_execution():
+    from pydantic import ValidationError
+    from app.schemas.mimo_ota.config import MIMOOTAConfiguration
+
+    with pytest.raises(ValidationError, match="全程直通"):
+        MIMOOTAConfiguration.model_validate(dict(
+            engine_mode="external_asc", asc_source_path="/example", asc_manifest_sha256="0" * 64,
+            f64_bypass_mode=3, f64_fade_after_attach=False))

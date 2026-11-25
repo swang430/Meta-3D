@@ -1988,6 +1988,7 @@ class MeasureExecutor(IStepExecutor):
         pending_base_station_windows: List[
             tuple[int, float, Any, List[Any], Dict[str, Any]]
         ] = []
+        simulated_playback_task = None
         ca_setup_blocker: Optional[str] = None
         base_station_config_capture_manager = None
         base_station_config_exchanges = []
@@ -2536,8 +2537,8 @@ class MeasureExecutor(IStepExecutor):
                     from app.models.test_plan import TestExecution as ExecutionRow
                     updated = context.db.query(ExecutionRow).filter(
                         ExecutionRow.id == context.test_execution.id, ExecutionRow.status == "running",
-                    ).update({ExecutionRow.config: {
-                        **(context.test_execution.config or {}), "asc_playback_evidence": evidence,
+                    ).update({ExecutionRow.hardware_status: {
+                        **(context.test_execution.hardware_status or {}), "asc_playback_evidence": evidence,
                     }}, synchronize_session=False)
                     context.db.commit()
                     if updated != 1:
@@ -3083,6 +3084,11 @@ class MeasureExecutor(IStepExecutor):
                         ),
                     )
 
+                if engine_mode == EngineMode.EXTERNAL_ASC and config.asc_manifest_sha256:
+                    simulated_playback_task = asyncio.create_task(generator.finish_simulated_pass(
+                        context.db.get_bind(), context.test_execution.id,
+                    ))
+
             # --- 第一次 DUT attach：只有本次 RF 初始态全部成功后才允许进入 ---
             # BaseStation 的 channel/BW/功率已由上面的配置入口下发并回读；F64
             # 模型、中心频率、显式工作点和 STATIC/GO 状态也均已建立。这里不再
@@ -3435,6 +3441,11 @@ class MeasureExecutor(IStepExecutor):
                         ),
                         measurements={"attach_milestones": milestones},
                     )
+                if engine_mode == EngineMode.EXTERNAL_ASC and config.asc_manifest_sha256:
+                    simulated_playback_task = asyncio.create_task(generator.finish_simulated_pass(
+                        context.db.get_bind(), context.test_execution.id,
+                    ))
+
                 # ③ 衰落态再确认一次 —— 衰落一上就掉线是现场常见形态
                 milestones["fading_attach"] = await _probe_ue_attached("fading")
                 logger.info(
@@ -4222,8 +4233,8 @@ class MeasureExecutor(IStepExecutor):
                         az["rank_indicator"],
                     )
 
-            if engine_mode == EngineMode.EXTERNAL_ASC and config.asc_manifest_sha256:
-                await generator.finish_simulated_pass(context)
+            if simulated_playback_task is not None:
+                await simulated_playback_task
 
             total_duration = loop.time() - t_start
 
@@ -4434,6 +4445,9 @@ class MeasureExecutor(IStepExecutor):
         except _CaSetupBlocked as exc:
             ca_setup_blocker = str(exc)
         finally:
+            if simulated_playback_task is not None:
+                simulated_playback_task.cancel()
+                await asyncio.gather(simulated_playback_task, return_exceptions=True)
             if base_station_config_capture_manager is not None:
                 base_station_config_capture_manager.__exit__(None, None, None)
             cleanup_result = await cleanup_chamber_instruments(

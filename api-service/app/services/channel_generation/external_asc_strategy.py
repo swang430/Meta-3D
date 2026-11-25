@@ -114,29 +114,39 @@ class ExternalAscPathStrategy(BaseChannelGenerator):
                 return await self._load(cdl_model_data, simulation_rules, tmp)
         return await self._load(cdl_model_data, simulation_rules, self.asc_source_path)
 
-    async def finish_simulated_pass(self, context):
+    async def finish_simulated_pass(self, bind, execution_id):
+        """游标事务独立于测量及设备收尾；失败只回滚本任务。"""
+        from sqlalchemy.orm import Session
+        from app.models.test_plan import TestExecution
+        with Session(bind) as db:
+            execution = db.get(TestExecution, execution_id)
+            if execution is None:
+                raise ValueError("找不到本次模拟执行记录")
+            await self._record_simulated_pass(db, execution)
+
+    async def _record_simulated_pass(self, db, execution):
         """保存模拟播放游标。设备回读字段保持空值。"""
         from app.models.test_plan import TestExecution
 
         evidence = self.playback_evidence
         while True:
-            context.db.refresh(context.test_execution)
-            if context.test_execution.status != "running":
+            db.refresh(execution, attribute_names=["hardware_status", "status"])
+            if execution.status != "running":
                 raise ValueError("执行已停止，保留上次记录的模拟播放位置")
             elapsed = self.emulator.simulated_playback_elapsed()
             if elapsed is None:
                 raise ValueError("模拟驱动没有正在播放的时间轴")
             last = evidence["last_asc_response_index"]
             index = min(last, int(elapsed * evidence["rate_hz"]))
-            record = dict(context.test_execution.config["asc_playback_evidence"])
+            record = dict(execution.hardware_status["asc_playback_evidence"])
             record.update(simulated_response_index=index,
                           simulated_response_time_s=index / evidence["rate_hz"],
                           simulated_last_response_reached=index == last)
-            updated_config = {**context.test_execution.config, "asc_playback_evidence": record}
-            updated = context.db.query(TestExecution).filter(
-                TestExecution.id == context.test_execution.id, TestExecution.status == "running",
-            ).update({TestExecution.config: updated_config}, synchronize_session=False)
-            context.db.commit()
+            updated_status = {**execution.hardware_status, "asc_playback_evidence": record}
+            updated = db.query(TestExecution).filter(
+                TestExecution.id == execution.id, TestExecution.status == "running",
+            ).update({TestExecution.hardware_status: updated_status}, synchronize_session=False)
+            db.commit()
             if updated != 1:
                 raise ValueError("执行已停止，保留上次记录的模拟播放位置")
             if index == last:
