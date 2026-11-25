@@ -16,8 +16,13 @@
 不传 metadata 给 ChannelEgine (因为根本不调用)。
 """
 
+import asyncio
+import hashlib
 import logging
 import os
+import shutil
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Dict, List
 
 from app.hal.channel_emulator import ChannelEmulatorDriver, ChannelLoadMode
@@ -37,10 +42,15 @@ class ExternalAscPathStrategy(BaseChannelGenerator):
         asc_source_path: str,
         *,
         operation_recorder: Any | None = None,
+        manifest_sha256: str | None = None,
+        check_execution_running=None,
     ):
         super().__init__(emulator, chamber_config, calibration_entries)
         self.asc_source_path = asc_source_path
         self._operation_recorder = operation_recorder
+        self.playback_evidence = None
+        self.manifest_sha256 = manifest_sha256
+        self.check_execution_running = check_execution_running
 
     async def _invoke_channel_operation(self, **kwargs: Any) -> Any:
         if self._operation_recorder is None:
@@ -81,6 +91,69 @@ class ExternalAscPathStrategy(BaseChannelGenerator):
             f"handing off to HAL EXTERNAL_WAVEFORM load"
         )
 
+        directory = Path(self.asc_source_path)
+        if self.manifest_sha256:
+            from app.services.instrument_hal_service import is_mock_driver
+            if not is_mock_driver(self.emulator):
+                raise ValueError("本次登记的是模拟输入包，不能作为已编译的设备工程加载")
+            from .conducted_asc import playback_evidence
+
+            def stage_inputs(staged):
+                raw = (directory / "manifest.json").read_bytes()
+                if hashlib.sha256(raw).hexdigest() != self.manifest_sha256:
+                    raise ValueError("八路传导清单与用例保存的摘要不一致")
+                (staged / "manifest.json").write_bytes(raw)
+                for name in asc_files:
+                    shutil.copyfile(directory / name, staged / name)
+                return playback_evidence(staged)
+
+            with TemporaryDirectory(prefix="conducted-asc-") as tmp:
+                self.playback_evidence = await asyncio.to_thread(stage_inputs, Path(tmp))
+                if self.check_execution_running:
+                    self.check_execution_running()
+                return await self._load(cdl_model_data, simulation_rules, tmp)
+        return await self._load(cdl_model_data, simulation_rules, self.asc_source_path)
+
+    async def finish_simulated_pass(self, bind, execution_id):
+        """游标事务独立于测量及设备收尾；失败只回滚本任务。"""
+        from sqlalchemy.orm import Session
+        from app.models.test_plan import TestExecution
+        with Session(bind) as db:
+            execution = db.get(TestExecution, execution_id)
+            if execution is None:
+                raise ValueError("找不到本次模拟执行记录")
+            await self._record_simulated_pass(db, execution)
+
+    async def _record_simulated_pass(self, db, execution):
+        """保存模拟播放游标。设备回读字段保持空值。"""
+        from app.models.test_plan import TestExecution
+
+        evidence = self.playback_evidence
+        while True:
+            db.refresh(execution, attribute_names=["hardware_status", "status"])
+            if execution.status != "running":
+                raise ValueError("执行已停止，保留上次记录的模拟播放位置")
+            elapsed = self.emulator.simulated_playback_elapsed()
+            if elapsed is None:
+                raise ValueError("模拟驱动没有正在播放的时间轴")
+            last = evidence["last_asc_response_index"]
+            index = min(last, int(elapsed * evidence["rate_hz"]))
+            record = dict(execution.hardware_status["asc_playback_evidence"])
+            record.update(simulated_response_index=index,
+                          simulated_response_time_s=index / evidence["rate_hz"],
+                          simulated_last_response_reached=index == last)
+            updated_status = {**execution.hardware_status, "asc_playback_evidence": record}
+            updated = db.query(TestExecution).filter(
+                TestExecution.id == execution.id, TestExecution.status == "running",
+            ).update({TestExecution.hardware_status: updated_status}, synchronize_session=False)
+            db.commit()
+            if updated != 1:
+                raise ValueError("执行已停止，保留上次记录的模拟播放位置")
+            if index == last:
+                return
+            await asyncio.sleep(min(1.0, max(.001, evidence["first_to_last_response_s"] - elapsed)))
+
+    async def _load(self, cdl_model_data, simulation_rules, directory):
         # HAL load — 跟 ExternalWaveformStrategy 走同一接口, 只是 waveform_dir
         # 来源不同。F64 driver 内部用 FTP 上传到 D:\User Emulations\<session>\
         model_name = cdl_model_data.get("model_name", "external-asc-bundle")
@@ -99,7 +172,7 @@ class ExternalAscPathStrategy(BaseChannelGenerator):
                 model_name=model_name,
                 scenario=scenario,
                 parameters=simulation_rules,
-                waveform_dir=self.asc_source_path,
+                waveform_dir=directory,
             ),
         )
 

@@ -70,6 +70,7 @@ def test_history_returns_the_shared_execution_evidence_outcome():
 
 def test_case_status_returns_the_same_execution_evidence_outcome():
     execution = _invalid_formal_execution()
+    execution.hardware_status = None
 
     response = get_case_execution_status(
         execution.id,

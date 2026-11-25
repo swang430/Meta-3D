@@ -133,6 +133,14 @@ async def run_base_station_execution_session(
         if not isinstance(binding, Mapping):
             return None  # CE strict parser owns this malformed-freeze error.
         config = load_mimo_ota_config(execution)
+        if config.asc_manifest_sha256:
+            from app.services.instrument_hal_service import is_mock_driver
+            drivers = _locked_hal.drivers
+            if not all(is_mock_driver(drivers.get(role)) for role in ("baseStation", "channelEmulator", "positioner")) or any(
+                not is_mock_driver(driver) for driver in drivers.values()
+            ):
+                return "八路 ASC 输入包的用例核对仅限全模拟环境。"
+
         route_freeze=read_execution_route_compensation(execution)
         verdict = evaluate_path_loss_preflight(
             db,

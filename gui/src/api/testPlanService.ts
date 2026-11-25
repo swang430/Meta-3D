@@ -264,6 +264,22 @@ export interface CaseExecuteResponse {
 }
 
 export interface CaseExecutionStatus {
+  asc_playback_evidence?: {
+    manifest_sha256: string
+    files: Record<string, string>
+    response_count: number
+    rate_hz: number
+    first_to_last_response_s: number
+    last_asc_response_index: number
+    simulated_response_index?: number
+    simulated_response_time_s?: number
+    simulated_last_response_reached?: boolean
+    provenance: 'simulated'
+    simulated_load_accepted: boolean
+    device_load_accepted: null
+    last_observed_device_response: null
+    source_frame_times_s: null
+  } | null
   execution_id: string
   status: string
   source_test_case_id?: string | null
