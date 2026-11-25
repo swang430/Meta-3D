@@ -71,6 +71,8 @@ class BuiltProject(BaseModel):
 
 class BuildParameters(BaseModel):
     model_config = {"extra": "forbid"}
+    chamber_sha256: str | None = None
+    installation: dict | None = None
     mode: Literal["conducted", "ota"]
     clustering_method: Literal["delay_bins"] | None = None
     speed_m_s: float | None = Field(default=None, gt=0, allow_inf_nan=False)
@@ -176,8 +178,6 @@ def worker_environment(root: Path):
     env.pop("HYPERRT_PATH", None)
     if "CHANNEL_ENGINE_PATH" not in env and local.get("CHANNEL_ENGINE_PATH"):
         env["CHANNEL_ENGINE_PATH"] = local["CHANNEL_ENGINE_PATH"]
-    if local.get("MPDB_PROBE_GEOMETRY_PATH"):
-        env.setdefault("MPDB_PROBE_GEOMETRY_PATH", local["MPDB_PROBE_GEOMETRY_PATH"])
     engine = Path(env.get("CHANNEL_ENGINE_PATH", ""))
     if not engine.is_absolute() or not (engine / "mimo_ota_simulator").is_dir():
         raise HTTPException(503, "找不到信道引擎。请在 channel-engine-service/.env 中设置 CHANNEL_ENGINE_PATH 为引擎的绝对路径；启动环境中的同名设置优先。")
@@ -246,6 +246,36 @@ def checked_manifest(directory: Path, role: str, expected: int):
     return manifest
 
 
+def source_chamber_geometry(folder, installation=None):
+    from app.db.database import SessionLocal
+    from app.services.mpdb_chamber import chamber_geometry
+
+    if not (folder / "source.zip").is_file():
+        raise HTTPException(404, "导入记录已过期，请重新选择原始文件")
+    _, conducted = offline_modules()
+    try:
+        with zipfile.ZipFile(folder / "source.zip") as outer:
+            with zipfile.ZipFile(io.BytesIO(outer.read("R0B0S0D.mpdb"))) as db:
+                frequencies = np.unique(conducted.column(db, json.loads(db.read("mpdb.json")), "LINK", "FREQUENCY"))
+                if len(frequencies) != 1 or not np.isfinite(frequencies[0]) or frequencies[0] <= 0:
+                    raise ValueError("无法确定唯一的有效载频")
+        with SessionLocal() as session:
+            timing = json.loads((folder / "timing.json").read_text())
+            return chamber_geometry(session, float(frequencies[0]) / 1e6, timing["tx_ports"], installation)
+    except (KeyError, ValueError, TypeError) as exc:
+        raise HTTPException(422, f"当前暗室无法生成空口工程：{exc}") from exc
+
+
+@router.get("/{source_id}/ota-chamber")
+def preview_ota_chamber(source_id: UUID):
+    return source_chamber_geometry(storage() / str(source_id))
+
+
+@router.post("/{source_id}/ota-chamber")
+def preview_installed_chamber(source_id: UUID, installation: dict):
+    return source_chamber_geometry(storage() / str(source_id), installation)
+
+
 @router.post(
     "/{source_id}/build", response_model=BuiltProject, response_model_exclude_none=True
 )
@@ -279,17 +309,13 @@ def build_project(source_id: UUID, params: BuildParameters):
             arguments.append(str(folder / "members.npz"))
         env = worker_environment(ROOT)
         if params.mode == "ota":
-            source_geometry = Path(env.get("MPDB_PROBE_GEOMETRY_PATH") or
-                                   Path(env["CHANNEL_ENGINE_PATH"]) / "examples/imt_16probe_geometry.json")
+            layout = source_chamber_geometry(folder, params.installation)
+            if params.chamber_sha256 != layout["configuration_sha256"]:
+                raise HTTPException(409, "当前暗室配置或校准已改变，请重新核对后再生成")
             geometry = stage / "probe_geometry.json"
-            try:
-                geometry.write_bytes(source_geometry.read_bytes())
-                probes = json.loads(geometry.read_text())["probe_azimuth_zenith_deg"]
-                if not isinstance(probes, list) or not probes:
-                    raise ValueError
-            except (ValueError, OSError, KeyError, TypeError) as exc:
-                raise HTTPException(422, "探头布局无法读取或缺少探头角度，请检查配置") from exc
-            env["MPDB_PROBE_GEOMETRY_PATH"] = str(geometry)
+            geometry.write_text(json.dumps(layout, ensure_ascii=False, allow_nan=False))
+            probes = layout["probe_azimuth_zenith_deg"]
+            arguments.append(str(geometry))
 
         try:
             code, message = run_worker(
@@ -327,6 +353,8 @@ def build_project(source_id: UUID, params: BuildParameters):
             manifests = {}
             for role, directory in directories.items():
                 manifest = checked_manifest(directory, role, len(paths))
+                if role != "conducted" and manifest.get("geometry") != json.loads(geometry.read_text()):
+                    raise HTTPException(500, "工程使用的探头布局与本次暗室配置不符")
                 if {tuple(link.get(k) for k in keys) for link in manifest["links"]} != paths:
                     raise HTTPException(500, f"{role} 工程清单中的端口与预期通路不符")
                 for link in manifest["links"]:

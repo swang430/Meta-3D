@@ -1,6 +1,5 @@
 """用同一份上传数据构建传导或 OTA 工程，计算在独立进程运行。"""
 
-import os
 import io
 import hashlib
 import json
@@ -19,7 +18,7 @@ else:
     from imt_conducted_spectrum import column
 
 
-def generate_ota(archive, output, playback):
+def generate_ota(archive, output, playback, geometry):
     from mimo_ota_simulator.imt_probe_bundle import read_columns, run
     if __package__:
         from .mpdb_dynamic_timeline import generate
@@ -50,8 +49,9 @@ def generate_ota(archive, output, playback):
         raise ValueError("源帧编号与已检查的时间轴不符")
     if playback["rate_hz"] <= 2 * np.max(np.abs(doppler)):
         raise ValueError("输出更新率必须高于原始射线最大绝对多普勒频移的两倍")
-    geometry = Path(os.environ.get("MPDB_PROBE_GEOMETRY_PATH") or
-                    Path(os.environ["CHANNEL_ENGINE_PATH"]) / "examples/imt_16probe_geometry.json")
+    chamber = json.loads(geometry.read_text())
+    if not chamber.get("chamber_id") or not chamber.get("probe_connections"):
+        raise ValueError("布局缺少实际暗室或通路记录")
     output.mkdir()
     run(archive, geometry, output / "baseline", 1.0)
     # 上游 CLI 将所有调用参数都标为操作员输入；此处的 1 Hz 只用于源帧顺序浏览。
@@ -78,4 +78,4 @@ if __name__ == "__main__":
             print(exc, file=sys.stderr)
             sys.exit(3)
     else:
-        generate_ota(archive, output, json.loads(Path(sys.argv[4]).read_text()))
+        generate_ota(archive, output, json.loads(Path(sys.argv[4]).read_text()), Path(sys.argv[5]))

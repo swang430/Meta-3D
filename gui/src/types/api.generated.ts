@@ -41,6 +41,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/channel-assets/mpdb-projects/{source_id}/ota-chamber": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Preview Ota Chamber */
+        get: operations["preview_ota_chamber_api_v1_channel_assets_mpdb_projects__source_id__ota_chamber_get"];
+        put?: never;
+        /** Preview Installed Chamber */
+        post: operations["preview_installed_chamber_api_v1_channel_assets_mpdb_projects__source_id__ota_chamber_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/channel-assets/mpdb-projects/{source_id}/build": {
         parameters: {
             query?: never;
@@ -3638,6 +3656,12 @@ export interface components {
         };
         /** BuildParameters */
         BuildParameters: {
+            /** Chamber Sha256 */
+            chamber_sha256?: string | null;
+            /** Installation */
+            installation?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * Mode
              * @enum {string}
@@ -8081,6 +8105,74 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ImportedSource"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_ota_chamber_api_v1_channel_assets_mpdb_projects__source_id__ota_chamber_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    preview_installed_chamber_api_v1_channel_assets_mpdb_projects__source_id__ota_chamber_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

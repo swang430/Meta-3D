@@ -76,8 +76,9 @@ def test_same_import_can_build_twice_and_download_independent_archives(
     (tmp_path / "mimo_ota_simulator").mkdir()
     monkeypatch.setenv("CHANNEL_ENGINE_PATH", str(tmp_path))
 
-    (tmp_path / "examples").mkdir()
-    (tmp_path / "examples/imt_16probe_geometry.json").write_text(json.dumps({"probe_azimuth_zenith_deg": [[0,90],[180,90]]}))
+    geometry = {"chamber_id":"fixture", "configuration_sha256":"fixture-digest",
+                "probe_azimuth_zenith_deg":[[0,90],[180,90]]}
+    monkeypatch.setattr(mpdb_projects, "source_chamber_geometry", lambda *args: geometry)
     mutations = {}
     include_evidence = True
 
@@ -95,6 +96,8 @@ def test_same_import_can_build_twice_and_download_independent_archives(
                 mutations[role](directory, names)
             manifest = {"build": output.parent.name, "role": role,
                         "links": [dict(file=name, tx=0, **({"rx":0} if mode == "conducted" else {"probe":i//2, "polarization":("theta","phi")[i%2]})) for i,name in enumerate(names)]}
+            if mode == "ota":
+                manifest["geometry"] = json.loads(Path(args[-1]).read_text())
             (directory / "manifest.json").write_text(json.dumps(manifest))
         if mode == "conducted":
             if include_evidence:
@@ -183,7 +186,7 @@ def test_same_import_can_build_twice_and_download_independent_archives(
     assert client.post(build_url,json={"mode":"ota"}).status_code == 422
     assert client.post(build_url,json={"mode":"ota","rate_hz":100}).status_code == 422
     assert client.post(build_url,json={"mode":"ota","speed_m_s":5,"rate_hz":100}).status_code == 422
-    explicit = {"speed_m_s":5,"rate_quality":"dense"}
+    explicit = {"speed_m_s":5,"rate_quality":"dense","chamber_sha256":"fixture-digest"}
     for mode, count in [("conducted", 1), ("ota", 4)]:
         response = client.post(
             build_url, json={"mode": mode, **(explicit if mode == "ota" else {})}

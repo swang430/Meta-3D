@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import axios from 'axios'
 import {
   Alert,
@@ -39,6 +39,25 @@ export function MpdbProjectPanel() {
     Partial<Record<ProjectMode, Project>>
   >({})
   const timing = source?.timing
+  const fileRevision = useRef(0)
+  const [revision, refreshChamber] = useState(0)
+  const [installation, setInstallation] = useState<Record<string,unknown> | null>(null)
+  const [chamber, setChamber] = useState<{ source: string; name?: string; count?: number; digest?: string; routes?: string[]; error?: string } | null>(null)
+  useEffect(() => {
+    if (mode !== 'ota' || !source) return
+    let current = true
+    setChamber(null)
+    const url = root+'/'+source.source_id+'/ota-chamber'
+    const request = installation ? client.post(url, installation) : client.get(url)
+    request.then(({data}) => {
+      if (current) setChamber({source:source.source_id,name:data.chamber_name,count:data.probe_connections.length, digest:data.configuration_sha256,
+        routes:Object.entries(data.tx_inputs).map(([tx,input])=>"发射端口 "+tx+" → F64 输入 "+input).concat(data.probe_connections.flatMap((p:{index:number;feeds:Record<string,{probe_number:number;ce_port:string;value_db:number}>}) => Object.entries(p.feeds).map(([pol,f])=>
+          "工程探头 "+p.index+" "+pol+" → 实物探头 "+f.probe_number+"，输出 "+f.ce_port+"，路径损耗 "+f.value_db+" dB")))})
+    }).catch(e => {
+      if (current) setChamber({source:source.source_id,error:e.response?.data?.detail || '无法读取当前暗室配置'})
+    })
+    return () => { current = false }
+  }, [mode, source, installation, revision])
   const selected = timing?.source_times_s ? 'original' : choice
   const distances = timing?.distances_m ?? []
   const choose = source?.clustering === 'missing'
@@ -81,7 +100,7 @@ export function MpdbProjectPanel() {
     try {
       const { data } = await client.post(
         root + '/' + encodeURIComponent(source.source_id) + '/build',
-        mode === 'conducted' && choose && method ? { ...parameters, clustering_method: method } : parameters,
+        mode === 'conducted' && choose && method ? { ...parameters, clustering_method: method } : mode === "ota" ? {...parameters, installation, chamber_sha256:chamber?.digest} : parameters,
         { timeout: 0 },
       )
       const result = readProject(data, mode, window.location.origin)
@@ -161,10 +180,21 @@ export function MpdbProjectPanel() {
           </>
         ) : (
           <>
+            <FileInput label="实际暗室安装登记" description="选择本暗室的安装登记 JSON，已在实验室登记时可省略。"
+              accept=".json" disabled={!!busy} clearable onChange={async f => {
+                const id = ++fileRevision.current
+                setError(''); setChamber(null); setProjects({}); setInstallation(f ? {} : null)
+                if (f) {
+                  try { const value = JSON.parse(await f.text()); if (!value || typeof value !== "object" || Array.isArray(value)) throw Error(); if (id === fileRevision.current) setInstallation(value) }
+                  catch { if (id === fileRevision.current) setError('安装登记必须是包含接线信息的 JSON 对象') }
+                }
+              }}/>
             <Text size="sm">{!timing ? '请先选择文件，检查是否记录了帧时间。' : timing.plan_sha256 ? '已核对清单中的下行收发节点、路径和全部源帧，使用清单记录的原始时间，无需填写车速。这些信息不能验证原始文件未记录的运行编号。' : timing.time_source ? '原始文件时间来源：'+timing.time_source : '原始文件未记录可确认的帧时间，帧编号不代表秒。请明确选择播放假设。'}</Text>
             {timing && !timing.source_times_s && <Select label="播放时间的依据" value={choice || null} disabled={!!busy}
               placeholder="请选择" onChange={(v)=>{setChoice((v || '') as TimingMode);setProjects({})}}
               data={[{value:'constant',label:'假定恒速，由各段位移推算时长'},{value:'segments',label:'逐段输入时长，支持变速或停车'}]}/>}
+            <Button variant="subtle" disabled={!!busy || !source} onClick={()=>refreshChamber(v=>v+1)}>重新核对暗室配置</Button>
+            {chamber?.routes && <details><summary>查看逐路接线与采用的校准</summary>{chamber.routes.map(row=><Text key={row}>{row}</Text>)}</details>}
             <Group grow>
               {selected==='constant' && <TextInput
                 label="操作员假定的恒定速度（m/s）"
@@ -184,15 +214,17 @@ export function MpdbProjectPanel() {
                 value={rate} disabled={!!busy} allowDeselect={false} onChange={(v)=>{setRate(v || 'standard');setProjects({})}}
                 data={[{value:'standard',label:'标准'},{value:'dense',label:'加密（两倍更新率）'}]}/>
             <Alert color="yellow">
-              按发射端口和探头的两个极化方向分别生成 ASC
-              文件，输出动态工程，以及供比较的基线工程。探头数量和角度取自服务配置的布局；未指定时使用 16 个理想双极化探头的参考布局。生成计算采用所选时间轴，保留原始位置和射线多普勒频移，不按假定速度重算。探头布局和播放效果待现场验证。
+              {chamber?.source === source?.source_id && chamber ? chamber.error ||
+                ('当前暗室：'+chamber.name+'，已核对 '+chamber.count+' 个双极化位置的接线和路径校准。')
+                : '选择文件后读取当前暗室、探头接线和本次载频的校准记录。'}
+              生成时再次核对。ASC 保留空间权重，播放前须核对路径补偿。实际播放效果待现场验证。
             </Alert>
           </>
         )}
         <Group>
           <Button
             loading={!!busy}
-            disabled={!source || !valid || (mode === 'conducted' && choose && !method)}
+            disabled={!source || !valid || (mode === "ota" && (!chamber?.name || chamber.source !== source.source_id)) || (mode === 'conducted' && choose && !method)}
             onClick={build}
           >
             生成信道工程

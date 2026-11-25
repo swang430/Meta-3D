@@ -13,6 +13,17 @@ from scripts.mpdb_workbench import generate_ota
 from scripts.mpdb_playback import inspect_timing, resolve_playback
 
 
+def chamber_fixture(root):
+    # 仅在临时目录使用的测试接线，用于比较两条计算路径。
+    path = root / "test-chamber.json"
+    angles = [[i * 22.5, 80 + (i % 3) * 10] for i in range(16)]
+    layout = dict(chamber_id="test-only", probe_azimuth_zenith_deg=angles,
+                  probe_connections=[dict(index=i) for i in range(16)],
+                  fit_points_m=[[0,0,0],[.05,0,0],[0,.05,.03]],check_points_m=[[.025,.03,0]])
+    path.write_text(json.dumps(layout))
+    return path
+
+
 @unittest.skipUnless(
     os.getenv("IMT_MPDB_TEST_ARCHIVE"), "需要指定四发两收原始 MPDB 压缩包"
 )
@@ -38,7 +49,7 @@ class ProbeProjectTest(unittest.TestCase):
             with zipfile.ZipFile(repacked) as db:
                 timing = inspect_timing(db, json.loads(db.read("mpdb.json")))
             playback = resolve_playback(timing,None,None,"standard")
-            generate_ota(variant, root/"project", playback)
+            generate_ota(variant, root/"project", playback, chamber_fixture(root))
             report=json.loads((root/"project/dynamic/manifest.json").read_text())
             self.assertEqual(report["segment_average_speeds_m_s"],[None]*37)
             self.assertEqual(report["header"]["cir_count"],int(0.74 * playback["rate_hz"])+1)
@@ -52,13 +63,10 @@ class ProbeProjectTest(unittest.TestCase):
             with zipfile.ZipFile(io.BytesIO(outer.read("R0B0S0D.mpdb"))) as db:
                 timing = inspect_timing(db, json.loads(db.read("mpdb.json")))
         playback = resolve_playback(timing, 100, None, "standard")
-        geometry = (
-            Path(os.environ["CHANNEL_ENGINE_PATH"])
-            / "examples/imt_16probe_geometry.json"
-        )
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            generate_ota(archive, root / "new", playback)
+            geometry = chamber_fixture(root)
+            generate_ota(archive, root / "new", playback, geometry)
             upstream(
                 archive, geometry, root / "new/baseline", root / "reference", 100, playback["rate_hz"]
             )
@@ -79,7 +87,7 @@ class ProbeProjectTest(unittest.TestCase):
         playback = resolve_playback(timing, None, segments, "standard")
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "project"
-            generate_ota(archive, output, playback)
+            generate_ota(archive, output, playback, chamber_fixture(Path(tmp)))
             for name, frames in (("baseline", 38), ("dynamic", int(1.84 * playback["rate_hz"])+1)):
                 folder = output / name
                 manifest = json.loads((folder / "manifest.json").read_text())
