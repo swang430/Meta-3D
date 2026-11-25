@@ -82,6 +82,27 @@ def test_registered_working_point_requires_matching_physical_evidence(tmp_path, 
     with pytest.raises(ValueError, match="平均实测功率超过"):
         plan()
     point.update(dut_average_dbm=-70, allowed_error_db=0.2)
+    prediction_data = dict(receiver_power_verified=True, bandwidth_source="power_reference",
+                           analysis_bandwidth_hz=20e6, receiver_band_power_mw=[
+                               dict(frame=7,rx=r,asc_mw=10**(-89.8/10)) for r in [0,1]])
+    report.update(put("prediction.json",prediction_data))
+    anchor["prediction_sha256"] = report["sha256"]
+    for check in anchor["receiver_ports"].values():
+        check.update(dut_average_dbm=-89.8, allowed_error_db=0.1)
+    refresh()
+    assert plan()["verified_operating_point"] is True
+    point["dut_average_dbm"] = -89.8000001
+    refresh()
+    with pytest.raises(ValueError, match="允许误差"):
+        plan()
+    for row in prediction_data["receiver_band_power_mw"]:
+        row["asc_mw"] = 10**(-80.01/10)
+    for check in anchor["receiver_ports"].values():
+        check["dut_average_dbm"] = -80.01
+    report.update(put("prediction.json",prediction_data))
+    anchor["prediction_sha256"] = report["sha256"]
+    refresh()
+    assert plan()["verified_operating_point"] is True
     anchor["source"]="simulated"
     report["reference_measurement"]=put("anchor.json",anchor)
     with pytest.raises(ValueError,match="不一致"):

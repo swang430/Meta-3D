@@ -1,6 +1,6 @@
 """从同一工程的接收功率预测和已采用校准，计算公共偏移与逐口目标。"""
 from decimal import Decimal
-from math import isclose, isfinite, log10
+from math import isclose, isfinite, log10, nextafter
 
 
 def receiver_levels(rows, frame, targets, calibration, source_to_receiver):
@@ -145,7 +145,10 @@ def registered_plan(registration, asset_sha, bandwidth_mhz, frame, targets, cali
                         or actual + uncertainty + calibration["required_margin_db"] > limits["max_safe_input_dbm"]):
                     raise ValueError(f"接收插口 {rx} 的平均实测功率超过校准峰值或安全范围")
             deviation = abs(Decimal(str(actual)) - Decimal(str(prediction["target_dut_dbm"])))
-            if deviation + Decimal(str(uncertainty)) > Decimal(str(tolerance)):
+            # 对数换算的预测值允许一个浮点间距的舍入差；该余量不参与安全上限判断。
+            adjacent = nextafter(prediction["target_dut_dbm"], actual)
+            minimum_deviation = min(deviation, abs(Decimal(str(actual)) - Decimal(str(adjacent))))
+            if minimum_deviation + Decimal(str(uncertainty)) > Decimal(str(tolerance)):
                 raise ValueError(f"接收插口 {rx} 的功率偏差 {deviation} dB 加测量不确定度 "
                                  f"{uncertainty} dB 超出工作点允许误差 {tolerance} dB")
         plan["verified_operating_point"] = True
