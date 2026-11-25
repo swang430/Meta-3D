@@ -5,6 +5,7 @@ import math
 
 from uuid import UUID
 
+from app.schemas.topology_ports import resolve_port_direction
 from app.models.probe import Probe
 from app.models.switch_topology import SwitchTopology
 from app.hal.propsim_f64 import RealPropsimF64Driver
@@ -53,7 +54,14 @@ def input_wiring(topology):
     for e in topology.connections or []:
         if e["id"] not in edges or nodes.get(e["target"], {}).get("type") != "channel_emulator":
             continue
-        if e.get("direction") != "DL" or nodes.get(e["source"], {}).get("type") not in ("communication_tester","bse_port"):
+        source = nodes.get(e["source"], {})
+        if source.get("type") not in ("communication_tester", "bse_port"):
+            continue
+        port_direction, _ = resolve_port_direction(source, e.get("source_pin"))
+        edge_direction = e.get("direction")
+        if edge_direction not in (None, "DL") or port_direction == "input":
+            continue
+        if edge_direction is None and port_direction != "output":
             continue
         port = e.get("target_pin")
         if not port or not e.get("source_pin") or port in result:

@@ -48,3 +48,9 @@ def test_downlink_wiring_uses_mode_edges_when_active_list_empty():
                    connections=[dict(id="wire",source="bs",target="ce",source_pin="RF2",
                                      target_pin="in2",direction="DL",modes=["mimo_ota"])])
     assert input_wiring(topology)["in2"]["source_pin"] == "RF2"
+    del topology.connections[0]["direction"]
+    topology.nodes[0]["params"] = {"port_roles": {"RF2": "dl"}}
+    assert input_wiring(topology)["in2"]["source_pin"] == "RF2"
+    topology.nodes[0]["params"]["port_roles"]["RF2"] = "ul"
+    topology.connections[0]["direction"] = "DL"
+    assert not input_wiring(topology)
