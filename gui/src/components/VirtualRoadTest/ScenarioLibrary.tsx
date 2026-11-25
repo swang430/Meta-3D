@@ -19,7 +19,7 @@ import {
 } from '@mantine/core'
 import { IconSearch, IconPlus, IconAlertCircle, IconBooks } from '@tabler/icons-react'
 import { fetchScenarios } from '../../api/roadTestService'
-import type { ScenarioCategory, TestMode } from '../../types/roadTest'
+import type { ScenarioCategory } from '../../types/roadTest'
 import ScenarioCard from './ScenarioCard'
 import { CreateScenarioDialog } from './CreateScenarioDialog'
 
@@ -34,10 +34,10 @@ const CATEGORIES: { value: ScenarioCategory; label: string }[] = [
 ]
 
 interface ScenarioLibraryProps {
-  testMode?: TestMode
+  onViewHistory: import('./index').SceneHistoryLink
 }
 
-export default function ScenarioLibrary({ testMode }: ScenarioLibraryProps) {
+export default function ScenarioLibrary({ onViewHistory }: ScenarioLibraryProps) {
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedCategory, setSelectedCategory] = useState<ScenarioCategory | null>(null)
   const [selectedSource, setSelectedSource] = useState<'standard' | 'custom' | null>(null)
@@ -155,7 +155,7 @@ export default function ScenarioLibrary({ testMode }: ScenarioLibraryProps) {
               <ScenarioCard
                 key={scenario.id}
                 scenario={scenario}
-                testMode={testMode}
+                onViewHistory={onViewHistory}
                 onRefresh={refetch}
               />
             ))}
@@ -170,7 +170,6 @@ export default function ScenarioLibrary({ testMode }: ScenarioLibraryProps) {
           setCreateDialogOpened(false)
           refetch()
         }}
-        testMode={testMode}
       />
     </Stack>
   )

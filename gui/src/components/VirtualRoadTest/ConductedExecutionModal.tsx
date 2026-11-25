@@ -21,10 +21,11 @@ const fields = [
   ['实验室', 'labs', 'lab_profile_id'], ['接线方案', 'topologies', 'topology_id'], ['可播放工程', 'assets', 'asset_id'],
 ] as const
 
-export function ConductedExecutionModal({ opened, onClose, scenario, initialId }: {
+export function ConductedExecutionModal({ opened, onClose, scenario, initialId, onViewExecution }: {
   opened: boolean
   onClose: () => void
   scenario: { id: string; name: string }
+  onViewExecution?: (id: string) => void
   initialId?: string
 }) {
   const cache = useQueryClient()
@@ -136,6 +137,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
         <Button component="a" href={`/api/v1/reports/${encodeURIComponent(archive.data.id)}/download`} download variant="light">下载归档报告</Button>
       </Group>}
     </Stack>
+    {matches && onViewExecution && <Button variant="light" onClick={() => onViewExecution(id)}>在执行历史中查看本次执行</Button>}
     {report && <TestReportModal opened onClose={() => setReport(false)} executionId={id} />}
   </Modal>
 }

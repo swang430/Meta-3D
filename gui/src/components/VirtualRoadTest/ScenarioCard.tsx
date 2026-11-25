@@ -6,7 +6,7 @@
 
 import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { Card, Text, Badge, Group, Button, Stack, Tooltip, ActionIcon, Menu } from '@mantine/core'
+import { Modal, Card, Text, Badge, Group, Button, Stack, Tooltip, ActionIcon, Menu } from '@mantine/core'
 import { modals } from '@mantine/modals'
 import {
   IconMapPin,
@@ -21,7 +21,7 @@ import {
 } from '@tabler/icons-react'
 import { parseServerDateTime } from '../../utils/datetime'
 import { notifications } from '@mantine/notifications'
-import type { ScenarioSummary } from '../../types/roadTest'
+import { TestMode, type ScenarioSummary } from '../../types/roadTest'
 import { TestExecutionModal } from './TestExecutionModal'
 import { ScenarioDetailModal } from './ScenarioDetailModal'
 import { EditScenarioDialog } from './EditScenarioDialog'
@@ -29,7 +29,7 @@ import { deleteScenario } from '../../api/roadTestService'
 
 interface Props {
   scenario: ScenarioSummary
-  testMode?: import('../../types/roadTest').TestMode
+  onViewHistory: import('./index').SceneHistoryLink
   onRefresh?: () => void
 }
 
@@ -67,7 +67,7 @@ const countConfiguredSteps = (scenario: ScenarioSummary): number => {
   return count
 }
 
-export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
+export default function ScenarioCard({ scenario, onViewHistory, onRefresh }: Props) {
   const queryClient = useQueryClient()
   const configuredStepsCount = countConfiguredSteps(scenario)
   const [executionModalOpened, setExecutionModalOpened] = useState(false)
@@ -97,9 +97,9 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
     },
   })
 
-  const handleRun = () => {
-    setExecutionModalOpened(true)
-  }
+  const [choosingMode, setChoosingMode] = useState(false)
+  const [testMode, setTestMode] = useState<TestMode>(TestMode.CONDUCTED)
+
 
   const handleViewDetails = () => {
     setDetailModalOpened(true)
@@ -133,7 +133,7 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
             {CATEGORY_LABELS[scenario.category]}
           </Badge>
           {configuredStepsCount > 0 && (
-            <Tooltip label={`已配置 ${configuredStepsCount}/8 个测试步骤`}>
+            <Tooltip label={`已保存 ${configuredStepsCount} 项步骤预设`}>
               <Badge color="cyan" variant="dot" size="sm" leftSection={<IconSettings size={12} />}>
                 自定义步骤
               </Badge>
@@ -230,9 +230,9 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
             flex={1}
             variant="light"
             leftSection={<IconPlayerPlay size={16} />}
-            onClick={handleRun}
+            onClick={() => setChoosingMode(true)}
           >
-            执行测试
+            准备测试
           </Button>
           <Button
             variant="subtle"
@@ -245,11 +245,23 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
         </Group>
       </Stack>
 
-      {/* Test Execution Modal */}
+      <Button variant="subtle" onClick={() => onViewHistory(scenario)}>查看使用此场景的执行</Button>
+      <Modal opened={choosingMode} onClose={() => setChoosingMode(false)} title={scenario.name + ' · 选择测试方式'}>
+        <Stack>{[[TestMode.CONDUCTED, '传导测试'], [TestMode.OTA, '辐射测试（模拟硬件）'], [TestMode.DIGITAL_TWIN, '数字孪生（软件模拟）']].map(([mode, label]) =>
+          <Button key={mode} onClick={() => {
+            setTestMode(mode as TestMode)
+            setChoosingMode(false)
+            setExecutionModalOpened(true)
+          }}>{label}</Button>)}</Stack>
+      </Modal>
       <TestExecutionModal
         opened={executionModalOpened}
         onClose={() => setExecutionModalOpened(false)}
         scenario={scenario}
+        onViewExecution={id => {
+          setExecutionModalOpened(false)
+          onViewHistory(scenario, { id, mode: testMode })
+        }}
         testMode={testMode}
       />
 
@@ -270,7 +282,6 @@ export default function ScenarioCard({ scenario, testMode, onRefresh }: Props) {
           }
         }}
         scenario={scenario}
-        testMode={testMode}
       />
     </Card>
   )

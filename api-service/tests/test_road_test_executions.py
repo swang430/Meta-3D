@@ -176,6 +176,20 @@ class TestExecutionList:
         executions = response.json()
         assert isinstance(executions, list)
 
+    def test_filter_by_scenario_id(self, client: TestClient):
+        root = "/api/v1/road-test"
+        scenes = client.get(f"{root}/scenarios").json()
+        ids = []
+        for scene in scenes[:2]:
+            result = client.post(f"{root}/executions", json={
+                "mode": "digital_twin", "scenario_id": scene["id"], "config": {}
+            })
+            assert result.status_code == 201, result.text
+            ids.append(result.json()["execution_id"])
+        assert len(ids) == 2
+        response = client.get(f"{root}/executions", params={"scenario_id": scenes[0]["id"]})
+        assert [row["execution_id"] for row in response.json()] == ids[:1]
+
     def test_filter_by_mode(self, client: TestClient):
         """Test filtering executions by mode"""
         # Create executions with different modes

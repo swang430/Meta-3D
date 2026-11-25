@@ -63,6 +63,7 @@ export async function deleteScenario(scenarioId: string): Promise<void> {
 // ===== Execution APIs =====
 
 export interface ListExecutionsParams {
+  scenario_id?: string
   mode?: TestMode
   status?: ExecutionStatus
 }

@@ -550,12 +550,13 @@ def _execution_scenario(db: Session, row):
 async def list_executions(
     mode: Optional[TestMode] = None,
     status: Optional[ExecutionStatus] = None,
+    scenario_id: Optional[str] = None,
     db: Session = Depends(get_db),
 ):
     """
     List all test executions (DB-backed via test_executions table).
     """
-    rows = vrt_execution_service.list(db, mode=mode, status=status)
+    rows = vrt_execution_service.list(db, mode=mode, status=status, scenario_id=scenario_id)
     summaries = []
     for row in rows:
         scenario = _execution_scenario(db, row)

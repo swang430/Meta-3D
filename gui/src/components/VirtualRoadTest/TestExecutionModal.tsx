@@ -7,7 +7,8 @@ interface Props {
   opened: boolean
   onClose: () => void
   scenario: ScenarioSummary
-  testMode?: TestMode
+  testMode: TestMode
+  onViewExecution: (id: string) => void
 }
 
 export function TestExecutionModal(props: Props) {

@@ -27,7 +27,7 @@ export function StepConfigurationDisplay({ stepConfiguration }: Props) {
   if (!stepConfiguration) {
     return (
       <Alert icon={<IconInfoCircle size={16} />} title="无自定义配置" color="gray">
-        此场景使用默认的测试步骤配置。转换为测试计划时，将使用标准参数。
+        此场景没有保存测试步骤预设。
       </Alert>
     )
   }
@@ -47,7 +47,7 @@ export function StepConfigurationDisplay({ stepConfiguration }: Props) {
   return (
     <Stack gap="md">
       <Alert icon={<IconSettings size={16} />} title="自定义步骤配置" color="cyan">
-        以下步骤已预配置自定义参数。转换为测试计划时，这些参数将自动应用到相应步骤。
+        以下是随场景保存的预设参数。实际使用的配置请在本次测试准备页核对。
       </Alert>
 
       {stepConfiguration.chamber_init && (
