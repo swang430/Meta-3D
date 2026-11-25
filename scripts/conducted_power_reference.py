@@ -39,7 +39,7 @@ def power_basis(doc, digest, carrier, tx_ports, rx_ports, coefficients, frames, 
         if not isinstance(entry, dict):
             raise ValueError("链路参考需要 JSON 对象")
         record = {k:entry.get(k) for k in ("coefficient_unit","tx_plane","rx_plane","phase_origin",
-                  "relative_ray_phase","delay_origin","included_losses","antenna_response",
+                  "relative_ray_phase","carrier_phase_convention","delay_origin","included_losses","antenna_response",
                   "tx_impedance_ohm","rx_impedance_ohm")}
         basis["links"][key] = record
         ratio = None
@@ -49,7 +49,8 @@ def power_basis(doc, digest, carrier, tx_ports, rx_ports, coefficients, frames, 
             resistances = (record["tx_impedance_ohm"], record["rx_impedance_ohm"])
             if all(_number(r) and r>0 for r in resistances):
                 ratio = resistances[0] / resistances[1]
-        coherent = complex_source and (not doc or record["relative_ray_phase"] == "preserved")
+        coherent = complex_source and (not doc or (record["relative_ray_phase"] == "preserved"
+                                            and record["carrier_phase_convention"] == "included_in_coefficient"))
         known = all(isinstance(record[k],str) and record[k].strip().lower() not in ("","unknown","unverified","未知","未核验")
                     for k in ("tx_plane","rx_plane","included_losses"))
         complete = known and record["antenna_response"] in ("both","tx","rx","neither")
