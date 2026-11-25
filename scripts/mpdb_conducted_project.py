@@ -14,10 +14,12 @@ import zipfile
 import numpy as np
 
 if __package__:
+    from .conducted_power_reference import power_basis
     from .imt_conducted import inspect
     from .mpdb_layout import port_layout
     from .imt_conducted_spectrum import column
 else:
+    from conducted_power_reference import power_basis
     from imt_conducted import inspect
     from mpdb_layout import port_layout
     from imt_conducted_spectrum import column
@@ -77,7 +79,7 @@ def validate_members_container(members, lid):
                     raise ValueError("成员表数组类型或声明长度与文件不符")
 
 
-def assemble(dbpath, stage, method=None, supplied=None):
+def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
     if method not in (None, "delay_bins"):
         raise ValueError("仅支持复用同源成员表或按时延分组")
     with zipfile.ZipFile(dbpath) as db:
@@ -188,7 +190,11 @@ def assemble(dbpath, stage, method=None, supplied=None):
         path = stage / f"R0B0S0D_TX{t}_RX{r}_H.asc"
         header = write_asc(path, groups, width, float(fc[0]))
         links.append(dict(tx=t, rx=r, file=path.name, sha256=digest(path)))
-    return dict(source=source, clustering_method=origin, direction="downlink", mode="conducted", tx_ports=tx_ports, rx_ports=rx_ports, frames=frames, links=links,
+    coefficients = {pair: ([complex(t["real"], t["imag"]) for t in row] for row in groups)
+                    for pair, groups in by_pair.items()}
+    basis, power_rows = power_basis(power_reference, db_hash, float(fc[0]), tx_ports, rx_ports, coefficients, frames, complex_source=np.iscomplexobj(h))
+    save(stage / "carrier-power.json", dict(basis=basis, rows=power_rows))
+    return dict(power_basis=basis, source=source, clustering_method=origin, direction="downlink", mode="conducted", tx_ports=tx_ports, rx_ports=rx_ports, frames=frames, links=links,
                 time_axis="每行对应一个源帧。文件头的 1 Hz 仅用于按序查看，不代表原始帧率。"
                           "未生成帧间多普勒相位演进，簇编号仅在同一帧内共用。",
                 software=dict(asc_files_checked=len(links), cluster_rows=len(results)),
@@ -203,6 +209,14 @@ def build(archive: Path, output: Path, method=None, supplied=None):
         stage = Path(tmp) / "project"
         stage.mkdir()
         with zipfile.ZipFile(archive) as outer:
+            reference = None
+            refs = [e for e in outer.infolist() if e.filename == "conducted-power-reference.json"]
+            if refs:
+                if len(refs) != 1 or refs[0].file_size > 65536:
+                    raise ValueError("功率参考文件重复或过大")
+                reference = json.loads(outer.read(refs[0]))
+                if not isinstance(reference, dict):
+                    raise ValueError("功率参考文件需要 JSON 对象")
             downlinks = [entry for entry in outer.infolist() if entry.filename == "R0B0S0D.mpdb"]
             if len(downlinks) > 1:
                 raise ValueError("压缩包内有多份同名下行 R0B0S0D.mpdb，无法确定计算来源")
@@ -211,10 +225,12 @@ def build(archive: Path, output: Path, method=None, supplied=None):
                 with outer.open(downlinks[0]) as src, dbpath.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
             elif "mpdb.json" in outer.namelist():
+                if refs:
+                    raise ValueError("请将参考文件放在外层 ZIP 根目录，与 R0B0S0D.mpdb 并列")
                 dbpath = archive.resolve()
             else:
                 raise ValueError("压缩包缺少下行 R0B0S0D.mpdb 或独立数据库的 mpdb.json")
-        manifest = assemble(dbpath, stage, method, supplied)
+        manifest = assemble(dbpath, stage, method, supplied, reference)
         manifest["archive_sha256"] = digest(archive)
         save(stage / "manifest.json", manifest)
         stage.rename(output)
