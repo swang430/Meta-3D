@@ -253,3 +253,12 @@ export async function prepareOta(selection: OtaSelection) {
 export async function saveOta(selection: OtaSelection) {
   return (await apiClient.post<TestExecution>(`${BASE_URL}/ota/executions`, selection)).data
 }
+
+export async function previewConductedNoise(windows: unknown) {
+  return (await apiClient.post<{windows:{scope:{receiver:string; frame:number}; total_disturbance_dbm:number|null;
+    additional_dbm:number|null;reason:string|null}[]}>(`${BASE_URL}/conducted/sinr-preview`,windows)).data
+}
+
+export async function buildConductedNoise(input: unknown) {
+  return (await apiClient.post(`${BASE_URL}/conducted/sinr-waveforms`,input)).data
+}
