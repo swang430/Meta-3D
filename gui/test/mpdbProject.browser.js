@@ -16,6 +16,7 @@
       return route.fulfill({ json: { source_id: 'batch-' + uploads, clustering:'matched',
         timing:{tx_ports:[0,1,2,3],rx_ports:[0,1],frame_ids:[0,1],distances_m:[2],source_times_s:null,time_source:null} } })
     }
+    if (route.request().url().endsWith('/ota-chamber')) return route.fulfill({json:{chamber_name:'测试暗室', configuration_sha256:'fixture',tx_inputs:{},probe_connections:[]}})
     builds.push(route.request().postDataJSON())
     if (rejectBuild)
       return route.fulfill({ status: 422, json: { detail: '样本不足' } })
