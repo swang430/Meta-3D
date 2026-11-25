@@ -5,12 +5,13 @@ import re
 from pathlib import Path as Directory
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app.api import vrt_port_calibration
 from app.services.road_test.port_calibration import applicability
+from app.services.road_test.sinr_plan import Waveforms, Window, budget, render_waveforms
 from app.api.road_test import _get_custom_scenario
 from app.data.scenario_library import get_scenario_by_id
 from app.db.database import get_db
@@ -345,3 +346,22 @@ def create(selection: Selection, db: Session = Depends(get_db)):
     row = vrt_execution_service.create(db, mode=TestMode.CONDUCTED, scenario_id=selection.scenario_id,
                                        topology_id=snapshot["topology_id"], conducted_setup=snapshot)
     return vrt_execution_service.to_test_execution(row)
+
+
+
+
+@router.post("/sinr-preview")
+def sinr_preview(windows: list[Window] = Body(..., min_length=1, max_length=4096)):
+    """逐接收口对照系统仿真的统计窗口；仅返回离线预测。"""
+    return {"windows":[budget(window) for window in windows],"formal_measurement":False,"rf_enabled":False}
+
+
+
+
+@router.post("/sinr-waveforms")
+def sinr_waveforms(request: Waveforms):
+    """生成带来源的离线复基带样本，供仿真检查。"""
+    try:
+        return render_waveforms(request)
+    except (ValueError, OverflowError) as exc:
+        raise HTTPException(422,str(exc)) from exc

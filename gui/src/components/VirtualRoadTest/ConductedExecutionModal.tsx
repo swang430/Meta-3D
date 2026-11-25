@@ -7,6 +7,7 @@ import {
   fetchExecutionObservations, fetchExecutionStatus, prepareConducted, saveConducted,
 } from '../../api/roadTestService'
 import { ConductedCalibration } from './ConductedCalibration'
+import { ConductedNoisePreview } from './ConductedNoisePreview'
 import { ConductedSetup } from './ConductedSetup'
 import type { ConductedPreparation, ConductedSelection, ExecutionStatus } from '../../types/roadTest'
 import { TestReportModal } from './TestReportModal'
@@ -104,6 +105,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId }
             return {...prev,receiver_power:{...prev.receiver_power!,targets_dbm:targets}}
           })} />)}
       </>}
+      <ConductedNoisePreview />
       {snapshot && <ConductedSetup snapshot={snapshot} />}
       {!id && <Button disabled={!snapshot} loading={save.isPending} onClick={() => save.mutate()}>保存准备记录</Button>}
       {id && <Text>执行编号 {id} · 服务端状态 {status ? labels[status] : '尚未取得'}</Text>}
