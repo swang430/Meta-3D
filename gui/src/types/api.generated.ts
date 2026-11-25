@@ -3705,6 +3705,8 @@ export interface components {
             source_times_s: number[] | null;
             /** Time Source */
             time_source: string | null;
+            tx_ports: number[];
+            rx_ports: number[];
         };
         /** Body_import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post */
         Body_import_cluster_trajectory_api_v1_channel_assets_trajectory_import_post: {

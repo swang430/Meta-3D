@@ -1,4 +1,4 @@
-"""从下行 MPDB 生成四发两收的联合聚簇源帧工程。"""
+"""从下行 MPDB 生成联合聚簇源帧工程。"""
 
 import argparse
 import hashlib
@@ -15,12 +15,14 @@ import numpy as np
 
 if __package__:
     from .imt_conducted import inspect
+    from .mpdb_layout import port_layout
     from .imt_conducted_spectrum import column
 else:
     from imt_conducted import inspect
+    from mpdb_layout import port_layout
     from imt_conducted_spectrum import column
 
-PAIRS = [(tx, rx) for tx in range(4) for rx in range(2)]
+
 
 
 def digest(path):
@@ -96,15 +98,16 @@ def assemble(dbpath, stage, method=None, supplied=None):
         ids, h, delay, aoa, fd, aod, zoa, zod = columns(
             "CHANNEL", "LINK_ID H DELAY AOA DOPPLER AOD ZOA ZOD")
     frames = sorted(set(fr.tolist()))
+    tx_ports, rx_ports = port_layout(fr, tx, rx)
+    pairs = [(t, r) for t in tx_ports for r in rx_ports]
     keys = list(zip(fr, tx, rx, strict=True))
     lookup = dict(zip(keys, lid, strict=True))
     if (not frames or frames[0] < 0 or len(set(lid)) != len(keys)
-            or len(lookup) != len(keys)
-            or set(keys) != {(f, t, r) for f in frames for t, r in PAIRS}):
-        raise ValueError("每个源帧都需要四发两收的八条唯一链路")
+            or len(lookup) != len(keys)):
+        raise ValueError("源帧编号或链路编号无效")
     if (len(fc) != len(keys) or len(set(fc)) != 1 or not np.isfinite(fc[0])
             or fc[0] <= 0):
-        raise ValueError("八条链路需要同一个有效载频")
+        raise ValueError("各条链路需要同一个有效载频")
     if any(len(c) != len(ids) or not np.isfinite(c).all()
            for c in (h, delay, aoa, fd, aod, zoa, zod)) or not np.isin(ids, lid).all():
         raise ValueError("射线记录缺失、数值无效或链路编号未知")
@@ -142,12 +145,12 @@ def assemble(dbpath, stage, method=None, supplied=None):
     from mimo_ota_simulator.joint_cluster_response import reduce_link
     source = dict(mpdb=db_hash, members=digest(members))
     results, evidence = [], []
-    by_pair = {pair: [] for pair in PAIRS}
+    by_pair = {pair: [] for pair in pairs}
     with np.load(members, allow_pickle=False) as table:
         if str(table["source_sha256"]) != source["mpdb"]:
             raise ValueError("成员表与本次输入不符")
         for frame in frames:
-            for t, r in PAIRS:
+            for t, r in pairs:
                 ident = lookup[frame, t, r]
                 mask = (ids == ident) & (abs(h) > 0)
                 labels = table[f"L{ident}"]
@@ -185,7 +188,7 @@ def assemble(dbpath, stage, method=None, supplied=None):
         path = stage / f"R0B0S0D_TX{t}_RX{r}_H.asc"
         header = write_asc(path, groups, width, float(fc[0]))
         links.append(dict(tx=t, rx=r, file=path.name, sha256=digest(path)))
-    return dict(source=source, clustering_method=origin, direction="downlink", mode="conducted", frames=frames, links=links,
+    return dict(source=source, clustering_method=origin, direction="downlink", mode="conducted", tx_ports=tx_ports, rx_ports=rx_ports, frames=frames, links=links,
                 time_axis="每行对应一个源帧。文件头的 1 Hz 仅用于按序查看，不代表原始帧率。"
                           "未生成帧间多普勒相位演进，簇编号仅在同一帧内共用。",
                 software=dict(asc_files_checked=len(links), cluster_rows=len(results)),

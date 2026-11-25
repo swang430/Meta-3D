@@ -65,7 +65,7 @@ export function MpdbProjectPanel() {
       if (nextPlan) form.append('plan_manifest', nextPlan)
       if (groups) form.append('members', groups)
       const {data} = await client.post(root+'/import', form)
-      if (!data?.source_id || !Array.isArray(data.timing?.frame_ids) || !['matched','missing','supplied'].includes(data.clustering)) throw Error('服务器未返回完整的来源检查结果。')
+      if (!data?.source_id || !Array.isArray(data.timing?.tx_ports) || !Array.isArray(data.timing?.rx_ports) || !Array.isArray(data.timing?.frame_ids) || !['matched','missing','supplied'].includes(data.clustering)) throw Error('服务器未返回完整的来源检查结果。')
       setSource(data)
     } catch(cause) {
       const detail = axios.isAxiosError(cause) && cause.response?.data?.detail
@@ -143,9 +143,10 @@ export function MpdbProjectPanel() {
             { value: 'ota', label: '空口（OTA）' },
           ]}
         />
+        {timing && <Text>发射端口 {timing.tx_ports.join('、')}；接收端口 {timing.rx_ports.join('、')}</Text>}
         {mode === 'conducted' ? (
           <>
-          {source && !choose && <Text>{source.clustering === 'supplied' ? '已核对您提供的分组文件来源；每条通路的射线数量和组号将在生成时核对。' : '已找到这份原始数据此前离线聚簇保存的射线分组。'}这不是 MPDB 中的原始字段。系统核对原文件内容后，复用每条射线属于哪一组的记录来汇总八条通路，不需要另行制作文件。</Text>}
+          {source && !choose && <Text>{source.clustering === 'supplied' ? '已核对您提供的分组文件来源；每条通路的射线数量和组号将在生成时核对。' : '已找到这份原始数据此前离线聚簇保存的射线分组。'}这不是 MPDB 中的原始字段。系统核对原文件内容后，复用每条射线属于哪一组的记录来汇总各条通路，不需要另行制作文件。</Text>}
           {(choose || supplied) && <details><summary>使用已有的射线分组文件（可选）</summary>
             <FileInput label="此前保存的分组文件" description="仅在已有同一份原数据的离线分组结果时使用。选择后会重新核对来源；没有文件时直接选择分组方式即可。"
               accept=".npz" clearable disabled={!!busy} value={supplied} onChange={(next)=>inspectFile(file,next)}/></details>}
@@ -153,7 +154,7 @@ export function MpdbProjectPanel() {
             data={[{ value: 'delay_bins', label: '按每帧共享的时延区间分组（最多 24 组，不按角度分组）' }]}
             value={method} disabled={!!busy} onChange={(v)=>{setMethod(v);setProjects({})}} />}
           <Text size="sm">
-            四个发射端口和两个接收端口共用每帧的簇划分。八路 ASC
+            各收发端口对共用每帧的簇划分。每条通路的 ASC
             各自保留复系数，每行对应一个原始帧。文件头的 1 Hz
             仅用于按序查看。生成后自动核对各簇。
           </Text>
@@ -183,9 +184,8 @@ export function MpdbProjectPanel() {
                 value={rate} disabled={!!busy} allowDeselect={false} onChange={(v)=>{setRate(v || 'standard');setProjects({})}}
                 data={[{value:'standard',label:'标准'},{value:'dense',label:'加密（两倍更新率）'}]}/>
             <Alert color="yellow">
-              将生成含 128 个 ASC
-              文件的动态工程，以及供比较的基线工程。计算假设使用 16
-              个水平布置的理想双极化探头。生成计算采用所选时间轴，保留原始位置和射线多普勒频移，不按假定速度重算。探头布局和播放效果待现场验证。
+              按发射端口和探头的两个极化方向分别生成 ASC
+              文件，输出动态工程，以及供比较的基线工程。探头数量和角度取自服务配置的布局；未指定时使用 16 个理想双极化探头的参考布局。生成计算采用所选时间轴，保留原始位置和射线多普勒频移，不按假定速度重算。探头布局和播放效果待现场验证。
             </Alert>
           </>
         )}

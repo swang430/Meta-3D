@@ -14,7 +14,7 @@
       )
       uploads++
       return route.fulfill({ json: { source_id: 'batch-' + uploads, clustering:'matched',
-        timing:{frame_ids:[0,1],distances_m:[2],source_times_s:null,time_source:null} } })
+        timing:{tx_ports:[0,1,2,3],rx_ports:[0,1],frame_ids:[0,1],distances_m:[2],source_times_s:null,time_source:null} } })
     }
     builds.push(route.request().postDataJSON())
     if (rejectBuild)

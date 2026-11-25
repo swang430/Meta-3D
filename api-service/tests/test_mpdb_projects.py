@@ -76,6 +76,8 @@ def test_same_import_can_build_twice_and_download_independent_archives(
     (tmp_path / "mimo_ota_simulator").mkdir()
     monkeypatch.setenv("CHANNEL_ENGINE_PATH", str(tmp_path))
 
+    (tmp_path / "examples").mkdir()
+    (tmp_path / "examples/imt_16probe_geometry.json").write_text(json.dumps({"probe_azimuth_zenith_deg": [[0,90],[180,90]]}))
     mutations = {}
     include_evidence = True
 
@@ -85,13 +87,14 @@ def test_same_import_can_build_twice_and_download_independent_archives(
         for role in roles:
             directory = output if mode == "conducted" else output / role
             directory.mkdir(parents=True)
-            names = [f"{i}.asc" for i in range(8 if mode == "conducted" else 128)]
+            names = (["R0B0S0D_TX0_RX0_H.asc"] if mode == "conducted" else
+                     [f"TX0_PROBE{i:02d}_{pol}.asc" for i in range(2) for pol in ("theta","phi")])
             for name in names:
                 (directory / name).write_text(mode)
             if role in mutations:
                 mutations[role](directory, names)
             manifest = {"build": output.parent.name, "role": role,
-                        "links": [{"file": name} for name in names]}
+                        "links": [dict(file=name, tx=0, **({"rx":0} if mode == "conducted" else {"probe":i//2, "polarization":("theta","phi")[i%2]})) for i,name in enumerate(names)]}
             (directory / "manifest.json").write_text(json.dumps(manifest))
         if mode == "conducted":
             if include_evidence:
@@ -181,7 +184,7 @@ def test_same_import_can_build_twice_and_download_independent_archives(
     assert client.post(build_url,json={"mode":"ota","rate_hz":100}).status_code == 422
     assert client.post(build_url,json={"mode":"ota","speed_m_s":5,"rate_hz":100}).status_code == 422
     explicit = {"speed_m_s":5,"rate_quality":"dense"}
-    for mode, count in [("conducted", 8), ("ota", 128)]:
+    for mode, count in [("conducted", 1), ("ota", 4)]:
         response = client.post(
             build_url, json={"mode": mode, **(explicit if mode == "ota" else {})}
         )
@@ -213,10 +216,10 @@ def test_same_import_can_build_twice_and_download_independent_archives(
 
     packages = set((base / source["source_id"]).glob("*.zip"))
     for role, mutate, details in [
-        ("baseline", lambda folder, names: (folder / "127.asc").unlink(), ["127.asc", "缺少"]),
-        ("conducted", lambda folder, names: (folder / "7.asc").rename(folder / "other.asc"),
-         ["缺少", "7.asc", "额外", "other.asc"]),
-        ("dynamic", remove_both, ["128", "127"]),
+        ("baseline", lambda folder, names: (folder / "TX0_PROBE01_phi.asc").unlink(), ["TX0_PROBE01_phi.asc", "缺少"]),
+        ("conducted", lambda folder, names: (folder / "R0B0S0D_TX0_RX0_H.asc").rename(folder / "other.asc"),
+         ["缺少", "R0B0S0D_TX0_RX0_H.asc", "额外", "other.asc"]),
+        ("dynamic", remove_both, ["4", "3"]),
     ]:
         mutations.clear()
         mutations[role] = mutate

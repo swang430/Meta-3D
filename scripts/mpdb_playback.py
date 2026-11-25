@@ -9,8 +9,10 @@ from urllib.parse import urlsplit
 import numpy as np
 
 if __package__:
+    from .mpdb_layout import port_layout
     from .imt_conducted_spectrum import column
 else:
+    from mpdb_layout import port_layout
     from imt_conducted_spectrum import column
 
 
@@ -47,9 +49,10 @@ def inspect_timing(db, desc, plan_raw=None):
     frames, counts = np.unique(ids, return_counts=True)
     if ids.dtype.kind not in "iu" or not len(frames) or frames[0] < 0:
         raise ValueError("源帧编号无效")
+    tx_ports, rx_ports = port_layout(ids, tx, rx)
     distances = [None] * (len(frames) - 1)
     if "RX_ANT_POSITION" in records["LINK"]:
-        mask = (tx == 0) & (rx == 0)
+        mask = (tx == tx_ports[0]) & (rx == rx_ports[0])
         order = np.argsort(ids[mask])
         if not np.array_equal(ids[mask][order], frames):
             raise ValueError("无法逐帧唯一定位参考接收阵元")
@@ -138,6 +141,7 @@ def inspect_timing(db, desc, plan_raw=None):
     except (KeyError, ValueError, TypeError, OSError):
         peak = None  # 此处不以能否计算最大频移决定传导导入；传导生成器仍独立校验所需射线列。
     timing = dict(
+        tx_ports=tx_ports, rx_ports=rx_ports,
         max_abs_doppler_hz=peak,
         frame_only=frame_only,
         embedded_axis_lengths=axis_lengths,

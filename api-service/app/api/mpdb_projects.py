@@ -45,6 +45,8 @@ def offline_modules():
 
 
 class SourceTiming(BaseModel):
+    tx_ports: list[int]
+    rx_ports: list[int]
     max_abs_doppler_hz: float | None = None
     plan_sha256: str | None = None
     frame_ids: list[int]
@@ -174,6 +176,8 @@ def worker_environment(root: Path):
     env.pop("HYPERRT_PATH", None)
     if "CHANNEL_ENGINE_PATH" not in env and local.get("CHANNEL_ENGINE_PATH"):
         env["CHANNEL_ENGINE_PATH"] = local["CHANNEL_ENGINE_PATH"]
+    if local.get("MPDB_PROBE_GEOMETRY_PATH"):
+        env.setdefault("MPDB_PROBE_GEOMETRY_PATH", local["MPDB_PROBE_GEOMETRY_PATH"])
     engine = Path(env.get("CHANNEL_ENGINE_PATH", ""))
     if not engine.is_absolute() or not (engine / "mimo_ota_simulator").is_dir():
         raise HTTPException(503, "找不到信道引擎。请在 channel-engine-service/.env 中设置 CHANNEL_ENGINE_PATH 为引擎的绝对路径；启动环境中的同名设置优先。")
@@ -274,6 +278,19 @@ def build_project(source_id: UUID, params: BuildParameters):
         elif (folder / "members.npz").is_file():
             arguments.append(str(folder / "members.npz"))
         env = worker_environment(ROOT)
+        if params.mode == "ota":
+            source_geometry = Path(env.get("MPDB_PROBE_GEOMETRY_PATH") or
+                                   Path(env["CHANNEL_ENGINE_PATH"]) / "examples/imt_16probe_geometry.json")
+            geometry = stage / "probe_geometry.json"
+            try:
+                geometry.write_bytes(source_geometry.read_bytes())
+                probes = json.loads(geometry.read_text())["probe_azimuth_zenith_deg"]
+                if not isinstance(probes, list) or not probes:
+                    raise ValueError
+            except (ValueError, OSError, KeyError, TypeError) as exc:
+                raise HTTPException(422, "探头布局无法读取或缺少探头角度，请检查配置") from exc
+            env["MPDB_PROBE_GEOMETRY_PATH"] = str(geometry)
+
         try:
             code, message = run_worker(
                 [
@@ -294,13 +311,30 @@ def build_project(source_id: UUID, params: BuildParameters):
                 raise HTTPException(
                     422, message[-1][:500] if message else "计算程序未生成工程"
                 )
+            layout = json.loads((folder / "timing.json").read_text())
+            if not layout.get("tx_ports") or not layout.get("rx_ports"):
+                raise HTTPException(409, "此导入记录缺少端口配置，请重新导入")
+            transmit = layout["tx_ports"]
             if params.mode == "conducted":
-                manifests = {"conducted": checked_manifest(output, "conducted", 8)}
+                paths = {(t, r) for t in transmit for r in layout["rx_ports"]}
+                keys = ("tx", "rx")
+                directories = {"conducted": output}
             else:
-                manifests = {
-                    role: checked_manifest(output / role, role, 128)
-                    for role in ("baseline", "dynamic")
-                }
+                paths = {(t, p, pol) for t in transmit for p in range(len(probes))
+                         for pol in ("theta", "phi")}
+                keys = ("tx", "probe", "polarization")
+                directories = {role: output / role for role in ("baseline", "dynamic")}
+            manifests = {}
+            for role, directory in directories.items():
+                manifest = checked_manifest(directory, role, len(paths))
+                if {tuple(link.get(k) for k in keys) for link in manifest["links"]} != paths:
+                    raise HTTPException(500, f"{role} 工程清单中的端口与预期通路不符")
+                for link in manifest["links"]:
+                    name = (f"R0B0S0D_TX{link['tx']}_RX{link['rx']}_H.asc" if role == "conducted"
+                            else f"TX{link['tx']}_PROBE{link['probe']:02d}_{link['polarization']}.asc")
+                    if link["file"] != name:
+                        raise HTTPException(500, f"{role} 工程端口与文件名不符，预期 {name}")
+                manifests[role] = manifest
             primary = "conducted" if params.mode == "conducted" else "dynamic"
             result = {
                 "download_url": f"/api/v1/channel-assets/mpdb-projects/{source_id}/{ident}.zip",
@@ -389,6 +423,7 @@ def analyze_port_evidence(archive: UploadFile, bandwidth_mhz: float = Form(..., 
                 if sum(entry.file_size for entry in container.infolist()) > 128 * 1024**2:
                     raise ValueError("解压后的成员表超过 128 MiB")
         env = worker_environment(ROOT)
+
         env.pop("HYPERRT_PATH", None)
         code, message = run_worker(command, env)
         if code:
@@ -442,6 +477,7 @@ def compare_existing_channels(
                         dest.write(chunk)
                 command.extend(['--'+option,str(local)])
             env = worker_environment(ROOT)
+
             env.pop('HYPERRT_PATH',None)
             python = ROOT/'channel-engine-service/.venv/bin/python'
             if python.is_file():
@@ -525,6 +561,7 @@ def compare_tap_budgets(
                         dest.write(chunk)
                 command.extend(['--'+option,str(local)])
             env = worker_environment(ROOT)
+
             env.pop('HYPERRT_PATH',None)
             python = ROOT/'channel-engine-service/.venv/bin/python'
             if python.is_file():
@@ -637,6 +674,7 @@ def evaluate_channel_purpose(
                         dest.write(chunk)
                 command.extend(['--asc',str(local)])
             env = worker_environment(ROOT)
+
             env.pop('HYPERRT_PATH',None)
             python = ROOT/'channel-engine-service/.venv/bin/python'
             if python.is_file():

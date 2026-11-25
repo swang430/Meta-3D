@@ -11,9 +11,11 @@ from pathlib import Path
 import numpy as np
 if __package__:
     from .mpdb_playback import resolve_playback
+    from .mpdb_layout import port_layout
     from .imt_conducted_spectrum import column
 else:
     from mpdb_playback import resolve_playback
+    from mpdb_layout import port_layout
     from imt_conducted_spectrum import column
 
 
@@ -40,25 +42,16 @@ def generate_ota(archive, output, playback):
     del raw
     if doppler.dtype.kind not in "iuf" or not np.isfinite(doppler).all():
         raise ValueError("原始射线多普勒频移无效")
-    keys = set(zip(frame, tx, rx))
+    port_layout(frame, tx, rx)
     frames = np.unique(frame)
-    if (
-        len(frame) != len(frames) * 8
-        or len(keys) != len(frame)
-        or any(
-            (f, t, r) not in keys for f in frames for t in range(4) for r in range(2)
-        )
-    ):
-        raise ValueError("需要每一帧都有完整的四发两收数据")
     if not np.array_equal(frames, np.arange(len(frames))):
         raise ValueError("当前探头生成器要求源帧从 0 连续编号，请核对原始工程的帧范围")
     if frames.tolist() != playback["frame_ids"]:
         raise ValueError("源帧编号与已检查的时间轴不符")
     if playback["rate_hz"] <= 2 * np.max(np.abs(doppler)):
         raise ValueError("输出更新率必须高于原始射线最大绝对多普勒频移的两倍")
-    geometry = (
-        Path(os.environ["CHANNEL_ENGINE_PATH"]) / "examples/imt_16probe_geometry.json"
-    )
+    geometry = Path(os.environ.get("MPDB_PROBE_GEOMETRY_PATH") or
+                    Path(os.environ["CHANNEL_ENGINE_PATH"]) / "examples/imt_16probe_geometry.json")
     output.mkdir()
     run(archive, geometry, output / "baseline", 1.0)
     # 上游 CLI 将所有调用参数都标为操作员输入；此处的 1 Hz 只用于源帧顺序浏览。
