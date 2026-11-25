@@ -48,9 +48,40 @@ def test_registered_working_point_requires_matching_physical_evidence(tmp_path, 
     cal["ports"]=[{**cal["ports"][0],"tx":t,"rx":r,"output_port":r+1,"dut_reference_plane":f"dut/in/{r}"} for t in range(1,5) for r in [1,2]]
     anchor=dict(asc_manifest_sha256=manifest["sha256"], final_cable_compensation="physical_connector_target_only",source="physical_instrument_measurement",asset_sha256="asset",
                 calibration_sha256="measurement",prediction_sha256=report["sha256"], bandwidth_hz=20e6,
-                frame=7,meter_serial="power-meter",receiver_ports={str(r):{"output_setting_dbm":-67,"dut_average_dbm":-70} for r in [1,2]})
+                frame=7,meter_serial="power-meter",receiver_ports={str(r):{"output_setting_dbm":-67,"dut_average_dbm":-70.05,"allowed_error_db":0.2,"average_uncertainty_db":0.1} for r in [1,2]})
     report["reference_measurement"]=put("anchor.json",anchor)
     assert plan()["verified_operating_point"] is True
+    point = anchor["receiver_ports"]["1"]
+    def refresh():
+        report["reference_measurement"]=put("anchor.json",anchor)
+    point["dut_average_dbm"]=-70.1
+    refresh()
+    assert plan()["verified_operating_point"] is True
+    point["dut_average_dbm"]=-70.11
+    refresh()
+    with pytest.raises(ValueError, match="允许误差"):
+        plan()
+    point["dut_average_dbm"]=-70
+    for key in ("allowed_error_db", "average_uncertainty_db"):
+        value = point.pop(key)
+        refresh()
+        with pytest.raises(ValueError, match="允许误差|不确定度"):
+            plan()
+        point[key] = value
+    refresh()
+    cal["ports"][0]["dut_input"]["max_safe_input_dbm"]=-70
+    with pytest.raises(ValueError,match="安全范围"):
+        plan()
+    cal["ports"][0]["dut_input"]["max_safe_input_dbm"]=-40
+    cal["ports"][0]["dut_input"]["peak_dbm"]=-71
+    with pytest.raises(ValueError,match="实测峰值"):
+        plan()
+    cal["ports"][0]["dut_input"]["peak_dbm"]=-65
+    point.update(dut_average_dbm=-39, allowed_error_db=32)
+    refresh()
+    with pytest.raises(ValueError, match="平均实测功率超过"):
+        plan()
+    point.update(dut_average_dbm=-70, allowed_error_db=0.2)
     anchor["source"]="simulated"
     report["reference_measurement"]=put("anchor.json",anchor)
     with pytest.raises(ValueError,match="不一致"):

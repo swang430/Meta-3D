@@ -1,4 +1,5 @@
 """从同一工程的接收功率预测和已采用校准，计算公共偏移与逐口目标。"""
+from decimal import Decimal
 from math import isclose, isfinite, log10
 
 
@@ -129,9 +130,24 @@ def registered_plan(registration, asset_sha, bandwidth_mhz, frame, targets, cali
             point = checkpoints[str(rx)]
             paths = [p for p in calibration["ports"] if p["rx"] == rx]
             if (not paths or prediction["target_dut_dbm"] is None
-                    or any(p["emulator_output_setting_dbm"] != point["output_setting_dbm"] for p in paths)
-                    or not isclose(point["dut_average_dbm"], prediction["target_dut_dbm"], abs_tol=1e-6, rel_tol=0)):
-                raise ValueError("选择的目标与该工作点校准时的参考帧插口平均实测不符")
+                    or any(p["emulator_output_setting_dbm"] != point["output_setting_dbm"] for p in paths)):
+                raise ValueError(f"接收插口 {rx} 的目标或输出设定与所选校准工作点不符")
+            tolerance = point.get("allowed_error_db")
+            uncertainty = point.get("average_uncertainty_db")
+            actual = point.get("dut_average_dbm")
+            if any(type(x) not in (int, float) or not isfinite(x) or x < 0 for x in (tolerance, uncertainty)):
+                raise ValueError(f"接收插口 {rx} 缺少有效的工作点允许误差或平均功率测量不确定度")
+            if type(actual) not in (int, float) or not isfinite(actual):
+                raise ValueError(f"接收插口 {rx} 缺少有效的平均功率实测值")
+            for path in paths:
+                limits = path["dut_input"]
+                if (actual > limits["peak_dbm"]
+                        or actual + uncertainty + calibration["required_margin_db"] > limits["max_safe_input_dbm"]):
+                    raise ValueError(f"接收插口 {rx} 的平均实测功率超过校准峰值或安全范围")
+            deviation = abs(Decimal(str(actual)) - Decimal(str(prediction["target_dut_dbm"])))
+            if deviation + Decimal(str(uncertainty)) > Decimal(str(tolerance)):
+                raise ValueError(f"接收插口 {rx} 的功率偏差 {deviation} dB 加测量不确定度 "
+                                 f"{uncertainty} dB 超出工作点允许误差 {tolerance} dB")
         plan["verified_operating_point"] = True
         plan["reference_measurement_sha256"] = anchor["sha256"]
     return plan
