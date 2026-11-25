@@ -273,6 +273,7 @@ class CaseExecutionStatusResponse(BaseModel):
     execution_id: UUID
     status: str
     source_test_case_id: Optional[str] = None
+    asc_playback_evidence: Optional[dict] = None
     phase_progress: List[dict] = Field(default_factory=list)
     failed_phase: Optional[str] = None
     error_message: Optional[str] = None
@@ -352,6 +353,7 @@ def get_case_execution_status(
         execution_id=execution.id,
         status=execution.status or "unknown",
         source_test_case_id=cfg.get("source_test_case_id"),
+        asc_playback_evidence=cfg.get("asc_playback_evidence"),
         phase_progress=list(cfg.get("phase_progress") or []),
         failed_phase=cfg.get("failed_phase"),
         # 内审 F4: error_message 三个读方同一规则 (列优先 config 兜底,

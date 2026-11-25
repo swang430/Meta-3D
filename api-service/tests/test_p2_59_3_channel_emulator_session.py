@@ -1307,6 +1307,7 @@ async def test_complete_run_rejects_path_loss_before_any_instrument_io(monkeypat
         "load_mimo_ota_config",
         lambda _execution: SimpleNamespace(
             primary_carrier=SimpleNamespace(frequency_hz=3.5e9),
+            asc_manifest_sha256=None,
             switch_mode_id="mimo_ota",
             precheck_strict_cal=True,
         ),

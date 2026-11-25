@@ -2415,11 +2415,18 @@ class MeasureExecutor(IStepExecutor):
                 # asc_source_path is set; path-exists check happens in
                 # ExternalAscPathStrategy.generate_and_load so failures land
                 # with the same logging context as other generator failures.
+                def check_execution_running():
+                    context.db.refresh(context.test_execution, attribute_names=["status"])
+                    if context.test_execution.status != "running":
+                        raise ValueError("用例已停止，跳过模拟加载")
+
                 generator = ExternalAscPathStrategy(
                     emulator,
                     chamber,
                     calibration_entries,
                     asc_source_path=config.asc_source_path,
+                    manifest_sha256=config.asc_manifest_sha256,
+                    check_execution_running=check_execution_running,
                     operation_recorder=record_channel_emulator_operation,
                 )
             elif engine_mode == EngineMode.B2_PARAMETRIC_TDL:
@@ -2523,6 +2530,18 @@ class MeasureExecutor(IStepExecutor):
             context.db.commit()
             with capture_scpi_exchanges() as channel_load_exchanges:
                 gen_ok = await generator.generate_and_load(sim_rules, cdl_model_data)
+                if engine_mode == EngineMode.EXTERNAL_ASC and generator.playback_evidence is not None:
+                    evidence = {**generator.playback_evidence, "provenance": "simulated",
+                                "simulated_load_accepted": bool(gen_ok), "device_load_accepted": None}
+                    from app.models.test_plan import TestExecution as ExecutionRow
+                    updated = context.db.query(ExecutionRow).filter(
+                        ExecutionRow.id == context.test_execution.id, ExecutionRow.status == "running",
+                    ).update({ExecutionRow.config: {
+                        **(context.test_execution.config or {}), "asc_playback_evidence": evidence,
+                    }}, synchronize_session=False)
+                    context.db.commit()
+                    if updated != 1:
+                        raise ValueError("用例已停止，未写入模拟加载结果")
             # P2-59②：所有 CE 驱动都有可空 evidence builder 协议；不适用的型号
             # 明确返回 None，不能再用对象形状推断「这是 F64」。
             try:
@@ -4202,6 +4221,9 @@ class MeasureExecutor(IStepExecutor):
                         az["throughput_mbps"],
                         az["rank_indicator"],
                     )
+
+            if engine_mode == EngineMode.EXTERNAL_ASC and config.asc_manifest_sha256:
+                await generator.finish_simulated_pass(context)
 
             total_duration = loop.time() - t_start
 

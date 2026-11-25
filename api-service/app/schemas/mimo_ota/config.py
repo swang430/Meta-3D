@@ -446,6 +446,7 @@ class MIMOOTAConfiguration(BaseModel):
 
     # === External ASC source (only when engine_mode == "external_asc") ===
     asc_source_path: Optional[str] = None
+    asc_manifest_sha256: Optional[str] = Field(default=None, pattern=r"^[0-9a-f]{64}$", description="已选八路传导清单的 SHA-256，装载前与实际副本核对。")
     # Absolute path on the api-service host pointing at a directory of
     # `channel_InX_OutY.asc` files (typically produced by operator running
     # ChannelEgine app.py Streamlit / gui.py Tkinter locally). 2026-05-18 P0-7:
@@ -1177,6 +1178,8 @@ class MIMOOTAConfiguration(BaseModel):
         # channel_asset_id 设了 → measure resolver 会用资产派生 engine_mode 覆盖, stale
         # external_asc (asc_source_path 已清) 不应在此 fail (Codex 0b913fe P2: 本 validator
         # 在 resolver 覆盖 engine 之前跑; 资产路由交给 resolver)。
+        if self.asc_manifest_sha256 and (self.engine_mode != "external_asc" or self.channel_asset_id):
+            raise ValueError("八路清单摘要只能用于明确选择外部 ASC 的模拟用例")
         if getattr(self, "channel_asset_id", None):
             return self
         if self.engine_mode == "external_asc":

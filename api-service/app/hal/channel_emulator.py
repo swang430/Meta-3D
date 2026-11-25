@@ -935,6 +935,7 @@ class MockChannelEmulator(ChannelEmulatorDriver):
     def __init__(self, instrument_id: str, config: Dict[str, Any]):
         super().__init__(instrument_id, config)
         self._emulation_running = False
+        self._playback_started_at = None
         self._channel_model = "3GPP_38.901"
         self._scenario = "UMi"
         self._tx_antennas = 4
@@ -1212,6 +1213,7 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self._simulate_scpi_query(F64_STATE_QUERY, "RUNNING")
         self._set_status(InstrumentStatus.BUSY)
         self._emulation_running = True
+        self._playback_started_at = asyncio.get_running_loop().time()
         await asyncio.sleep(0.2)  # Simulate startup time
         return True
 
@@ -1220,6 +1222,12 @@ class MockChannelEmulator(ChannelEmulatorDriver):
         self._emulation_running = False
         self._set_status(InstrumentStatus.READY)
         return True
+
+    def simulated_playback_elapsed(self) -> Optional[float]:
+        """模拟播放命令成功后经过的时间；无法表示设备实际读数。"""
+        if not self._emulation_running or self._playback_started_at is None:
+            return None
+        return asyncio.get_running_loop().time() - self._playback_started_at
 
     async def get_channel_state(self) -> Dict[str, Any]:
         """Get current channel state"""

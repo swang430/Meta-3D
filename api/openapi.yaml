@@ -4069,6 +4069,11 @@ components:
         source_test_case_id:
           type: string
           nullable: true
+        asc_playback_evidence:
+          type: object
+          nullable: true
+          additionalProperties: true
+          description: 八路传导文件的清单摘要、加载结果和首末响应时间范围。无设备位置证据时末帧回读为空。
         phase_progress:
           type: array
           items:
