@@ -14,11 +14,13 @@ import zipfile
 import numpy as np
 
 if __package__:
+    from .mpdb_ray_antennas import apply_patterns
     from .conducted_power_reference import power_basis
     from .imt_conducted import inspect
     from .mpdb_layout import port_layout
     from .imt_conducted_spectrum import column
 else:
+    from mpdb_ray_antennas import apply_patterns
     from conducted_power_reference import power_basis
     from imt_conducted import inspect
     from mpdb_layout import port_layout
@@ -46,7 +48,7 @@ def write_asc(path, frames, width, carrier):
                      "1 CIR_Update_Rate\n***** Tap data *****\n")
         print("\t".join(["Delay\tRe\tIm"] * width), file=stream)
         for frame in frames:
-            taps = sorted((row["delay_s"] * 1e9, row["real"], row["imag"]) for row in frame)
+            taps = sorted(((0.0 if row["delay_s"] is None else row["delay_s"] * 1e9), row["real"], row["imag"]) for row in frame)
             taps.extend([(taps[-1][0], 0, 0)] * (width - len(taps)))
             print("\t".join(str(number) for tap in taps for number in tap), file=stream)
     return inspect(path)
@@ -79,7 +81,7 @@ def validate_members_container(members, lid):
                     raise ValueError("成员表数组类型或声明长度与文件不符")
 
 
-def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
+def assemble(dbpath, stage, method=None, supplied=None, power_reference=None, patterns=None):
     if method not in (None, "delay_bins"):
         raise ValueError("仅支持复用同源成员表或按时延分组")
     with zipfile.ZipFile(dbpath) as db:
@@ -99,6 +101,11 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
         fr, tx, rx, lid, fc = columns("LINK", "FRAME_ID TX_ANT RX_ANT LINK_ID FREQUENCY")
         ids, h, delay, aoa, fd, aod, zoa, zod = columns(
             "CHANNEL", "LINK_ID H DELAY AOA DOPPLER AOD ZOA ZOD")
+        if engine := os.environ.get("CHANNEL_ENGINE_PATH"):
+            sys.path.insert(0,engine)
+        original = h
+        h, antenna = apply_patterns(db,desc,column,patterns,digest(dbpath),float(fc[0]),lid,tx,rx,ids,
+                                    h,(aod,zod,aoa,zoa))
     frames = sorted(set(fr.tolist()))
     tx_ports, rx_ports = port_layout(fr, tx, rx)
     pairs = [(t, r) for t in tx_ports for r in rx_ports]
@@ -122,6 +129,11 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
         with np.load(reference, allow_pickle=False) as known:
             if str(known["source_sha256"]) == db_hash:
                 match = reference
+    if match is not None and np.any((abs(original)==0) & (abs(h)>0)):
+        if supplied is not None or patterns.get("regroup_uncovered_rays")!="delay_bins":
+            raise ValueError("替换后有原成员表未覆盖的射线；请移除旧成员表，并在方向图文件明确选择 regroup_uncovered_rays 为 delay_bins")
+        match=None
+        method="delay_bins"
     if match is not None:
         shutil.copyfile(match, members)
         origin = "supplied_members" if supplied is not None else "reference_members"
@@ -130,12 +142,12 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
         groups = {}
         for frame in frames:
             link_ids = lid[fr == frame]
-            selected = np.isin(ids, link_ids) & (abs(h) > 0)
+            selected = np.isin(ids, link_ids) & ((abs(h) > 0) | (abs(original) > 0))
             if not selected.any():
                 raise ValueError("本帧没有有效射线")
             edges = np.linspace(delay[selected].min(), delay[selected].max(), 25)[1:-1]
             for ident in link_ids:
-                values = delay[(ids == ident) & (abs(h) > 0)]
+                values = delay[(ids == ident) & ((abs(h) > 0) | (abs(original) > 0))]
                 groups[f"L{ident}"] = np.searchsorted(edges, values).astype(np.int32)
         np.savez_compressed(members, source_sha256=db_hash, **groups)
         origin = method
@@ -146,6 +158,8 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
         sys.path.insert(0, engine)
     from mimo_ota_simulator.joint_cluster_response import reduce_link
     source = dict(mpdb=db_hash, members=digest(members))
+    if antenna.get("pattern_sha256"):
+        source["antenna_projection_sha256"]=antenna["pattern_sha256"]
     results, evidence = [], []
     by_pair = {pair: [] for pair in pairs}
     with np.load(members, allow_pickle=False) as table:
@@ -154,16 +168,20 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
         for frame in frames:
             for t, r in pairs:
                 ident = lookup[frame, t, r]
-                mask = (ids == ident) & (abs(h) > 0)
+                mask = (ids == ident) & ((abs(original)>0) if match is not None else ((abs(original)>0)|(abs(h)>0)))
                 labels = table[f"L{ident}"]
                 if (labels.shape != (int(mask.sum()),) or labels.dtype.kind not in "iu"
                         or np.any(labels < 0) or np.any(labels >= 24)):
                     raise ValueError(f"链路 {ident} 的成员数量或簇编号无效")
                 rays = h[mask].astype(complex)
                 frequencies = fd[mask].astype(float)
-                clusters = reduce_link(labels, rays, delay[mask], aoa[mask], frequencies,
-                                       departure_azimuth_deg=aod[mask], arrival_zenith_deg=zoa[mask],
-                                       departure_zenith_deg=zod[mask])
+                active = abs(rays)>0
+                clusters = reduce_link(labels[active], rays[active], delay[mask][active],
+                                       aoa[mask][active], frequencies[active],
+                                       departure_azimuth_deg=aod[mask][active], arrival_zenith_deg=zoa[mask][active],
+                                       departure_zenith_deg=zod[mask][active])
+                for cid in set(labels)-set(clusters):
+                    clusters[int(cid)] = dict(coefficient=0j, path_power=0.0, delay_s=None, doppler_mean_hz=None)
                 if not clusters:
                     raise ValueError(f"源帧 {frame} 的阵元对 {t}/{r} 没有有效射线")
                 rows = []
@@ -194,7 +212,7 @@ def assemble(dbpath, stage, method=None, supplied=None, power_reference=None):
                     for pair, groups in by_pair.items()}
     basis, power_rows = power_basis(power_reference, db_hash, float(fc[0]), tx_ports, rx_ports, coefficients, frames, complex_source=np.iscomplexobj(h))
     save(stage / "carrier-power.json", dict(basis=basis, rows=power_rows))
-    return dict(power_basis=basis, source=source, clustering_method=origin, direction="downlink", mode="conducted", tx_ports=tx_ports, rx_ports=rx_ports, frames=frames, links=links,
+    return dict(antenna_projection=antenna, power_basis=basis, source=source, clustering_method=origin, direction="downlink", mode="conducted", tx_ports=tx_ports, rx_ports=rx_ports, frames=frames, links=links,
                 time_axis="每行对应一个源帧。文件头的 1 Hz 仅用于按序查看，不代表原始帧率。"
                           "未生成帧间多普勒相位演进，簇编号仅在同一帧内共用。",
                 software=dict(asc_files_checked=len(links), cluster_rows=len(results)),
@@ -209,6 +227,14 @@ def build(archive: Path, output: Path, method=None, supplied=None):
         stage = Path(tmp) / "project"
         stage.mkdir()
         with zipfile.ZipFile(archive) as outer:
+            patterns = None
+            pattern_entries = [e for e in outer.infolist() if e.filename=="ray-antenna-patterns.json"]
+            if pattern_entries:
+                if len(pattern_entries)!=1 or pattern_entries[0].file_size>8*1024**2:
+                    raise ValueError("方向图条目重复或超过 8 MiB")
+                patterns=json.loads(outer.read(pattern_entries[0]))
+                if not isinstance(patterns,dict):
+                    raise ValueError("方向图文件需要 JSON 对象")
             reference = None
             refs = [e for e in outer.infolist() if e.filename == "conducted-power-reference.json"]
             if refs:
@@ -225,12 +251,12 @@ def build(archive: Path, output: Path, method=None, supplied=None):
                 with outer.open(downlinks[0]) as src, dbpath.open("wb") as dst:
                     shutil.copyfileobj(src, dst)
             elif "mpdb.json" in outer.namelist():
-                if refs:
+                if refs or pattern_entries:
                     raise ValueError("请将参考文件放在外层 ZIP 根目录，与 R0B0S0D.mpdb 并列")
                 dbpath = archive.resolve()
             else:
                 raise ValueError("压缩包缺少下行 R0B0S0D.mpdb 或独立数据库的 mpdb.json")
-        manifest = assemble(dbpath, stage, method, supplied, reference)
+        manifest = assemble(dbpath, stage, method, supplied, reference, patterns)
         manifest["archive_sha256"] = digest(archive)
         save(stage / "manifest.json", manifest)
         stage.rename(output)

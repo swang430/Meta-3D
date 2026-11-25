@@ -12,11 +12,12 @@ function finite(n: unknown): n is number {
 function sourceKey(doc: Row) {
   const s = doc.source
   if (!s || typeof s !== 'object') return null
-  const { mpdb, members } = s as Row
+  const { mpdb, members, antenna_projection_sha256: antenna } = s as Row
+  if (antenna !== undefined && (typeof antenna !== "string" || !/^[0-9a-f]{64}$/.test(antenna))) return null
   return [mpdb, members].every(
     (h) => typeof h === 'string' && /^[0-9a-f]{64}$/.test(h),
   )
-    ? mpdb + '/' + String(members)
+    ? mpdb + '/' + String(members) + (antenna ? '/' + antenna : '')
     : null
 }
 function rows(doc: Row) {

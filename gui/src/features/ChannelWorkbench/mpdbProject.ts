@@ -88,7 +88,9 @@ export function readProject(
       }
       if (role === 'conducted') {
         const basis = (manifest as {power_basis?: {tx_power_dbm?: Record<string,number>; tx_psd_dbm_per_hz?: Record<string,number>}}).power_basis
-        return summary + (basis?.tx_power_dbm ? '已登记发射参考。各路载频预测见 carrier-power.json，依据缺失的链路留空。' :
+        const antenna = (manifest as {antenna_projection?: {source?: string; unverified_reason?: string}}).antenna_projection
+        const applied = antenna?.unverified_reason || (antenna?.source === 'projected_from_propagation' ? '已从传播数据逐射线投影指定的天线。' : '沿用源文件的 H 系数。')
+        return summary + applied + (basis?.tx_power_dbm ? '已登记发射参考。各路载频预测见 carrier-power.json，依据缺失的链路留空。' :
           basis?.tx_psd_dbm_per_hz ? '已登记发射功率谱；缺少单音发射功率，载频预测留空。' : '缺发射参考，只能使用相对系数。')
       }
       return summary + bundle.phaseSummary
