@@ -56,16 +56,30 @@ export function readBundle(input: unknown, mode: Mode) {
     ota &&
     (!Array.isArray(probes) ||
       !probes.length ||
-      probes.length > 16 ||
+
       m.source_frames_only !== !dynamic)
   )
     throw Error('探头配置或源帧说明缺失')
   const n = Array.isArray(probes) ? probes.length : 0
-  if (!Array.isArray(m.links) || m.links.length !== (ota ? 8 * n : 8))
+  // 旧版清单只支持固定四发两收，新版显式记录从源文件读取的端口。
+  const legacy = m.tx_ports === undefined && m.rx_ports === undefined
+  const portList = (value: unknown): number[] => {
+    if (!Array.isArray(value) || !value.length || value.some(v => !Number.isSafeInteger(v) || v < 0)
+        || new Set(value).size !== value.length) throw Error('清单端口列表无效')
+    return value
+  }
+  const txPorts = portList(legacy ? [0,1,2,3] : m.tx_ports)
+  const rxPorts = portList(legacy ? [0,1] : m.rx_ports)
+  if (ota && txPorts.length * n * 2 > 128) throw Error("超过 128 个逻辑通道")
+  const port = (value: unknown, allowed: number[]) => {
+    if (typeof value !== 'number' || !allowed.includes(value)) throw Error('清单含未声明端口')
+    return value
+  }
+  if (!Array.isArray(m.links) || m.links.length !== txPorts.length * (ota ? 2 * n : rxPorts.length))
     throw Error('清单的端口数量不完整')
   const links: Link[] = m.links.map((item) => {
     const e = record(item),
-      tx = integer(e.tx, 4)
+      tx = port(e.tx, txPorts)
     if (
       typeof e.file !== 'string' ||
       !/^[-\w.]+\.asc$/.test(e.file) ||
@@ -78,7 +92,7 @@ export function readBundle(input: unknown, mode: Mode) {
       if (e.polarization !== 'theta' && e.polarization !== 'phi')
         throw Error('探头极化无效')
       destination = '探头 ' + integer(e.probe, n) + ' · ' + e.polarization
-    } else destination = 'RX' + integer(e.rx, 2)
+    } else destination = 'RX' + port(e.rx, rxPorts)
     const expected = ota
       ? `TX${tx}_PROBE${String(e.probe).padStart(2, '0')}_${e.polarization}.asc`
       : `R0B0S0D_TX${tx}_RX${e.rx}_H.asc`
@@ -109,7 +123,8 @@ export function readBundle(input: unknown, mode: Mode) {
     }
     const step = stats(m.time_step_phase, (frames - 1) * links.length)
     const pairs = record(m.port_phase)
-    const ports = ['0-1', '0-2', '0-3', '1-2', '1-3', '2-3'].map((k) =>
+    const keys = txPorts.flatMap((a,i) => txPorts.slice(i+1).map(b => a+'-'+b))
+    const ports = keys.map((k) =>
       stats(pairs[k], frames * n * 2),
     )
     const timeSource = m.time_source === 'operator_segment_durations' ? '操作员提供的逐段时长'
@@ -119,18 +134,16 @@ export function readBundle(input: unknown, mode: Mode) {
     phaseSummary =
       '播放时间来源：'+timeSource+'。载频处与生成模型对照，逐样点相位增量最大误差 ' +
       step.angle.toExponential(2) +
-      '°，六组发射端口相对相位最大误差 ' +
-      Math.max(...ports.map((v) => v.angle)).toExponential(2) +
-      '°。逐样点有效 ' +
+      '°。' + (ports.length ? '端口间相对相位最大误差 '+Math.max(...ports.map(v => v.angle)).toExponential(2)+'°。' : '单发射端口，无端口间相位对照。') + '逐样点有效 ' +
       step.samples +
       '，排除 ' +
       step.excluded +
-      '。六组端口按 01、02、03、12、13、23 排列，有效/排除数分别为 ' +
+      '。端口对 '+keys.join('、')+' 的有效/排除数分别为 ' +
       ports.map((v) => v.samples + '/' + v.excluded).join('、') +
       '。幅度门限为各通道峰值的万分之一；实际传播相位未经测量。'
   }
   if (ota && !dynamic) {
-    if (!Array.isArray(m.metrics) || m.metrics.length !== frames * 4 * 3)
+    if (!Array.isArray(m.metrics) || m.metrics.length !== frames * txPorts.length * 3)
       throw Error('逐帧场误差或功率对照缺失')
     for (const item of m.metrics) {
       const r = record(item),
@@ -139,7 +152,7 @@ export function readBundle(input: unknown, mode: Mode) {
         throw Error('频偏无效')
       metrics.push({
         frame: integer(r.frame, frames),
-        tx: integer(r.tx, 4),
+        tx: port(r.tx, txPorts),
         offset_hz: offset,
         field_nmse: measurement(r.field_nmse),
         power_ratio: measurement(r.power_ratio),

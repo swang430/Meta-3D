@@ -115,6 +115,14 @@ class ConductedProjectTest(unittest.TestCase):
             with zipfile.ZipFile(root / "short") as db, self.assertRaisesRegex(ValueError, "CHANNEL.H"):
                 column(db, json.loads(db.read("mpdb.json")), "CHANNEL", "H")
 
+    def test_two_transmit_two_receive(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            sample(root / "source", 4)
+            result = build(root / "source", root / "out", "delay_bins")
+            self.assertEqual([(v["tx"], v["rx"]) for v in result["links"]],
+                             [(0, 0), (0, 1), (1, 0), (1, 1)])
+
     def test_existing_destination(self):
         with tempfile.TemporaryDirectory() as tmp:
             with self.assertRaises(FileExistsError):
@@ -125,7 +133,7 @@ class ConductedProjectTest(unittest.TestCase):
             root = Path(tmp)
             source = root / "source.mpdb"
             sample(source, 15)
-            with self.assertRaisesRegex(ValueError, "八条唯一链路"):
+            with self.assertRaisesRegex(ValueError, "源帧 13 缺少发射端口 3 到接收端口 1 的链路"):
                 build(source, root / "out")
             self.assertFalse((root / "out").exists())
             sample(source, 16)

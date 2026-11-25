@@ -101,7 +101,7 @@ class ExternalAscPathStrategy(BaseChannelGenerator):
             def stage_inputs(staged):
                 raw = (directory / "manifest.json").read_bytes()
                 if hashlib.sha256(raw).hexdigest() != self.manifest_sha256:
-                    raise ValueError("八路传导清单与用例保存的摘要不一致")
+                    raise ValueError("传导清单与用例保存的摘要不一致")
                 (staged / "manifest.json").write_bytes(raw)
                 for name in asc_files:
                     shutil.copyfile(directory / name, staged / name)
