@@ -81,7 +81,8 @@ export function readProject(
         const usable = bundle.metrics.filter(m => m.field_nmse !== null && m.power_ratio !== null)
         const maximum = usable.reduce((max, row) => Math.max(max, row.field_nmse!), 0)
         const probeCount = bundle.links.length / (2 * new Set(bundle.links.map(link => link.tx)).size)
-        return summary + '探头布局含 '+probeCount+' 个双极化探头。' + (usable.length ? '场误差和功率比均有记录的 ' + usable.length +
+        const spectrum = (manifest as {field_spectrum_file?: string}).field_spectrum_file
+        return summary + (spectrum === 'field-spectrum.json' ? '已生成源帧逐发射口的指定频谱场能量对照，见 baseline/field-spectrum.json。' : '未提供指定发射谱的带内场能量对照。') + '以下为离散频点场核对，车载接收功率未核验。探头布局含 '+probeCount+' 个双极化探头。' + (usable.length ? '场误差和功率比均有记录的 ' + usable.length +
           ' 项中，最大归一化场均方误差为 ' + maximum.toExponential(2) + '。' : '') +
           (usable.length < bundle.metrics.length ? '缺少完整对照数值的 ' +
             (bundle.metrics.length - usable.length) + ' 项未核验。' : '')
