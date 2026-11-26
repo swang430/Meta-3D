@@ -9,10 +9,12 @@ from pathlib import Path
 
 import numpy as np
 if __package__:
+    from .mpdb_ota_spectrum import read_spectrum, compare
     from .mpdb_playback import resolve_playback
     from .mpdb_layout import port_layout
     from .imt_conducted_spectrum import column
 else:
+    from mpdb_ota_spectrum import read_spectrum, compare
     from mpdb_playback import resolve_playback
     from mpdb_layout import port_layout
     from imt_conducted_spectrum import column
@@ -30,7 +32,8 @@ def generate_ota(archive, output, playback, geometry):
         if outer.getinfo("R0B0S0D.mpdb").file_size > 256 * 1024**2:
             raise ValueError("下行样本超过大小上限")
         raw = outer.read("R0B0S0D.mpdb")
-    digest = hashlib.sha256(raw).hexdigest()
+        digest = hashlib.sha256(raw).hexdigest()
+        spectrum = read_spectrum(outer, digest)
     with zipfile.ZipFile(io.BytesIO(raw)) as db:
         if sum(i.file_size for i in db.infolist()) > 512 * 1024**2:
             raise ValueError("内层数据超过大小上限")
@@ -62,6 +65,11 @@ def generate_ota(archive, output, playback, geometry):
     data, dynamic_digest = read_columns(archive)
     if dynamic_digest != digest:
         raise ValueError("检查动态射线时原始文件发生变化")
+    if spectrum is not None:
+        report = compare(manifest_path.parent, baseline, data, chamber, spectrum)
+        (manifest_path.parent / "field-spectrum.json").write_text(json.dumps(report, allow_nan=False))
+        baseline["field_spectrum_file"] = "field-spectrum.json"
+        manifest_path.write_text(json.dumps(baseline, ensure_ascii=False, indent=2))
     data["CHANNEL", "DOPPLER"] = doppler
     generate(data, digest, geometry, output / "baseline", output / "dynamic", playback)
 

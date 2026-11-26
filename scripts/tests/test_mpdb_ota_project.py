@@ -87,7 +87,17 @@ class ProbeProjectTest(unittest.TestCase):
         playback = resolve_playback(timing, None, segments, "standard")
         with tempfile.TemporaryDirectory() as tmp:
             output = Path(tmp) / "project"
-            generate_ota(archive, output, playback, chamber_fixture(Path(tmp)))
+            with_spectrum = Path(tmp) / "spectrum.zip"
+            with zipfile.ZipFile(with_spectrum, "w") as packaged:
+                packaged.writestr("R0B0S0D.mpdb", inner)
+                packaged.writestr("ota-spectrum.json", json.dumps(dict(
+                    source_sha256=source_digest, offsets_hz=[-1e7, 0, 1e7],
+                    relative_bin_power=[1, 2, 1])))
+            generate_ota(with_spectrum, output, playback, chamber_fixture(Path(tmp)))
+            report = json.loads((output / "baseline/field-spectrum.json").read_text())
+            self.assertEqual(report["source_sha256"], source_digest)
+            self.assertEqual(len(report["rows"]), 38 * 4)
+            self.assertAlmostEqual(report["rows"][0]["ratio"], 0.53899597, places=5)
             for name, frames in (("baseline", 38), ("dynamic", int(1.84 * playback["rate_hz"])+1)):
                 folder = output / name
                 manifest = json.loads((folder / "manifest.json").read_text())
