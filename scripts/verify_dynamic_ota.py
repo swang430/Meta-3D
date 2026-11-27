@@ -137,10 +137,6 @@ def run(archive, project, output):
         m["links"]
     ):
         raise ValueError("动态端口清单不完整或重复")
-    basis = spatial(points, az, zen, fc + offsets)
-    probe = np.einsum("rfp,rvc->rvfpc", basis, polar_basis(az, zen)).reshape(
-        len(feeds), len(offsets), len(points), 3
-    )
     fit = np.asarray(geometry["fit_points_m"])
     fit_phase = spatial(fit, az, zen, np.array([fc]))[:, 0]
     fit_basis = np.einsum("rp,rvc->pcrv", fit_phase, polar_basis(az, zen))
@@ -176,7 +172,7 @@ def run(archive, project, output):
             tables.append(rows.reshape(len(grid), taps, 3))
         asc[tx] = np.stack(tables, axis=1)
 
-    def source(frame, tx):
+    def source(frame, tx, offsets):
         sel = np.ones(len(data["LINK", "LINK_ID"]), dtype=bool)
         for key, val in (("FRAME_ID", frame), ("TX_ANT", tx), ("RX_ANT", rx)):
             sel &= data["LINK", key].ravel() == val
@@ -215,7 +211,6 @@ def run(archive, project, output):
         np.unique(data["LINK", "FRAME_ID"]), np.arange(len(times))
     ):
         raise ValueError("源帧时间与 MPDB 的编号范围不符")
-    left = {tx: source(0, tx) for tx in txs}
     for i, (start, end) in enumerate(zip(times, times[1:])):
         indices = np.flatnonzero(
             (grid >= start) & ((grid < end) if i < len(times) - 2 else (grid <= end))
@@ -231,90 +226,101 @@ def run(archive, project, output):
             next_anchor_energy_db=[],
             feed_phase_deg=[],
         )
-        fields = {}
-        feed_fields = {}
-        for tx in txs:
-            right = source(i + 1, tx)
-            l = propagate(left[tx], t - start)
-            r = propagate(right, t - end)
-            frozen, raw, compressed = [
-                (1 - alpha) * a + alpha * b for a, b in zip(l[:3], r[:3])
-            ]
-            feed_ref = (1 - alpha[..., 0]) * l[3] + alpha[..., 0] * r[3]
-            table = asc[tx][indices]
-            amp = table[..., 1] + 1j * table[..., 2]
-            feed_read = np.stack(
-                [
-                    (amp * np.exp(-2j * np.pi * f * 1e-9 * table[..., 0])).sum(-1)
-                    for f in offsets
-                ],
-                axis=1,
+        energies = {}
+        phase_parts = {}
+        def add_energy(key, reference, estimate):
+            pair = np.stack([energy(reference, bin_weights), energy(estimate, bin_weights)])
+            if key in energies:
+                energies[key] += pair
+            else:
+                energies[key] = pair
+
+        for first in range(0, len(offsets), 2):
+            bins = offsets[first:first + 2]
+            bin_weights = weights[first:first + 2]
+            basis = spatial(points, az, zen, fc + bins)
+            probe = np.einsum("rfp,rvc->rvfpc", basis, polar_basis(az, zen)).reshape(
+                len(feeds), len(bins), len(points), 3
             )
-            feed_fields[tx] = (feed_ref, feed_read)
-            playback = np.einsum("tfr,rfpc->tfpc", feed_read, probe, optimize=True)
-            projected = np.einsum("tfr,rfpc->tfpc", feed_ref, probe, optimize=True)
-            fields[tx] = (
-                (frozen, raw),
-                (raw, compressed),
-                (compressed, playback),
-                (raw, projected),
-                (projected, playback),
-                (raw, playback),
-            )
-            for stage, (a, b) in zip(stages, fields[tx]):
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    delta = 10 * np.log10(energy(b, weights) / energy(a, weights))
-                delta[~np.isfinite(delta)] = np.nan
-                segment["energy_db"].append(
-                    dict(tx=tx, stage=stage, **stats(delta, indices))
-                )
-            # 从左端单边外推到下一真实源帧，不混入右端射线。
-            frozen_left, advanced_left, _, _ = propagate(
-                left[tx], np.array([end - start])
-            )
-            right_truth = right[1].sum(axis=0)[None]
-            for label, prediction in (
-                ("frozen", frozen_left[None]),
-                ("doppler", advanced_left),
-            ):
-                with np.errstate(divide="ignore", invalid="ignore"):
-                    error = 10 * np.log10(
-                        energy(prediction, weights) / energy(right_truth, weights)
-                    )
-                error[~np.isfinite(error)] = np.nan
-                item = stats(error, np.array([i + 1]))
-                if "row" in item:
-                    item["source_frame"] = item.pop("row")
-                segment["next_anchor_energy_db"].append(
-                    dict(tx=tx, prediction=label, **item)
-                )
-            left[tx] = right
-        for tx, other in combinations(txs, 2):
-            a, c = feed_fields[tx]
-            b, d = feed_fields[other]
-            # 各通道低于该段峰值万分之一时，保留排除数。
-            valid = np.logical_and.reduce(
-                [
-                    abs(x) > abs(x).max(axis=0, keepdims=True) * 1e-4
-                    for x in (a, b, c, d)
+            fields = {}
+            feed_fields = {}
+            for tx in txs:
+                left = source(i, tx, bins)
+                right = source(i + 1, tx, bins)
+                l = propagate(left, t - start)
+                r = propagate(right, t - end)
+                frozen, raw, compressed = [
+                    (1 - alpha) * a + alpha * b for a, b in zip(l[:3], r[:3])
                 ]
-            )
-            angles = np.where(
-                valid, abs(np.angle(c * d.conj() * a.conj() * b, deg=True)), np.nan
-            )
-            entry = stats(angles, indices)
-            if "point" in entry:
-                probe_id, pol = feeds[entry.pop("point")]
-                entry.update(probe=probe_id, polarization=pol)
-            segment["feed_phase_deg"].append(dict(pair=[tx, other], **entry))
-            for stage, (a, c), (b, d) in zip(stages, fields[tx], fields[other]):
-                segment["phase_deg"].append(
-                    dict(
-                        pair=[tx, other],
-                        stage=stage,
-                        **stats(phase_error(a, b, c, d), indices),
-                    )
+                feed_ref = (1 - alpha[..., 0]) * l[3] + alpha[..., 0] * r[3]
+                table = asc[tx][indices]
+                amp = table[..., 1] + 1j * table[..., 2]
+                feed_read = np.stack(
+                    [
+                        (amp * np.exp(-2j * np.pi * f * 1e-9 * table[..., 0])).sum(-1)
+                        for f in bins
+                    ],
+                    axis=1,
                 )
+                feed_fields[tx] = (feed_ref, feed_read)
+                playback = np.einsum("tfr,rfpc->tfpc", feed_read, probe, optimize=True)
+                projected = np.einsum("tfr,rfpc->tfpc", feed_ref, probe, optimize=True)
+                fields[tx] = (
+                    (frozen, raw),
+                    (raw, compressed),
+                    (compressed, playback),
+                    (raw, projected),
+                    (projected, playback),
+                    (raw, playback),
+                )
+                for stage, (a, b) in zip(stages, fields[tx]):
+                    add_energy((tx, stage), a, b)
+                # 从左端单边外推到下一真实源帧，不混入右端射线。
+                frozen_left, advanced_left, _, _ = propagate(
+                    left, np.array([end - start])
+                )
+                right_truth = right[1].sum(axis=0)[None]
+                for label, prediction in (
+                    ("frozen", frozen_left[None]),
+                    ("doppler", advanced_left),
+                ):
+                    add_energy((tx, label), right_truth, prediction)
+            for tx, other in combinations(txs, 2):
+                a, c = feed_fields[tx]
+                b, d = feed_fields[other]
+                # 各通道低于该段峰值万分之一时，保留排除数。
+                valid = np.logical_and.reduce(
+                    [
+                        abs(x) > abs(x).max(axis=0, keepdims=True) * 1e-4
+                        for x in (a, b, c, d)
+                    ]
+                )
+                angles = np.where(
+                    valid, abs(np.angle(c * d.conj() * a.conj() * b, deg=True)), np.nan
+                )
+                phase_parts.setdefault((tx, other, "feed"), []).append(angles)
+                for stage, (a, c), (b, d) in zip(stages, fields[tx], fields[other]):
+                    phase_parts.setdefault((tx, other, stage), []).append(phase_error(a, b, c, d))
+        for (tx, label), (reference, estimate) in energies.items():
+            with np.errstate(divide="ignore", invalid="ignore"):
+                delta = 10 * np.log10(estimate / reference)
+            delta[~np.isfinite(delta)] = np.nan
+            if label in stages:
+                segment["energy_db"].append(dict(tx=tx, stage=label, **stats(delta, indices)))
+            else:
+                entry = stats(delta, np.array([i + 1]))
+                if "row" in entry:
+                    entry["source_frame"] = entry.pop("row")
+                segment["next_anchor_energy_db"].append(dict(tx=tx, prediction=label, **entry))
+        for (tx, other, stage), parts in phase_parts.items():
+            entry = stats(np.concatenate(parts, axis=1), indices)
+            if stage == "feed":
+                if "point" in entry:
+                    probe_id, pol = feeds[entry.pop("point")]
+                    entry.update(probe=probe_id, polarization=pol)
+                segment["feed_phase_deg"].append(dict(pair=[tx, other], **entry))
+            else:
+                segment["phase_deg"].append(dict(pair=[tx, other], stage=stage, **entry))
         result["segments"].append(segment)
     output.write_text(json.dumps(result, allow_nan=False, indent=2))
 
