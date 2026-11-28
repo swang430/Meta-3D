@@ -541,8 +541,8 @@ def _execution_scenario(db: Session, row):
     if row.mode == TestMode.CONDUCTED.value:
         # 旧传导记录没有可信快照，只能显示当时保存的场景标识。
         return (row.vrt_conducted_setup or {}).get("scenario_snapshot")
-    if row.mode == "digital_twin" and row.vrt_twin_input:
-        return row.vrt_twin_input["scenario_snapshot"]
+    if row.mode == "digital_twin":
+        return (row.vrt_twin_input or {}).get("scenario_snapshot")
     if row.scenario_id:
         return get_scenario_by_id(row.scenario_id) or _get_custom_scenario(db, row.scenario_id)
     return None

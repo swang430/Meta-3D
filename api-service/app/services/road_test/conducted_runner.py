@@ -116,6 +116,15 @@ async def _mock_playback(snapshot, staged_directory, station, channel, run):
         await _stop_devices(channel, station)
 
 
+def _preparation_matches(fresh, saved):
+    # 旧准备记录没有用于显示的源帧数。工程摘要、播放窗口、实际接线和校准仍须逐项相同。
+    previous = saved.get("playback")
+    current = fresh.get("playback")
+    if isinstance(previous, dict) and isinstance(current, dict) and "source_frames" not in previous:
+        fresh = {**fresh, "playback": {key: value for key, value in current.items() if key != "source_frames"}}
+    return fresh == saved
+
+
 def _real_guard(db, snapshot, hal):
     from app.api.road_test_conducted import Selection, resolve
 
@@ -123,7 +132,7 @@ def _real_guard(db, snapshot, hal):
         return "实际加载的基站和信道仿真器与本次真实执行不符。"
     db.expire_all()
     selection = Selection.model_validate({k: snapshot.get(k) for k in Selection.model_fields})
-    if resolve(db, selection) != snapshot or not calibrated_setup("conducted", snapshot):
+    if not _preparation_matches(resolve(db, selection), snapshot) or not calibrated_setup("conducted", snapshot):
         return "设备绑定、场景或逐路校准已发生变化。"
     return None
 
@@ -344,7 +353,7 @@ async def control(db, row, action):
     except ValidationError as exc:
         raise HTTPException(409, "保存的准备记录不完整，请重新准备。") from exc
     fresh = resolve(db, selection, playback_files=playback_files)
-    if not fresh["ready"] or fresh != saved:
+    if not fresh["ready"] or not _preparation_matches(fresh, saved):
         raise HTTPException(409, "；".join(fresh["reasons"]) or "准备记录已变化，请重新保存。")
     physical = (fresh.get("binding") or {}).get("execution_mode") == "real"
     directory = playback_files.get("directory")

@@ -1370,6 +1370,44 @@ class PDFGenerator:
             details = [f"场景版本：{setup.get('scenario_version') or '未知'}",
                        f"实验室：{setup.get('lab_name') or '未知'}",
                        f"资产：{asset.get('name') or '未登记'}"]
+            road = setup.get("road_project") or {}
+            playback = setup.get("playback") or {}
+            preset = setup.get("scenario_snapshot") or {}
+            settings = setup.get("test_settings") or {}
+            network = preset.get("network") or {}
+            traffic = settings.get("traffic") or preset.get("traffic") or {}
+            if road:
+                details.append(f"道路工程 {playback.get('project_name') or '未知'}，版本 {road.get('version') or '未知'}")
+                details.append(f"工程包 SHA-256 {playback.get('package_sha256') or '未知'}")
+                frames = playback.get("source_frames")
+                details.append(f"工程登记的源帧数 {frames} 帧" if frames is not None else "工程登记的源帧数未知")
+                span = playback.get("source_duration_s")
+                details.append(f"源轨迹时长 {span} 秒" if span is not None else "源轨迹时长未核验")
+            if playback:
+                details.append(f"计划从 {playback.get('start_s', '未知')} 秒开始，播放 {playback.get('duration_s', '未知')} 秒")
+            if network:
+                details.append(f"基站协议预设 {network.get('type') or '未知'}，频段 {network.get('band') or '未知'}，"
+                               f"带宽 {network.get('bandwidth_mhz', '未知')} MHz")
+            if settings.get("terminal_protocol"):
+                details.append(f"本次登记的终端协议 {settings['terminal_protocol']}")
+            if traffic:
+                details.append(f"业务目标 {traffic.get('type') or '未知'}，方向 {traffic.get('direction') or '未知'}")
+                if traffic.get("data_rate_mbps") is not None:
+                    details.append(f"目标速率 {traffic['data_rate_mbps']} Mbps")
+            targets = settings.get("kpi_definitions")
+            if targets is None:
+                targets = preset.get("kpi_definitions")
+            for target in targets or []:
+                unit = target.get("unit") or ""
+                parts = [f"指标目标 {target.get('kpi_type') or '未知'} {target.get('target_value', '未知')} {unit}"]
+                if target.get("percentile") is not None:
+                    parts.append(f"第 {target['percentile']} 百分位")
+                for field, label in (("threshold_min", "下限"), ("threshold_max", "上限")):
+                    if target.get(field) is not None:
+                        parts.append(f"{label} {target[field]} {unit}")
+                details.append("，".join(parts))
+            if ota and setup.get("target_field_v_m") is not None:
+                details.append(f"测试区目标场强 {setup['target_field_v_m']} V/m（仅记录）")
             if setup.get("scenario_sha256"):
                 details.append(f"场景内容摘要（SHA-256）：{setup['scenario_sha256']}")
             if asset.get("mock_only") or binding.get("mock_only"):
@@ -1379,6 +1417,28 @@ class PDFGenerator:
                 details.append(f"本次执行的传导校准记录：{calibration['id']}")
                 if calibration.get("evidence_sha256"):
                     details.append(f"校准原文摘要（SHA-256）：{calibration['evidence_sha256']}")
+            if not ota:
+                scope = calibration.get("scope") or {}
+                if calibration:
+                    details.append("校准核对通过" if calibration.get("applicable") is True else
+                                   "校准未通过" if calibration.get("applicable") is False else "校准结果未知")
+                    details.extend(calibration.get("reasons") or [])
+                if scope:
+                    for field, label, unit in (
+                        ("center_frequency_hz", "中心频率", "Hz"), ("bandwidth_mhz", "带宽", "MHz"),
+                        ("tx_power_dbm", "基站小区设定功率", "dBm"),
+                        ("base_station_id", "基站", ""), ("channel_emulator_id", "信道仿真器", ""),
+                        ("dut_id", "车载设备", ""),
+                    ):
+                        if scope.get(field) is not None:
+                            details.append(f"本次申请的工作点 · {label} {scope[field]} {unit}".strip())
+                if not calibration.get("id"):
+                    details.append("本次执行未记录现场逐端口校准。")
+                plan = binding.get("receiver_power_plan") or {}
+                for port in plan.get("predictions", []):
+                    if port.get("frame") == plan.get("reference_frame") and port.get("target_dut_dbm") is not None:
+                        details.append(f"源帧 {port['frame']}，接收插口 {port.get('physical_rx')} 的预测目标 "
+                                       f"{port['target_dut_dbm']} dBm。")
             if asset.get("sha256"):
                 details.append(f"资产摘要（SHA-256）：{asset['sha256']}")
             for link in asset.get("links", []):

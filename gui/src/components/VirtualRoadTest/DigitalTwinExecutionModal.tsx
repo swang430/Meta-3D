@@ -61,7 +61,7 @@ export function DigitalTwinExecutionModal({ scenario, initialId, onViewExecution
   const frozenName = snapshot?.scenario_snapshot?.name
   const data = timeline.data
   const result = comparison.data
-  return <Modal opened closeOnEscape={!report} onClose={onClose} title={`数字孪生（模拟） · ${typeof frozenName === 'string' ? frozenName : scenario.name}`} size="lg">
+  return <Modal opened closeOnEscape={!report} onClose={onClose} title={`数字孪生（模拟） · ${typeof frozenName === 'string' ? frozenName : id ? (matches && detail.data?.scenario_id || '场景未知') : scenario.name}`} size="lg">
     <Stack>
       <Text>本次执行仅运行软件模型，模拟吞吐率不参与正式性能判定。</Text>
       {!id && <NumberInput label="随机种子（相同场景和种子可重现结果）" min={0} max={2147483647} allowDecimal={false} value={seed} onChange={setSeed} />}

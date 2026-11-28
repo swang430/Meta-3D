@@ -57,6 +57,8 @@ def project_playback(ref, mode, asset, registrations):
         raise ValueError("源轨迹时间无效")
     evidence = dict(project_name=scene["name"], package_sha256=scene["package_sha256"],
                     source_duration_s=span, time_source=scene.get("time_source"))
+    if type(scene.get("source_frames")) is int and scene["source_frames"] > 0:
+        evidence["source_frames"] = scene["source_frames"]
     if asset.get("mock_only") is True:
         member = "dynamic/manifest.json" if mode == "ota" else "manifest.json"
         with ZipFile(package) as archive:
