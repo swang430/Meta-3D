@@ -90,8 +90,14 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
             assert imported.status_code == 201, imported.text
             selection["calibration_id"] = imported.json()["id"]
         saved = client.post(ROOT + "/conducted/executions", json=selection).json()["config"]["conducted"]
-        assert saved["ready"], saved["reasons"]
+        assert saved["ready"] is physical, saved["reasons"]
+        if not physical:
+            assert any("模拟专用播放清单" in r for r in saved["reasons"])
         assert saved["asset"]["sha256"] == digest and saved["port_mapping"] == mapping
+        limited = client.post(ROOT + "/conducted/prepare", json={
+            **selection, "test_settings": {"traffic": {"type": "ftp", "direction": "DL"}, "playback_seconds": 0.5}
+        }).json()
+        assert not limited["ready"] and any("仅模拟清单" in reason for reason in limited["reasons"])
         if physical:
             calibration = saved["binding"]["real_preflight"]["calibration"]
             assert calibration["applicable"] and len(calibration["ports"]) == 8
@@ -152,3 +158,31 @@ def test_prepare_digest_ignores_record_timestamps(client):
         db.commit()
     after = client.post(ROOT + "/conducted/prepare", json=selection).json()
     assert after["scenario_sha256"] == before["scenario_sha256"]
+
+
+def test_two_business_settings_freeze_separately_without_editing_the_road_scene(client):
+    scenario_id = client.get(ROOT + "/scenarios").json()[0]["id"]
+    original = client.get(f"{ROOT}/scenarios/{scenario_id}").json()
+    saved = []
+    for business, rate in (("video", 20), ("ftp", 50)):
+        settings = {"traffic": {"type": business, "direction": "DL", "data_rate_mbps": rate}}
+        response = client.post(ROOT + "/conducted/executions",
+                               json={"scenario_id": scenario_id, "test_settings": settings})
+        assert response.status_code == 201, response.text
+        saved.append(response.json()["execution_id"])
+    for execution, expected in zip(saved, ("video", "ftp")):
+        frozen = client.get(f"{ROOT}/executions/{execution}").json()["config"]["conducted"]
+        assert frozen["test_settings"]["traffic"]["type"] == expected
+        assert frozen["scenario_snapshot"]["traffic"] == original["traffic"]
+    assert client.get(f"{ROOT}/scenarios/{scenario_id}").json()["traffic"] == original["traffic"]
+
+
+def test_prepare_rejects_missing_road_project(client, monkeypatch, tmp_path):
+    from app.api import mpdb_projects
+    monkeypatch.setattr(mpdb_projects, "_scene_library", lambda: tmp_path)
+    scenario = client.get(ROOT + "/scenarios").json()[0]["id"]
+    request = {"scenario_id": scenario, "road_project": {"source_sha256": "a"*64, "version": "b"*64}}
+    response = client.post(ROOT + "/conducted/prepare", json=request)
+    assert response.status_code == 200
+    preview = response.json()
+    assert not preview["ready"] and any("道路工程无法核对" in reason for reason in preview["reasons"])

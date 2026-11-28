@@ -5,6 +5,8 @@ import math
 from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
+from zipfile import BadZipFile
+from app.services.road_test.road_project import RoadProjectReference, project_playback
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -28,6 +30,8 @@ class Selection(BaseModel):
     chamber_id: UUID | None = None
     asset_id: UUID | None = None
     direction: str = 'downlink'
+    road_project: RoadProjectReference | None = None
+    target_field_v_m: float | None = Field(default=None, gt=0, allow_inf_nan=False)
 
 
 def registrations(lab):
@@ -84,6 +88,9 @@ def manifest_asset(registration, playback_files):
 
 def resolve(db, selection, *, playback_files=None):
     ids = selection.model_dump(mode='json')
+    for key in ("road_project", "target_field_v_m"):
+        if ids[key] is None:
+            ids.pop(key)
     scenario = get_scenario_by_id(selection.scenario_id) or _get_custom_scenario(db, selection.scenario_id)
     if not scenario:
         raise HTTPException(404, '所选场景不存在。')
@@ -163,6 +170,13 @@ def resolve(db, selection, *, playback_files=None):
             reasons.append(f'OTA校准不适用：{exc}')
     if not all(is_mock_driver(get_hal_service().drivers.get(k)) for k in ('baseStation','channelEmulator')):
         reasons.append('当前 OTA 工程和校准仅限模拟，基站和信道仿真器必须同时使用模拟驱动。')
+    if selection.road_project:
+        try:
+            playback = project_playback(selection.road_project, "ota", asset, matches)
+            playback.update(start_s=0, duration_s=playback["full_duration_s"])
+            ids["playback"] = playback
+        except (OSError, ValueError, TypeError, KeyError, BadZipFile) as exc:
+            reasons.append(f"空口道路工程无法核对：{exc}")
     return dict(**ids,scenario_version=scenario.version,scenario_sha256=digest,scenario_snapshot=snapshot,
                 lab_name=lab.name if lab else None,chamber=chamber_snapshot,asset=asset,
                 binding=dict(execution_mode='simulated',mock_only=True),probe_mapping=mapping,calibration=calibration,
@@ -170,6 +184,7 @@ def resolve(db, selection, *, playback_files=None):
 
 
 class Preparation(Selection):
+    playback: dict | None = None
     scenario_version: str
     scenario_sha256: str
     scenario_snapshot: dict
@@ -183,7 +198,7 @@ class Preparation(Selection):
     reasons: list[str]
 
 
-@router.post('/prepare',response_model=Preparation)
+@router.post('/prepare',response_model=Preparation, response_model_exclude_unset=True)
 def prepare(selection: Selection, db: Session=Depends(get_db)):
     return resolve(db,selection)
 

@@ -1028,7 +1028,16 @@ export interface ConductedCalibrationCheck {
   }[]
 }
 
+export interface ConductedTestSettings {
+  expected_network?: "5G_NR" | "LTE" | "C-V2X" | null
+  terminal_protocol?: string | null
+  traffic: { type: string; direction: 'DL' | 'UL' | 'BOTH'; data_rate_mbps?: number | null }
+  kpi_definitions?: KPIDefinition[] | null
+  playback_seconds?: number | null
+}
 export interface ConductedSelection {
+  road_project?: {source_sha256: string; version: string} | null
+  test_settings?: ConductedTestSettings | null
   receiver_power?: {reference_frame: number; targets_dbm: Record<string,number>} | null
   calibration_id?: string | null
   scenario_id: string
@@ -1039,10 +1048,12 @@ export interface ConductedSelection {
 }
 
 export interface ConductedPreparation extends ConductedSelection {
+  playback?: { duration_s: number; full_duration_s: number; duration_source: string; source_duration_s?: number | null; project_name?: string }
+
   binding?: { receiver_power_plan?: {reference_frame:number;common_offset_db:number;predictions:{rx:number;physical_rx:number;output_port:number|null;frame:number;target_dut_dbm:number|null;f64_connector_target_dbm:number|null}[]}; execution_mode: 'simulated' | 'real' | null; real_preflight?: { calibration?: ConductedCalibrationCheck } | null } | null
   scenario_version: string
   scenario_sha256?: string
-  scenario_snapshot?: { name: string }
+  scenario_snapshot?: { name: string; traffic?: ConductedTestSettings["traffic"]; network?: NetworkConfig; kpi_definitions?: KPIDefinition[] }
   lab_name: string | null
   asset: { name: string; sha256: string; instrument_path?: string; mock_only?: boolean } | null
   port_mapping: { tx: number; rx: number; input_port: number; output_port: number }[]
@@ -1124,6 +1135,8 @@ export interface ExecutionReport {
 
 
 export interface OtaSelection {
+  road_project?: ConductedSelection["road_project"]
+  target_field_v_m?: number | null
   scenario_id: string
   direction: 'downlink'
   lab_profile_id: string | null
@@ -1132,6 +1145,7 @@ export interface OtaSelection {
 }
 
 export interface OtaPreparation extends OtaSelection {
+  playback?: ConductedPreparation["playback"]
   scenario_version: string
   scenario_sha256: string
   scenario_snapshot: { name: string }

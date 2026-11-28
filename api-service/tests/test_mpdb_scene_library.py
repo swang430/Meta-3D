@@ -104,7 +104,7 @@ def test_project_conditions_distinguish_port_limit_lab_and_missing_calibration(t
     (folder/'scene.json').write_text(json.dumps(record))
     monkeypatch.setattr(conducted,'resolve',lambda db, selection:dict(
         scenario_id=selection.scenario_id, scenario_snapshot={'name':'传导道路'},
-        ready=False,reasons=['尚未选择已采用的逐路校准']))
+        asset={'sha256':hashlib.sha256(b'{}').hexdigest()}, ready=False,reasons=['尚未选择已采用的逐路校准']))
     check = project_capabilities(source, version, lab.id, db)
     assert check['registrations'][0]['ready'] is False
     assert '逐路校准' in check['registrations'][0]['reasons'][0]
@@ -114,9 +114,43 @@ def test_project_conditions_distinguish_port_limit_lab_and_missing_calibration(t
     assert not project_capabilities(source, version, lab.id, db)['registrations']
     entries[0].update(kind='asc_manifest', sha256=hashlib.sha256(b'{}').hexdigest())
     assert project_capabilities(source, version, lab.id, db)['registrations'][0]['asset_kind'] == '模拟播放清单'
+    monkeypatch.setattr(conducted, 'resolve', lambda db, selection: dict(
+        scenario_id=selection.scenario_id, asset={'sha256':'f'*64}, scenario_snapshot={'name':'另一份清单'},
+        ready=True, reasons=[]))
+    mismatched = project_capabilities(source, version, lab.id, db)
+    assert not mismatched['registrations']
+    assert any('实际采用' in reason for reason in mismatched['reasons'])
     entries[0]['sha256'] = 'd' * 64
     assert not project_capabilities(source, version, lab.id, db)['registrations']
     record['package_sha256'] = 'e' * 64
     (folder/'scene.json').write_text(json.dumps(record))
     assert any('入库摘要不一致' in reason
                for reason in project_capabilities(source, version, lab.id, db)['reasons'])
+
+
+def test_project_simulation_keeps_source_and_playback_clocks_separate(tmp_path, monkeypatch):
+    from app.services.road_test.road_project import RoadProjectReference, project_playback
+    import pytest
+
+    monkeypatch.chdir(tmp_path)
+    ref = RoadProjectReference(source_sha256='a' * 64, version='b' * 64)
+    root = projects._scene_library() / ref.source_sha256 / ref.version
+    root.mkdir(parents=True)
+    raw = json.dumps({"header": {"cir_count": 38, "rate_hz": 1}}).encode()
+    with ZipFile(root / "project.zip", "w") as archive:
+        archive.writestr("manifest.json", raw)
+    metadata = dict(mode="conducted", direction="downlink", name="道路", source_sha256=ref.source_sha256,
+                    version=ref.version, package_sha256=projects._file_digest(root / "project.zip"),
+                    source_times_s=None)
+    (root / "scene.json").write_text(json.dumps(metadata))
+    asset = dict(mock_only=True, sha256=hashlib.sha256(raw).hexdigest())
+    playback = project_playback(ref, "conducted", asset, [{}])
+    assert playback["source_duration_s"] is None
+    assert playback["full_duration_s"] == 37
+    metadata["source_times_s"] = [5, 5.8]
+    (root / "scene.json").write_text(json.dumps(metadata))
+    assert project_playback(ref, "conducted", asset, [{}])["source_duration_s"] == pytest.approx(.8)
+    with pytest.raises(ValueError, match="实际采用的播放清单"):
+        project_playback(ref, "conducted", dict(asset, sha256="c" * 64), [{}])
+    with pytest.raises(ValueError, match="内容、方向或版本"):
+        project_playback(ref, "ota", asset, [{}])

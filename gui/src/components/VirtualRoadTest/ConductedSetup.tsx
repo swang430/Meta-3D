@@ -10,6 +10,9 @@ export function ConductedSetup({ snapshot }: { snapshot: ConductedPreparation })
     <Text>{snapshot.ready ? '准备检查已通过' : '准备检查尚未通过'}</Text>
     {snapshot.binding?.execution_mode === 'simulated' && snapshot.asset?.mock_only && <Text>八路输入来自模拟清单，执行要求基站和信道仿真器均使用模拟驱动。模拟测量不计入正式测试结论。</Text>}
     <Text>场景版本 {snapshot.scenario_version} · 实验室 {snapshot.lab_name || '尚未选择'}</Text>
+    {snapshot.playback && <Text>源轨迹时长 {snapshot.playback.source_duration_s == null ? '未核验' : snapshot.playback.source_duration_s+' 秒'} · 本次播放从起点开始，共 {snapshot.playback.duration_s} 秒（整段依据为{snapshot.playback.duration_source}）。</Text>}
+    {snapshot.scenario_snapshot?.network && <Text>基站协议预设 {snapshot.scenario_snapshot.network.type} · {snapshot.scenario_snapshot.network.band} · {snapshot.scenario_snapshot.network.bandwidth_mhz} MHz。实际工作点按设备回读核对。</Text>}
+    {snapshot.test_settings && <Text>本次记录的业务 {snapshot.test_settings.traffic.type} · 目标速率 {snapshot.test_settings.traffic.data_rate_mbps ?? '未指定'} Mbps</Text>}
     {snapshot.scenario_sha256 && <Text size="sm" style={{ overflowWrap: 'anywhere' }}>场景内容摘要（SHA-256） {snapshot.scenario_sha256}</Text>}
     {snapshot.asset && <Text style={{ overflowWrap: 'anywhere' }}>{snapshot.asset.mock_only ? '八路模拟输入清单' : '工程'} {snapshot.asset.name} {snapshot.asset.instrument_path}<br/>文件摘要（SHA-256） {snapshot.asset.sha256}</Text>}
     {Array.isArray(snapshot.port_mapping) && snapshot.port_mapping.length > 0 && <Table><Table.Thead><Table.Tr>

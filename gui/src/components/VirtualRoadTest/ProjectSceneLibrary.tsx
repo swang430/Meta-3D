@@ -3,6 +3,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { Alert, Button, Group, Paper, Select, Stack, Text, TextInput } from '@mantine/core'
 import { isAxiosError } from 'axios'
 import client from '../../api/client'
+import { ConductedExecutionModal } from './ConductedExecutionModal'
+import { OtaExecutionModal } from './OtaExecutionModal'
+import type { OtaSelection, ConductedSelection } from '../../types/roadTest'
 
 const root = '/channel-assets/mpdb-projects'
 interface Project {
@@ -32,9 +35,10 @@ function projectLabel(p: Project) {
 }
 interface Conditions {
   reasons: string[]
-  registrations: { name: string; scenario_id: string; asset_kind: string; ready: boolean; reasons: string[] }[]
+  registrations: { name: string; scenario_id: string; asset_kind: string; selection: ConductedSelection | OtaSelection; ready: boolean; reasons: string[] }[]
 }
 function ProjectPreparation({scene}: {scene: Scene}) {
+  const [chosen, configure] = useState<ConductedSelection | OtaSelection | null>(null)
   const [expanded, expand] = useState(false)
   const [lab, selectLab] = useState<string | null>(null)
   const backend = scene.mode === 'ota' ? 'ota' : 'conducted'
@@ -45,6 +49,8 @@ function ProjectPreparation({scene}: {scene: Scene}) {
       {params:lab?{lab_id:lab}:{}})).data})
   return <Stack gap="xs">
     <Button variant="light" onClick={()=>expand(!expanded)}>{expanded?'收起准备条件':'准备测试'}</Button>
+    {chosen && "topology_id" in chosen && <ConductedExecutionModal opened onClose={()=>configure(null)} initialSelection={chosen} scenario={{id:chosen.scenario_id,name:scene.name}}/>}
+    {chosen && "chamber_id" in chosen && <OtaExecutionModal opened onClose={()=>configure(null)} initialSelection={chosen} scenario={{id:chosen.scenario_id,name:scene.name}}/>}
     {expanded && <>
       <Text>{scene.mode==='ota'?'辐射测试 · 当前仅支持模拟硬件':'传导测试 · 核对实验室登记后确定播放方式'}</Text>
       <Select label="实验室" clearable value={lab} onChange={selectLab}
@@ -53,6 +59,7 @@ function ProjectPreparation({scene}: {scene: Scene}) {
       {check.isFetching && <Text>正在核对准备条件</Text>}
       {check.data?.reasons.map(r=><Text key={r}>{r}</Text>)}
       {check.data?.registrations.map((r,i)=><Stack key={i} gap={2}><Text>{r.name} · {r.asset_kind} · {r.ready?'准备检查已通过':'尚有缺项'}</Text>
+        <Button variant="light" onClick={()=>configure({...r.selection, road_project: {source_sha256:scene.source_sha256,version:scene.version}})}>{scene.mode === 'conducted'?'配置本次传导测试':'配置本次空口模拟测试'}</Button>
         {r.reasons.map(reason=><Text key={reason}>{reason}</Text>)}</Stack>)}
       <Text size="sm">数字孪生使用独立的软件仿真配置。</Text>
     </>}

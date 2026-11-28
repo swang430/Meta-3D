@@ -8,6 +8,8 @@ export function OtaSetup({ snapshot }: { snapshot: OtaPreparation }) {
     <Alert color="orange">模拟测量不计入正式测试结论。传导校准不能代替 OTA 校准，真实暗室仍待现场验收。</Alert>
     <Text>场景版本 {snapshot.scenario_version} · 实验室 {snapshot.lab_name || '尚未选择'} · 暗室 {snapshot.chamber?.name || '尚未选择'}</Text>
     <Text size="sm" style={{ overflowWrap: 'anywhere' }}>场景内容摘要（SHA-256） {snapshot.scenario_sha256}</Text>
+    <Text>本次测试区目标场强 {snapshot.target_field_v_m == null ? '未指定' : snapshot.target_field_v_m+' V/m（仅记录）'}</Text>
+    {snapshot.playback && <Text>源轨迹时长 {snapshot.playback.source_duration_s == null ? '未核验' : snapshot.playback.source_duration_s+' 秒'} · 模拟播放时长 {snapshot.playback.duration_s} 秒</Text>}
     {snapshot.asset && <Stack gap={4}>
       <Text style={{ overflowWrap: 'anywhere' }}>OTA 模拟工程 {snapshot.asset.name} · 摘要（SHA-256） {snapshot.asset.sha256}</Text>
       {snapshot.asset.links.map(link => <Text key={link.file} size="xs" style={{ overflowWrap: 'anywhere' }}>{link.file} · {link.sha256}</Text>)}

@@ -1599,7 +1599,12 @@ def project_capabilities(source: str, version: str, lab_id: Optional[UUID] = Non
                 except (ValueError, KeyError, HTTPException) as exc:
                     reasons.append(f"实验室场景登记无法核对：{getattr(exc, 'detail', str(exc))}")
                     continue
-                registrations.append(dict(scenario_id=snapshot["scenario_id"],
+                resolved_asset = snapshot.get("asset") or {}
+                if simulated and resolved_asset.get("sha256") != manifest_digest:
+                    reasons.append("实际采用的模拟清单与此版本不符，或清单未通过检查。")
+                    reasons.extend(snapshot["reasons"])
+                    continue
+                registrations.append(dict(selection=selected, scenario_id=snapshot["scenario_id"],
                                           name=entry.get("name") or snapshot["scenario_snapshot"]["name"],
                                           asset_kind="模拟播放清单" if simulated else "设备工程登记",
                                           ready=snapshot["ready"], reasons=snapshot["reasons"]))

@@ -31,7 +31,7 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
     scenario = client.get(root + "/scenarios").json()[0]
     scenario = client.get(root + "/scenarios/" + scenario["id"]).json()
     if outcome in ("complete", "scenario_changed"):
-        scenario["route"]["duration_s"] = 0.15
+        scenario["route"]["duration_s"] = 30
         scenario["name"] = "冻结场景"
         result = client.post(root + "/scenarios", json=scenario)
         assert result.status_code == 201, result.text
@@ -71,6 +71,8 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
         db.add(lab)
         db.commit()
         selection["lab_profile_id"] = str(lab.id)
+    if outcome == "complete":
+        selection["test_settings"] = {"traffic": {"type": "video", "direction": "DL"}, "playback_seconds": 0.08}
     saved = client.post(root + "/conducted/executions", json=selection).json()
     if outcome == "missing_digest":
         assert not saved["config"]["conducted"]["ready"]
@@ -141,7 +143,13 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
             time.sleep(0.05)
         assert client.get(url).json()["status"] == "completed"
         report = client.get(url + "/report").json()
-        assert report["route"]["duration_s"] == 0.15
+        assert report["route"]["duration_s"] == 30
+        elapsed = client.get(url + "/status").json()["elapsed_time_s"]
+        assert 0.08 <= elapsed < 5
+        observations = client.get(url + "/metrics").json()["observations"]
+        assert observations and all(0 <= row["time_s"] <= 0.08 for row in observations)
+        assert report["conducted_setup"]["playback"]["duration_s"] == 0.08
+        assert report["conducted_setup"]["test_settings"]["traffic"]["type"] == "video"
         report.pop("generated_at")
         scenario_url = root + "/scenarios/" + scenario["id"]
         for edit in (lambda: client.put(scenario_url, json={"name": "新名称"}), lambda: client.delete(scenario_url)):

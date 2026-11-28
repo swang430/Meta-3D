@@ -4,6 +4,74 @@
  */
 
 export interface paths {
+    "/api/v1/road-test/conducted/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare */
+        post: operations["prepare_api_v1_road_test_conducted_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/road-test/conducted/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create */
+        post: operations["create_api_v1_road_test_conducted_executions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/road-test/ota/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare */
+        post: operations["prepare_api_v1_road_test_ota_prepare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/road-test/ota/executions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create */
+        post: operations["create_api_v1_road_test_ota_executions_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/road-test/project-capabilities/{source}/{version}": {
         parameters: {
             query?: never;
@@ -3701,6 +3769,343 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        "ConductedTestSettings-Output": {
+            expected_network?: components["schemas"]["NetworkType"] | null;
+            /** Terminal Protocol */
+            terminal_protocol?: string | null;
+            /** Playback Seconds */
+            playback_seconds?: number | null;
+            traffic: components["schemas"]["TrafficConfig"];
+            /** Kpi Definitions */
+            kpi_definitions?: components["schemas"]["KPIDefinition"][] | null;
+        };
+        CalibrationApplicability: {
+            /** Id */
+            id: string | null;
+            /** Applicable */
+            applicable: boolean;
+            /** Reasons */
+            reasons: string[];
+            /** Scope */
+            scope: {
+                [key: string]: unknown;
+            };
+            /** Ports */
+            ports: {
+                [key: string]: unknown;
+            }[];
+            /** Evidence Sha256 */
+            evidence_sha256?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        ConductedPreflight: {
+            /** Center Frequency Hz */
+            center_frequency_hz: number | null;
+            /** Bandwidth Mhz */
+            bandwidth_mhz: number | null;
+            calibration: components["schemas"]["CalibrationApplicability"];
+        } & {
+            [key: string]: unknown;
+        };
+        ConductedBinding: {
+            /** Execution Mode */
+            execution_mode: string | null;
+            real_preflight?: components["schemas"]["ConductedPreflight"] | null;
+        } & {
+            [key: string]: unknown;
+        };
+        Path: {
+            /** Tx */
+            tx: number;
+            /** Rx */
+            rx: number;
+            /** Input Port */
+            input_port: number;
+            /** Output Port */
+            output_port: number;
+        };
+        ConductedPreparation: {
+            /** Scenario Id */
+            scenario_id: string;
+            /**
+             * Direction
+             * @default downlink
+             */
+            direction: string;
+            /** Lab Profile Id */
+            lab_profile_id?: string | null;
+            /** Topology Id */
+            topology_id?: string | null;
+            /** Asset Id */
+            asset_id?: string | null;
+            /** Calibration Id */
+            calibration_id?: string | null;
+            receiver_power?: components["schemas"]["ReceiverPowerRequest"] | null;
+            test_settings?: components["schemas"]["ConductedTestSettings-Output"] | null;
+            road_project?: components["schemas"]["RoadProjectReference"] | null;
+            /** Playback */
+            playback?: {
+                [key: string]: unknown;
+            } | null;
+            /** Scenario Sha256 */
+            scenario_sha256: string;
+            /** Scenario Version */
+            scenario_version: string;
+            /** Scenario Snapshot */
+            scenario_snapshot: {
+                [key: string]: unknown;
+            };
+            /** Lab Name */
+            lab_name: string | null;
+            /** Asset */
+            asset: {
+                [key: string]: unknown;
+            } | null;
+            binding: components["schemas"]["ConductedBinding"] | null;
+            /** Port Mapping */
+            port_mapping: components["schemas"]["Path"][];
+            /** Ready */
+            ready: boolean;
+            /** Reasons */
+            reasons: string[];
+        };
+        ReceiverPowerRequest: {
+            /** Reference Frame */
+            reference_frame: number;
+            /** Targets Dbm */
+            targets_dbm?: {
+                [key: string]: number;
+            };
+        };
+        NetworkType: "5G_NR" | "LTE" | "C-V2X";
+        TrafficType: "ftp" | "video" | "voip" | "web" | "gaming";
+        TrafficConfig: {
+            type: components["schemas"]["TrafficType"];
+            /**
+             * Direction
+             * @description Traffic direction
+             * @enum {string}
+             */
+            direction: "DL" | "UL" | "BOTH";
+            /**
+             * Data Rate Mbps
+             * @description Target data rate in Mbps
+             */
+            data_rate_mbps?: number | null;
+            /**
+             * Packet Size Bytes
+             * @description Packet size in bytes
+             */
+            packet_size_bytes?: number | null;
+            /**
+             * Inter Arrival Ms
+             * @description Inter-arrival time in ms
+             */
+            inter_arrival_ms?: number | null;
+        };
+        KPIType: "throughput" | "latency" | "bler" | "rsrp" | "sinr" | "handover_success_rate";
+        KPIDefinition: {
+            /** @description KPI type */
+            kpi_type: components["schemas"]["KPIType"];
+            /**
+             * Target Value
+             * @description Target value
+             */
+            target_value: number;
+            /**
+             * Unit
+             * @description Unit (Mbps, ms, %, dBm)
+             */
+            unit: string;
+            /**
+             * Percentile
+             * @description Percentile (50, 95, etc.)
+             */
+            percentile?: number | null;
+            /**
+             * Threshold Min
+             * @description Minimum threshold
+             */
+            threshold_min?: number | null;
+            /**
+             * Threshold Max
+             * @description Maximum threshold
+             */
+            threshold_max?: number | null;
+        };
+        "ConductedTestSettings-Input": {
+            expected_network?: components["schemas"]["NetworkType"] | null;
+            /** Terminal Protocol */
+            terminal_protocol?: string | null;
+            /** Playback Seconds */
+            playback_seconds?: number | null;
+            traffic: components["schemas"]["TrafficConfig"];
+            /** Kpi Definitions */
+            kpi_definitions?: components["schemas"]["KPIDefinition"][] | null;
+        };
+        app__api__road_test_conducted__Selection: {
+            /** Scenario Id */
+            scenario_id: string;
+            /**
+             * Direction
+             * @default downlink
+             */
+            direction: string;
+            /** Lab Profile Id */
+            lab_profile_id?: string | null;
+            /** Topology Id */
+            topology_id?: string | null;
+            /** Asset Id */
+            asset_id?: string | null;
+            /** Calibration Id */
+            calibration_id?: string | null;
+            receiver_power?: components["schemas"]["ReceiverPowerRequest"] | null;
+            test_settings?: components["schemas"]["ConductedTestSettings-Input"] | null;
+            road_project?: components["schemas"]["RoadProjectReference"] | null;
+        };
+        Preparation: {
+            /** Scenario Id */
+            scenario_id: string;
+            /** Lab Profile Id */
+            lab_profile_id?: string | null;
+            /** Chamber Id */
+            chamber_id?: string | null;
+            /** Asset Id */
+            asset_id?: string | null;
+            /**
+             * Direction
+             * @default downlink
+             */
+            direction: string;
+            road_project?: components["schemas"]["RoadProjectReference"] | null;
+            /** Target Field V M */
+            target_field_v_m?: number | null;
+            /** Playback */
+            playback?: {
+                [key: string]: unknown;
+            } | null;
+            /** Scenario Version */
+            scenario_version: string;
+            /** Scenario Sha256 */
+            scenario_sha256: string;
+            /** Scenario Snapshot */
+            scenario_snapshot: {
+                [key: string]: unknown;
+            };
+            /** Lab Name */
+            lab_name: string | null;
+            /** Chamber */
+            chamber: {
+                [key: string]: unknown;
+            } | null;
+            /** Asset */
+            asset: {
+                [key: string]: unknown;
+            } | null;
+            /** Binding */
+            binding: {
+                [key: string]: unknown;
+            };
+            /** Probe Mapping */
+            probe_mapping: {
+                [key: string]: unknown;
+            }[];
+            /** Calibration */
+            calibration: {
+                [key: string]: unknown;
+            } | null;
+            /** Ready */
+            ready: boolean;
+            /** Reasons */
+            reasons: string[];
+        };
+        RoadProjectReference: {
+            /** Source Sha256 */
+            source_sha256: string;
+            /** Version */
+            version: string;
+        };
+        app__api__road_test_ota__Selection: {
+            /** Scenario Id */
+            scenario_id: string;
+            /** Lab Profile Id */
+            lab_profile_id?: string | null;
+            /** Chamber Id */
+            chamber_id?: string | null;
+            /** Asset Id */
+            asset_id?: string | null;
+            /**
+             * Direction
+             * @default downlink
+             */
+            direction: string;
+            road_project?: components["schemas"]["RoadProjectReference"] | null;
+            /** Target Field V M */
+            target_field_v_m?: number | null;
+        };
+        TestMode: "digital_twin" | "conducted" | "ota";
+        ExecutionStatus: "idle" | "initializing" | "configured" | "running" | "paused" | "completed" | "failed" | "stopped";
+        TestExecution: {
+            /**
+             * Execution Id
+             * @description Unique execution ID
+             */
+            execution_id: string;
+            /** @description Test mode */
+            mode: components["schemas"]["TestMode"];
+            /** @description Current status */
+            status: components["schemas"]["ExecutionStatus"];
+            /**
+             * Scenario Id
+             * @description Scenario ID
+             */
+            scenario_id: string;
+            /**
+             * Topology Id
+             * @description Topology ID (conducted mode)
+             */
+            topology_id?: string | null;
+            /**
+             * Config
+             * @description Executor-specific configuration
+             */
+            config?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Start Time
+             * @description Start time
+             */
+            start_time?: string | null;
+            /**
+             * End Time
+             * @description End time
+             */
+            end_time?: string | null;
+            /**
+             * Duration S
+             * @description Duration in seconds
+             */
+            duration_s?: number | null;
+            /**
+             * Created By
+             * @description Created by user
+             */
+            created_by?: string | null;
+            /**
+             * Notes
+             * @description Execution notes
+             */
+            notes?: string | null;
+            /**
+             * Logs
+             * @description Execution logs
+             */
+            logs?: {
+                [key: string]: unknown;
+            }[];
+        };
         /** SceneName */
         SceneName: {
             /** Name */
@@ -8131,6 +8536,138 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    prepare_api_v1_road_test_conducted_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["app__api__road_test_conducted__Selection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConductedPreparation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_api_v1_road_test_conducted_executions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["app__api__road_test_conducted__Selection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestExecution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    prepare_api_v1_road_test_ota_prepare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["app__api__road_test_ota__Selection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["Preparation"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    create_api_v1_road_test_ota_executions_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["app__api__road_test_ota__Selection"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TestExecution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     project_capabilities_api_v1_road_test_project_capabilities__source___version__get: {
         parameters: {
             query?: {

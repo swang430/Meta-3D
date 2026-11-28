@@ -258,7 +258,8 @@ async def _run(bind, key, snapshot, directory, duration, run, token):
                             elapsed = clock.time() - start
                             executions.update_runtime_status(db, key, elapsed_time_s=elapsed,
                                                              progress_percent=min(100, 100 * elapsed / duration))
-                            await _sample(db, key, station, channel, elapsed, physical=physical)
+                            if "playback" not in snapshot or elapsed <= duration:
+                                await _sample(db, key, station, channel, elapsed, physical=physical)
                             if not run.ready.done():
                                 run.ready.set_result(None)
                             if elapsed >= duration or run.stop.is_set():
@@ -352,7 +353,7 @@ async def control(db, row, action):
             raise HTTPException(409, "真实执行需要匹配的 UXM、F64 和已核验的逐路校准。")
     elif not (fresh["asset"].get("mock_only") is True and directory and fresh["binding"]["execution_mode"] == "simulated"):
         raise HTTPException(409, "此次模拟执行需要明确绑定已核对文件的模拟专用资产。")
-    duration = saved["scenario_snapshot"]["route"]["duration_s"]
+    duration = (saved.get("playback") or {}).get("duration_s", saved["scenario_snapshot"]["route"]["duration_s"])
     if not math.isfinite(duration) or duration <= 0:
         raise HTTPException(409, "场景缺少有效的路线时长。")
     reason = None if physical else _mock_only(get_hal_service())
