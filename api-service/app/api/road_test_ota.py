@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 from zipfile import BadZipFile
-from app.services.road_test.road_project import RoadProjectReference, project_playback
+from app.services.road_test.road_project import RoadProjectReference, manifest_clock, project_playback
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -56,7 +56,7 @@ def options(db: Session = Depends(get_db)):
                 assets=list(assets.values()))
 
 
-def manifest_asset(registration, playback_files):
+def manifest_asset(registration, playback_files, playback_clock):
     directory = Path(registration['manifest_dir'])
     if not directory.is_absolute():
         raise ValueError('OTA工程目录必须是服务端绝对路径。')
@@ -80,6 +80,8 @@ def manifest_asset(registration, playback_files):
     digest = hashlib.sha256(raw).hexdigest()
     if digest != registration['sha256']:
         raise ValueError('OTA清单内容与登记摘要不一致。')
+    if playback_clock is not None:
+        playback_clock.update(manifest_clock(doc))
     if playback_files is not None:
         playback_files['directory'] = str(directory)
     return dict(id=registration['asset_id'], name=registration['name'], sha256=digest, links=links,
@@ -109,6 +111,7 @@ def resolve(db, selection, *, playback_files=None):
         reasons.append('当前仅支持下行 OTA 模拟执行；其他方向需要独立资产与验证。')
     matches = [r for r in registrations(lab) if all(r.get(k)==ids[k] for k in ('scenario_id','chamber_id','asset_id','direction'))] if lab and lab.is_active else []
     asset, mapping, calibration = None, [], None
+    playback = {}
     chamber_snapshot = None
     if chamber:
         chamber_snapshot = dict(id=str(chamber.id), name=chamber.name, quiet_zone_diameter_m=chamber.quiet_zone_diameter_m,
@@ -123,7 +126,7 @@ def resolve(db, selection, *, playback_files=None):
             reasons.append('真实 OTA 执行仍待暗室场、功率和安全停机现场验收。')
         else:
             try:
-                asset = manifest_asset(reg, playback_files)
+                asset = manifest_asset(reg, playback_files, None if selection.road_project else playback)
             except (KeyError, ValueError, TypeError, OSError) as exc:
                 reasons.append(f'OTA资产校验失败：{exc}')
         rows = reg.get('probe_mapping')
@@ -173,10 +176,11 @@ def resolve(db, selection, *, playback_files=None):
     if selection.road_project:
         try:
             playback = project_playback(selection.road_project, "ota", asset, matches)
-            playback.update(start_s=0, duration_s=playback["full_duration_s"])
-            ids["playback"] = playback
         except (OSError, ValueError, TypeError, KeyError, BadZipFile) as exc:
             reasons.append(f"空口道路工程无法核对：{exc}")
+    if playback:
+        playback.update(start_s=0, duration_s=playback["full_duration_s"])
+        ids["playback"] = playback
     return dict(**ids,scenario_version=scenario.version,scenario_sha256=digest,scenario_snapshot=snapshot,
                 lab_name=lab.name if lab else None,chamber=chamber_snapshot,asset=asset,
                 binding=dict(execution_mode='simulated',mock_only=True),probe_mapping=mapping,calibration=calibration,

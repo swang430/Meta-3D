@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api import vrt_port_calibration
 from app.services.road_test.port_calibration import applicability
-from app.services.road_test.road_project import RoadProjectReference, project_playback
+from app.services.road_test.road_project import RoadProjectReference, manifest_clock, project_playback
 from app.services.road_test.sinr_plan import Waveforms, Window, budget, render_waveforms
 from app.api.road_test import _get_custom_scenario
 from app.data.scenario_library import get_scenario_by_id
@@ -73,7 +73,7 @@ def _options(db, model):
     return [{"id": str(row.id), "name": row.name} for row in query.order_by(model.name, model.id)]
 
 
-def mock_asset(directory: Directory, name: str):
+def mock_asset(directory: Directory, name: str, *, playback_clock: dict | None = None):
     raw = (directory / "manifest.json").read_bytes()
     manifest = json.loads(raw)
     links = manifest["links"]
@@ -94,6 +94,8 @@ def mock_asset(directory: Directory, name: str):
         if digest != link["sha256"]:
             raise ValueError(f"文件 {filename} 的内容与登记摘要不一致。")
         verified.append(dict(tx=tx, rx=rx, file=filename, sha256=digest))
+    if playback_clock is not None:
+        playback_clock.update(manifest_clock(manifest))
     digest = hashlib.sha256(raw).hexdigest()
     return {"kind": "asc_manifest", "mock_only": True, "mock_ref": "mock-asc:" + digest,
             "name": name, "sha256": digest, "links": verified}
@@ -232,10 +234,12 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
         reasons.append("实验室登记缺少当前场景内容的摘要，或场景已修改，请重新核对登记。")
     asset = db.get(ChannelAsset, selection.asset_id) if selection.asset_id else None
     summary = None
+    playback = {}
     mock_registration = matches[0] if len(matches) == 1 and matches[0].get("kind") == "asc_manifest" else None
     if mock_registration:
         try:
-            summary = mock_asset(Directory(mock_registration["manifest_dir"]), mock_registration["name"])
+            summary = mock_asset(Directory(mock_registration["manifest_dir"]), mock_registration["name"],
+                                 playback_clock=None if selection.road_project else playback)
             summary["id"] = ids["asset_id"]
             if playback_files is not None:
                 playback_files["directory"] = mock_registration["manifest_dir"]
@@ -301,7 +305,6 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                 reasons.append("工程所属的仪器型号或连接与实验室绑定不一致。")
         if str(asset.payload["scd_config"].get("mimo", "")).lower() != "4x2":
             reasons.append("工程登记的天线规模与下行四发二收不一致。")
-    playback = {}
     if selection.road_project:
         try:
             playback = project_playback(selection.road_project, "conducted", summary, matches)
@@ -311,16 +314,17 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
     if (selection.test_settings and selection.test_settings.expected_network
             and selection.test_settings.expected_network != scenario.network.type):
         reasons.append("本次指定的基站协议与已登记场景的协议不符。")
-    if selection.test_settings or selection.road_project:
+    if mock_registration or selection.test_settings or selection.road_project:
         requested = selection.test_settings.playback_seconds if selection.test_settings else None
-        full = playback.get("full_duration_s", scenario.route.duration_s)
-        duration_source = playback.get("duration_source", "场景预设运行时长")
-        if not math.isfinite(full) or full <= 0:
+        full = playback.get("full_duration_s") if mock_registration else scenario.route.duration_s
+        duration_source = playback.get("duration_source") if mock_registration else "场景预设运行时长"
+        if full is None or not math.isfinite(full) or full <= 0:
             reasons.append("未取得可用的播放时长。")
-        if requested is not None and (not mock_registration or requested > full):
-            reasons.append("仅模拟清单可从起点缩短播放时长，且不能超过整段时长。")
-        playback.update(start_s=0, duration_s=full if requested is None else requested,
-                        full_duration_s=full, duration_source=duration_source)
+        else:
+            if requested is not None and (not mock_registration or requested > full):
+                reasons.append("仅模拟清单可从起点缩短播放时长，且不能超过整段时长。")
+            playback.update(start_s=0, duration_s=full if requested is None else requested,
+                            full_duration_s=full, duration_source=duration_source)
     if binding and binding.get("execution_mode") == "simulated" and summary and not summary.get("mock_only"):
         reasons.append("模拟绑定需要模拟专用播放清单，不能启动设备工程。")
     if selection.receiver_power is not None:

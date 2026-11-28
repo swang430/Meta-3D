@@ -13,6 +13,16 @@ class RoadProjectReference(BaseModel):
     version: str = Field(pattern=r"^[a-f0-9]{64}$")
 
 
+def manifest_clock(manifest):
+    header = manifest.get("header")
+    if not isinstance(header, dict):
+        raise ValueError("模拟清单缺少播放文件头")
+    count, rate = header.get("cir_count"), header.get("rate_hz")
+    if type(count) is not int or count <= 1 or type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0:
+        raise ValueError("模拟清单缺少有效的响应数量和更新率")
+    return dict(full_duration_s=(count - 1) / rate, duration_source="模拟文件首末响应间隔")
+
+
 def project_playback(ref, mode, asset, registrations):
     from app.api.mpdb_projects import _file_digest, _scene_library
 
@@ -37,11 +47,7 @@ def project_playback(ref, mode, asset, registrations):
             raw = archive.read(member)
         if hashlib.sha256(raw).hexdigest() != asset["sha256"]:
             raise ValueError("实际采用的播放清单与所选工程不符")
-        header = json.loads(raw)["header"]
-        count, rate = header["cir_count"], header["rate_hz"]
-        if type(count) is not int or count <= 1 or type(rate) not in (int, float) or not math.isfinite(rate) or rate <= 0:
-            raise ValueError("模拟清单缺少有效的响应数量和更新率")
-        evidence.update(full_duration_s=(count - 1) / rate, duration_source="模拟文件首末响应间隔")
+        evidence.update(manifest_clock(json.loads(raw)))
     elif registrations[0].get("road_project_version") != ref.version:
         raise ValueError("设备工程登记未对应所选道路版本")
     return evidence
