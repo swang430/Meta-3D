@@ -4,6 +4,26 @@
  */
 
 export interface paths {
+    "/api/v1/road-test/project-capabilities/{source}/{version}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Project Capabilities
+         * @description 按已保存的工程版本核对测试条件，不创建设备会话或执行记录。
+         */
+        get: operations["project_capabilities_api_v1_road_test_project_capabilities__source___version__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/channel-assets/mpdb-projects/scene-candidates": {
         parameters: {
             query?: never;
@@ -8111,6 +8131,40 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    project_capabilities_api_v1_road_test_project_capabilities__source___version__get: {
+        parameters: {
+            query?: {
+                lab_id?: string | null;
+            };
+            header?: never;
+            path: {
+                source: string;
+                version: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     scene_candidates_api_v1_channel_assets_mpdb_projects_scene_candidates_get: {
         parameters: {
             query?: never;

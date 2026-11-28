@@ -79,3 +79,44 @@ def test_registered_ota_clock_matches_dynamic_manifest(tmp_path, monkeypatch):
             archive.writestr(prefix+"a.asc", b"asc")
     record = projects.register_scene(source, project, SceneName(name="恒速轨迹"))
     assert (record["time_source"], record["source_times_s"]) == ("operator_constant_speed", [0., 1.25])
+
+
+def test_project_conditions_distinguish_port_limit_lab_and_missing_calibration(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from app.api import road_test_conducted as conducted
+    from app.api.road_test import project_capabilities
+
+    monkeypatch.chdir(tmp_path)
+    source, version = 'a'*64, 'b'*64
+    folder = tmp_path / 'data/road-scenes' / source / version
+    folder.mkdir(parents=True)
+    record = dict(mode='conducted', tx_ports=[0,1], rx_ports=[0,1])
+    with ZipFile(folder/'project.zip','w') as archive:
+        archive.writestr('manifest.json', b'{}')
+    record['package_sha256'] = projects._file_digest(folder/'project.zip')
+    (folder/'scene.json').write_text(json.dumps(record))
+    check = project_capabilities(source, version, None, None)
+    assert any('四发两收' in r for r in check['reasons'])
+    lab = SimpleNamespace(id=uuid4(), is_active=True, extra_metadata={'vrt_conducted':[
+        dict(road_project_version=version, scenario_id='fixture', asset_id=str(uuid4()))]})
+    db = SimpleNamespace(get=lambda *args:lab)
+    record['tx_ports'] = [0,1,2,3]
+    (folder/'scene.json').write_text(json.dumps(record))
+    monkeypatch.setattr(conducted,'resolve',lambda db, selection:dict(
+        scenario_id=selection.scenario_id, scenario_snapshot={'name':'传导道路'},
+        ready=False,reasons=['尚未选择已采用的逐路校准']))
+    check = project_capabilities(source, version, lab.id, db)
+    assert check['registrations'][0]['ready'] is False
+    assert '逐路校准' in check['registrations'][0]['reasons'][0]
+
+    entries = lab.extra_metadata['vrt_conducted']
+    entries[0]['road_project_version'] = 'c' * 64
+    assert not project_capabilities(source, version, lab.id, db)['registrations']
+    entries[0].update(kind='asc_manifest', sha256=hashlib.sha256(b'{}').hexdigest())
+    assert project_capabilities(source, version, lab.id, db)['registrations'][0]['asset_kind'] == '模拟播放清单'
+    entries[0]['sha256'] = 'd' * 64
+    assert not project_capabilities(source, version, lab.id, db)['registrations']
+    record['package_sha256'] = 'e' * 64
+    (folder/'scene.json').write_text(json.dumps(record))
+    assert any('入库摘要不一致' in reason
+               for reason in project_capabilities(source, version, lab.id, db)['reasons'])

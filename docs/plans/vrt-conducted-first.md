@@ -34,6 +34,8 @@
 
 仅模拟资产取自所选 LabProfile.extra_metadata.vrt_conducted 数组的一条登记。每条包含 scenario_id、scenario_version、scenario_sha256、direction、topology_id、asset_id、sha256、port_mapping；模拟登记额外包含 kind="asc_manifest"、manifest_dir（服务端工程目录）、name。sha256 为 manifest.json 原始字节的 SHA-256，asset_id 为 UUID。port_mapping 各行含从 1 开始的 tx、rx、input_port、output_port。asset.links 保留清单中从 0 开始的 tx、rx、file、sha256。每次解析重验八条文件摘要。asset.mock_only=true、asset.mock_ref 是模拟驱动标识；该分支没有 instrument_path，不能交给真实驱动。
 
+道路场景卡可按工程版本查找传导设备工程。实验室负责人登记由该版本构建的 `.smu` 时，在实验室的 `extra_metadata.vrt_conducted` 对应记录中填写 `road_project_version`，值取自场景卡的“工程版本”。另在 `sha256` 填写设备工程的扫描摘要。已有登记缺少版本关联时，只有核实构建来源后才补填。模拟播放清单按清单文件的摘要自动匹配。准备检查仍逐项核对场景、资产、接线和校准。
+
 ### 首次八路模拟验收时的工程与现场证据（PR #613）
 
 本批 RT-IMT-2030 下行工程清单 SHA-256 为 `2b085a23350abd08b84476bdf6f7874dc034e6a8eb980aa2ca393324488c1f2e`，每路文件头登记 6188 个响应、24 个抽头。清单明确标记 `smu_built=false` 和 `hardware_verified=false`。

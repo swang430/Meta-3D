@@ -10,6 +10,8 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import List, Optional, Any
 import logging
+import json
+from uuid import UUID
 import traceback
 from datetime import datetime
 
@@ -1541,3 +1543,67 @@ async def get_capabilities():
             "requires_mpac": True
         }
     }
+
+
+@router.get("/project-capabilities/{source}/{version}")
+def project_capabilities(source: str, version: str, lab_id: Optional[UUID] = None,
+                         db: Session = Depends(get_db)):
+    """按已保存的工程版本核对测试条件，不创建设备会话或执行记录。"""
+    import hashlib
+    import re
+    from zipfile import ZipFile, BadZipFile
+    from app.api import mpdb_projects, road_test_conducted as conducted, road_test_ota as ota
+    from app.models.lab_profile import LabProfile
+
+    if not all(re.fullmatch(r"[0-9a-f]{64}", value) for value in (source, version)):
+        raise HTTPException(404, "道路场景版本不存在")
+    directory = mpdb_projects._scene_library() / source / version
+    try:
+        record = json.loads((directory / "scene.json").read_text())
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "道路场景版本不存在") from exc
+    is_ota = record["mode"] == "ota"
+    reasons = []
+    registrations = []
+    if not is_ota and (len(record["tx_ports"]), len(record["rx_ports"])) != (4, 2):
+        reasons.append("工程可入库，当前传导执行仅支持下行四发两收。")
+    package = directory / "project.zip"
+    if not package.is_file():
+        reasons.append("工程包缺失，请重新核对登记。")
+    lab = db.get(LabProfile, lab_id) if lab_id else None
+    if not lab or not lab.is_active:
+        reasons.append("待选择已启用的实验室核对。")
+    if not reasons:
+        try:
+            if mpdb_projects._file_digest(package) != record["package_sha256"]:
+                raise ValueError("工程包与入库摘要不一致")
+            with ZipFile(package) as archive:
+                manifest = archive.read("dynamic/manifest.json" if is_ota else "manifest.json")
+                manifest_digest = hashlib.sha256(manifest).hexdigest()
+        except (ValueError, OSError, KeyError, BadZipFile) as exc:
+            reasons.append(f"无法确认已登记工程：{exc}")
+        else:
+            entries = ota.registrations(lab) if is_ota else conducted._registrations(lab)
+            for entry in entries:
+                simulated = entry.get("kind") == ("ota_manifest" if is_ota else "asc_manifest")
+                if simulated:
+                    if entry.get("sha256") != manifest_digest:
+                        continue
+                elif is_ota or entry.get("road_project_version") != version:
+                    continue
+                api = ota if is_ota else conducted
+                try:
+                    selected = {k: entry[k] for k in api.Selection.model_fields if k in entry}
+                    selected.update(lab_profile_id=lab.id)
+                    snapshot = api.resolve(db, api.Selection.model_validate(selected))
+                except (ValueError, KeyError, HTTPException) as exc:
+                    reasons.append(f"实验室场景登记无法核对：{getattr(exc, 'detail', str(exc))}")
+                    continue
+                registrations.append(dict(scenario_id=snapshot["scenario_id"],
+                                          name=entry.get("name") or snapshot["scenario_snapshot"]["name"],
+                                          asset_kind="模拟播放清单" if simulated else "设备工程登记",
+                                          ready=snapshot["ready"], reasons=snapshot["reasons"]))
+            if not registrations and not reasons:
+                reasons.append("实验室尚未登记与此版本匹配的模拟播放清单或设备工程。"
+                               if not is_ota else "实验室尚未登记与此版本匹配的空口模拟播放清单。")
+    return dict(mode=record["mode"], reasons=reasons, registrations=registrations)
