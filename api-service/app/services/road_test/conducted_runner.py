@@ -226,7 +226,17 @@ async def _run(bind, key, snapshot, directory, duration, run, token):
                             asset = db.get(ChannelAsset, UUID(snapshot["asset"]["id"]), populate_existing=True)
                             if verify_channel_asset_smu_project_bytes(db, asset) != snapshot["asset"]["sha256"].lower():
                                 raise RuntimeError("部署工程的当前文件摘要与冻结记录不一致。")
-                        playback = hardware_playback(snapshot, station, channel, run.stop, verify_project,
+                        calibration = snapshot["binding"]["real_preflight"]["calibration"]
+
+                        def verify_calibration(required_seconds=duration):
+                            current = db.get(VrtPortCalibration, UUID(calibration["id"]), populate_existing=True)
+                            if current is None or current.revoked_at is not None:
+                                raise RuntimeError("本次校准已撤销或无法核对，停止设备。")
+                            remaining = datetime.fromisoformat(calibration["valid_until"]) - datetime.now(timezone.utc)
+                            if remaining.total_seconds() <= required_seconds:
+                                raise RuntimeError("本次校准的有效期无法覆盖剩余播放时间，停止设备。")
+
+                        playback = hardware_playback(snapshot, station, channel, run.stop, verify_project, verify_calibration,
                                                      lambda ports: _record_shutdown(db, row, ports, cell))
                     else:
                         playback = _mock_playback(snapshot, staged_directory, station, channel, run)
@@ -236,11 +246,7 @@ async def _run(bind, key, snapshot, directory, duration, run, token):
                         start = clock.time()
                         while not run.stop.is_set():
                             if physical:
-                                calibration = snapshot["binding"]["real_preflight"]["calibration"]
-                                current = db.get(VrtPortCalibration, UUID(calibration["id"]), populate_existing=True)
-                                if (current is None or current.revoked_at is not None
-                                        or datetime.now(timezone.utc) >= datetime.fromisoformat(calibration["valid_until"])):
-                                    raise RuntimeError("本次校准已失效，正在停止设备。")
+                                verify_calibration(max(0, duration - (clock.time() - start)))
                                 power = await check_running_power(station, channel, calibration)
                                 row.hardware_status = {**row.hardware_status, **power,
                                                        "output_average_read_at": datetime.now(timezone.utc).isoformat()}

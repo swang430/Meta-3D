@@ -13,7 +13,8 @@ from sqlalchemy.orm import Session
 
 from app.api import vrt_port_calibration
 from app.services.road_test.port_calibration import applicability
-from app.services.road_test.road_project import RoadProjectReference, manifest_clock, project_playback
+from app.services.road_test.scenario_reference import matching_registrations, scenario_digest
+from app.services.road_test.road_project import RoadProjectReference, manifest_clock, project_playback, registrations_for_project
 from app.services.road_test.sinr_plan import Waveforms, Window, budget, render_waveforms
 from app.api.road_test import _get_custom_scenario
 from app.data.scenario_library import get_scenario_by_id
@@ -161,7 +162,7 @@ def _mapping(rows, topology):
     return [p.model_dump() for p in paths], None
 
 
-def real_preflight(db, hal, lab, asset, network, *, calibration_id=None, scope=None, mapping=(), duration_s=0, frequency_mhz=None):
+def real_preflight(db, hal, lab, asset, network, *, calibration_id=None, scope=None, mapping=(), duration_s=0, frequency_mhz=None, scenario_snapshot=None):
     """核对真实设备所需的已登记证据；此处不取得控制权。"""
     scd = asset.payload["scd_config"]
     working_point = vendor_scd_frequency_identity(scd, allow_legacy_nr=True)
@@ -188,7 +189,7 @@ def real_preflight(db, hal, lab, asset, network, *, calibration_id=None, scope=N
     scope = {**(scope or {}), "center_frequency_hz": working_point.center_frequency_hz,
              "bandwidth_mhz": working_point.bandwidth_mhz,
              "base_station_binding_digest": evidence.get("base_station_binding_digest")}
-    calibration = applicability(db, calibration_id, scope, mapping, duration_s=duration_s)
+    calibration = applicability(db, calibration_id, scope, mapping, duration_s=duration_s, scenario_snapshot=scenario_snapshot)
     evidence["calibration"] = calibration
     reasons.extend(calibration["reasons"])
     return evidence, reasons
@@ -208,8 +209,7 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
     if not scenario:
         raise HTTPException(404, "所选场景不存在。")
     scenario_snapshot = scenario.model_dump(mode="json", exclude={"created_at", "updated_at"})
-    canonical = json.dumps(scenario_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-    scenario_sha256 = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    scenario_sha256 = scenario_digest(scenario_snapshot)
     reasons = []
     if selection.direction != "downlink":
         reasons.append("当前仅有下行四发二收的准备流程。")
@@ -226,12 +226,16 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
     if not topology or not topology.is_validated or topology.validation_errors:
         reasons.append("请选择已验证的传导接线拓扑。")
     registration_key = {key: ids[key] for key in ("scenario_id", "direction", "topology_id", "asset_id")}
-    registration_key["scenario_version"] = scenario.version
     candidates = [entry for entry in _registrations(lab)
                   if all(entry.get(key) == value for key, value in registration_key.items())]
-    matches = [entry for entry in candidates if entry.get("scenario_sha256") == scenario_sha256]
+    try:
+        candidates = registrations_for_project(selection.road_project, "conducted", candidates)
+    except (OSError, KeyError, ValueError, BadZipFile) as exc:
+        candidates = []
+        reasons.append(f"道路工程清单无法核对：{exc}")
+    matches = matching_registrations(candidates, scenario_snapshot, scenario_sha256)
     if candidates and not matches:
-        reasons.append("实验室登记缺少当前场景内容的摘要，或场景已修改，请重新核对登记。")
+        reasons.append("场景工作条件已变化，或旧登记缺少可核对的场景原文，请重新核对并登记。")
     asset = db.get(ChannelAsset, selection.asset_id) if selection.asset_id else None
     summary = None
     playback = {}
@@ -283,7 +287,7 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                 wiring_digest = hashlib.sha256(json.dumps(wiring, sort_keys=True, separators=(",", ":"),
                                                           ensure_ascii=False).encode()).hexdigest()
                 scope = {"lab_profile_id": str(lab.id), "topology_id": ids["topology_id"],
-                         "topology_sha256": wiring_digest, "scenario_sha256": scenario_sha256,
+                         "topology_sha256": wiring_digest if topology else None, "scenario_sha256": scenario_sha256,
                          "asset_sha256": summary["sha256"], "channel_emulator_binding_digest": bound.binding_digest,
                          "direction": selection.direction,
                          "base_station_id": topology.base_station.device_id if topology else None,
@@ -294,7 +298,7 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                 net_step = steps.network_config if steps else None
                 evidence, blockers = real_preflight(db, get_hal_service(), lab, asset, scenario.network,
                                                     calibration_id=selection.calibration_id, scope=scope, mapping=mapping,
-                                                    duration_s=scenario.route.duration_s,
+                                                    duration_s=scenario.route.duration_s, scenario_snapshot=scenario_snapshot,
                                                     frequency_mhz=net_step.frequency_mhz if net_step else None)
                 binding["real_preflight"] = evidence
                 reasons.extend(blockers)

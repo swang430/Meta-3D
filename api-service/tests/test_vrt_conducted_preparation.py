@@ -64,6 +64,8 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
         db.flush()
         selection = dict(scenario_id=scenario["id"], topology_id=topology, asset_id=str(asset.id), direction="downlink")
         registration = dict(selection, scenario_sha256=preview["scenario_sha256"], scenario_version=scenario["version"], sha256=digest, port_mapping=mapping)
+        if physical:
+            registration["reference_scenario"] = preview["scenario_snapshot"]
         lab = LabProfile(name="实验室", extra_metadata={"vrt_conducted": [registration]})
         db.add(lab)
         db.commit()
@@ -79,7 +81,8 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
             assert not current["ready"]
             scope = current["binding"]["real_preflight"]["calibration"]["scope"]
             doc, _ = _site_files(tmp_path)
-            doc["scope"] = scope
+            doc.update(schema_version="vrt_conducted_port_calibration_v2",
+                       reference_scenario=preview["scenario_snapshot"], scope=scope)
             for port in doc["ports"]:
                 port.update(tx_reference_plane=f'{scope["base_station_id"]}/out/{port["tx"]}',
                             emulator_input_reference_plane=f'{scope["channel_emulator_id"]}/in/{port["input_port"]}',
@@ -103,8 +106,25 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
             assert calibration["applicable"] and len(calibration["ports"]) == 8
             assert {(p["output_port"], p["emulator_output_setting_dbm"], p["emulator_output_dbm"])
                     for p in calibration["ports"]} == {(1, -17, -9), (2, -18, -10)}
+            edited = client.put(ROOT + "/scenarios/" + selection["scenario_id"],
+                                json={"description": "第二次准备只调整场景说明"})
+            assert edited.status_code == 200, edited.text
+            reused = client.post(ROOT + "/conducted/prepare", json=selection).json()
+            assert reused["ready"], reused["reasons"]
+            assert reused["scenario_sha256"] != saved["scenario_sha256"]
+            assert reused["binding"]["real_preflight"]["calibration"]["id"] == selection["calibration_id"]
+            thresholds = {"kpi_validation": {"kpi_thresholds": {"min_throughput_mbps": 16}}}
+            edited = client.put(ROOT + "/scenarios/" + selection["scenario_id"],
+                                json={"step_configuration": thresholds})
+            assert edited.status_code == 200, edited.text
+            second = client.post(ROOT + "/conducted/executions", json=selection).json()
+            assert second["config"]["conducted"]["ready"]
             client.post(ROOT + "/conducted/calibrations/" + selection["calibration_id"] + "/revoke",
                         json={"reason": "更换物理电缆"})
+            execution_url = ROOT + "/executions/" + second["execution_id"]
+            denied = client.post(execution_url + "/control", json={"action": "start"})
+            assert denied.status_code == 409 and "更换物理电缆" in denied.json()["detail"]
+            assert client.get(execution_url).json()["status"] == "idle"
             changed = client.post(ROOT + "/conducted/prepare", json=selection).json()
             assert not changed["ready"] and "更换物理电缆" in str(changed["reasons"])
         mapping[0]["input_port"] = 2
@@ -115,7 +135,7 @@ def test_verified_selection_and_changed_wiring(client, sample_topology_data, mon
         preview = client.post(ROOT + "/conducted/prepare", json=selection).json()
         assert not preview["ready"] and any("电缆" in r for r in preview["reasons"])
         history = client.get(ROOT + "/executions?mode=conducted").json()
-        assert history[0]["conducted"] == saved
+        assert any(row["conducted"] == saved for row in history)
 
 
 def test_mock_asset_checks_each_file_before_use(tmp_path):

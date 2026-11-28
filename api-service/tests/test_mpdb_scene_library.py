@@ -113,9 +113,15 @@ def test_project_conditions_distinguish_port_limit_lab_and_missing_calibration(t
     entries[0]['road_project_version'] = 'c' * 64
     assert not project_capabilities(source, version, lab.id, db)['registrations']
     entries[0].update(kind='asc_manifest', sha256=hashlib.sha256(b'{}').hexdigest())
+    monkeypatch.setattr(conducted, 'resolve', lambda db, selection: dict(
+        scenario_id=selection.scenario_id, scenario_snapshot={'name':'模拟道路'},
+        asset={'mock_only':True, 'sha256':hashlib.sha256(b'{}').hexdigest()}, ready=True, reasons=[]))
+    entries.append(dict(entries[0], receiver_power=None))
+    assert len(project_capabilities(source, version, lab.id, db)['registrations']) == 1
+    entries.pop()
     assert project_capabilities(source, version, lab.id, db)['registrations'][0]['asset_kind'] == '模拟播放清单'
     monkeypatch.setattr(conducted, 'resolve', lambda db, selection: dict(
-        scenario_id=selection.scenario_id, asset={'sha256':'f'*64}, scenario_snapshot={'name':'另一份清单'},
+        scenario_id=selection.scenario_id, asset={'mock_only':True, 'sha256':'f'*64}, scenario_snapshot={'name':'另一份清单'},
         ready=True, reasons=[]))
     mismatched = project_capabilities(source, version, lab.id, db)
     assert not mismatched['registrations']

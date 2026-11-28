@@ -2,6 +2,7 @@
 import asyncio
 import math
 from contextlib import asynccontextmanager
+from threading import Event
 
 from app.hal.base_station import CellState
 from app.services.instrument_test_lease import await_completion_despite_cancellation
@@ -35,14 +36,32 @@ async def _shutdown(station, channel, ports, *, expected_cell=None):
         raise RuntimeError("以下停止操作未确认：" + "、".join(failures))
 
 
-async def _start_cell(station, stop):
-    attach = asyncio.create_task(station.start_signaling())
+async def _start_cell(station, channel, ports, stop, verify_calibration):
+    cancelled = Event()
+    attach = asyncio.create_task(station.start_conducted_signaling(cancelled))
     stopping = asyncio.create_task(stop.wait())
     try:
-        await asyncio.wait((attach, stopping), return_when=asyncio.FIRST_COMPLETED)
-        if stop.is_set():
-            raise PlaybackStopRequested("等待终端连接期间收到停止请求。")
-        return await attach
+        while True:
+            await asyncio.wait((attach, stopping), timeout=1, return_when=asyncio.FIRST_COMPLETED)
+            if stop.is_set():
+                raise PlaybackStopRequested("等待终端连接期间收到停止请求。")
+            verify_calibration()
+            if attach.done():
+                return await attach
+    except BaseException:
+        # 已发出的 UXM 查询须结束后才能在同一会话停发。等待期间先切断独立的 F64 输出。
+        cancelled.set()
+        attach.cancel()
+        failures = []
+        for port in ports:
+            try:
+                if await channel.set_conducted_output_enabled(port, False) is not True:
+                    failures.append(str(port))
+            except Exception:
+                failures.append(str(port))
+        if failures:
+            raise RuntimeError("等待终端中止，未确认关闭输出口 " + "、".join(failures))
+        raise
     finally:
         for task in (attach, stopping):
             task.cancel()
@@ -118,7 +137,7 @@ async def check_running_power(station, channel, calibration):
 
 
 @asynccontextmanager
-async def hardware_playback(setup, station, channel, stop, verify_project, record_ports=None):
+async def hardware_playback(setup, station, channel, stop, verify_project, verify_calibration, record_ports=None):
     calibration = setup["binding"]["real_preflight"]["calibration"]
     if calibration["applicable"] is not True:
         raise RuntimeError("本次工作点缺少适用的逐路校准。")
@@ -167,15 +186,19 @@ async def hardware_playback(setup, station, channel, stop, verify_project, recor
         await _verify_output_settings(channel, calibration, owned_ports)
         for port in owned_ports:
             check_stop()
+            verify_calibration()
             if not await channel.set_conducted_output_enabled(port, True):
                 raise RuntimeError(f"无法确认输出口 {port} 启用。")
         check_stop()
+        verify_calibration()
         if not await channel.start_emulation():
             raise RuntimeError("设备未确认开始播放。")
         check_stop()
         if await channel.read_playback_state() != "RUNNING":
             raise RuntimeError("信道仿真器尚未回读正在播放。")
-        if not await _start_cell(station, stop) or await station.get_cell_state() != CellState.CONNECTED:
+        check_stop()
+        verify_calibration()
+        if not await _start_cell(station, channel, owned_ports, stop, verify_calibration) or await station.get_cell_state() != CellState.CONNECTED:
             raise RuntimeError("指定小区未确认终端连接。")
         yield
     finally:

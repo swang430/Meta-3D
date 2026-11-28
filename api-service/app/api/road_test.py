@@ -1584,6 +1584,7 @@ def project_capabilities(source: str, version: str, lab_id: Optional[UUID] = Non
             reasons.append(f"无法确认已登记工程：{exc}")
         else:
             entries = ota.registrations(lab) if is_ota else conducted._registrations(lab)
+            checked = set()
             for entry in entries:
                 simulated = entry.get("kind") == ("ota_manifest" if is_ota else "asc_manifest")
                 if simulated:
@@ -1594,19 +1595,26 @@ def project_capabilities(source: str, version: str, lab_id: Optional[UUID] = Non
                 api = ota if is_ota else conducted
                 try:
                     selected = {k: entry[k] for k in api.Selection.model_fields if k in entry}
-                    selected.update(lab_profile_id=lab.id)
-                    snapshot = api.resolve(db, api.Selection.model_validate(selected))
+                    selected.update(lab_profile_id=lab.id, road_project={"source_sha256": source, "version": version})
+                    selection = api.Selection.model_validate(selected)
+                    selected = selection.model_dump(mode="json", exclude_none=True)
+                    identity = json.dumps(selected, sort_keys=True)
+                    if identity in checked:
+                        continue
+                    checked.add(identity)
+                    snapshot = api.resolve(db, selection)
                 except (ValueError, KeyError, HTTPException) as exc:
                     reasons.append(f"实验室场景登记无法核对：{getattr(exc, 'detail', str(exc))}")
                     continue
                 resolved_asset = snapshot.get("asset") or {}
-                if simulated and resolved_asset.get("sha256") != manifest_digest:
+                resolved_mock = resolved_asset.get("mock_only") is True
+                if resolved_mock and resolved_asset.get("sha256") != manifest_digest:
                     reasons.append("实际采用的模拟清单与此版本不符，或清单未通过检查。")
                     reasons.extend(snapshot["reasons"])
                     continue
                 registrations.append(dict(selection=selected, scenario_id=snapshot["scenario_id"],
-                                          name=entry.get("name") or snapshot["scenario_snapshot"]["name"],
-                                          asset_kind="模拟播放清单" if simulated else "设备工程登记",
+                                          name=resolved_asset.get("name") or snapshot["scenario_snapshot"]["name"],
+                                          asset_kind=("模拟播放清单" if resolved_mock else "设备工程登记") if resolved_asset else "待核对工程",
                                           ready=snapshot["ready"], reasons=snapshot["reasons"]))
             if not registrations and not reasons:
                 reasons.append("实验室尚未登记与此版本匹配的模拟播放清单或设备工程。"

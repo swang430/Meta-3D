@@ -15,14 +15,14 @@ def _calibrated_ports():
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("fault", [None, "power", "frequency", "wire", "output", "missing_setting", "changed_setting", "disconnect", "stop"])
+@pytest.mark.parametrize("fault", [None, "power", "frequency", "wire", "output", "missing_setting", "changed_setting", "disconnect", "stop", "revoked_during_load", "revoked_during_attach"])
 async def test_device_control_sequence(fault):
     from app.services.road_test.conducted_hardware import hardware_playback
 
     station = AsyncMock()
     station.get_cell_state.side_effect = [CellState.OFF, CellState.CONNECTED]
     station.read_conducted_working_point.return_value = (3600000000, 100, -19 if fault == "power" else -20)
-    station.start_signaling.return_value = True
+    station.start_conducted_signaling = AsyncMock(return_value=True)
     station.stop_signaling.return_value = fault != "stop"
     station.ensure_safe_idle.return_value = True
     channel = AsyncMock()
@@ -43,8 +43,20 @@ async def test_device_control_sequence(fault):
     calibration = setup["binding"]["real_preflight"]["calibration"]
     if fault == "missing_setting":
         del calibration["ports"][-1]["emulator_output_setting_dbm"]
+    attaching = asyncio.Event()
+    if fault == "revoked_during_attach":
+        async def wait_for_terminal(_cancelled):
+            attaching.set()
+            await asyncio.Event().wait()
+        station.start_conducted_signaling.side_effect = wait_for_terminal
+
     async def exercise():
-        async with hardware_playback(setup, station, channel, asyncio.Event(), lambda: None):
+        def verify_calibration():
+            if attaching.is_set():
+                raise RuntimeError("等待连接期间校准已撤销")
+            if fault == "revoked_during_load" and channel.load_local_scenario.await_count:
+                raise RuntimeError("工程加载期间校准已撤销")
+        async with hardware_playback(setup, station, channel, asyncio.Event(), lambda: None, verify_calibration):
             if fault == "changed_setting":
                 from app.services.road_test.conducted_hardware import check_running_power
                 channel.measure_input.return_value = (-20, 3)
@@ -54,7 +66,7 @@ async def test_device_control_sequence(fault):
                 raise ConnectionError("连接中断")
     if fault:
         with pytest.raises((RuntimeError, ConnectionError)):
-            await exercise()
+            await asyncio.wait_for(exercise(), 5)
     else:
         await exercise()
     if fault == "power":
@@ -67,8 +79,10 @@ async def test_device_control_sequence(fault):
         channel.close_conducted_project.assert_not_awaited()
     else:
         channel.close_conducted_project.assert_awaited_once()
-    if fault in {"wire", "power", "frequency", "output", "missing_setting"}:
-        station.start_signaling.assert_not_awaited()
+    if fault == "revoked_during_load":
+        assert all(not args.args[1] for args in channel.set_conducted_output_enabled.await_args_list)
+    if fault in {"revoked_during_load", "wire", "power", "frequency", "output", "missing_setting"}:
+        station.start_conducted_signaling.assert_not_awaited()
         channel.start_emulation.assert_not_awaited()
 
 
@@ -124,7 +138,7 @@ async def test_worker_with_mock_devices_never_creates_measured_samples(monkeypat
     station.conducted_cell = "测试小区"
     station.read_conducted_working_point = AsyncMock(return_value=(3600000000, 100, -20))
     station.get_cell_state.side_effect = [CellState.OFF, CellState.CONNECTED, CellState.CONNECTED]
-    station.start_signaling.return_value = True
+    station.start_conducted_signaling = AsyncMock(return_value=True)
     station.stop_signaling.return_value = True
     station.ensure_safe_idle.return_value = True
     station.get_throughput_metrics.return_value = SimpleNamespace(dl_throughput_current_mbps=11.5)
@@ -200,7 +214,97 @@ async def test_worker_with_mock_devices_never_creates_measured_samples(monkeypat
             assert row.hardware_status["conducted_stop_confirmed"] is True
             assert not runner._unsettled(db)
             assert row.status == "failed"
-            station.start_signaling.assert_awaited_once()
+            station.start_conducted_signaling.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_revoked_queued_uxm_activation_is_never_sent(monkeypatch):
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from unittest.mock import Mock
+
+    from app.hal.uxm_base_station import RealUxmDriver
+    from app.services.road_test.conducted_hardware import _start_cell
+
+    driver = object.__new__(RealUxmDriver)
+    driver._cell_id = "CELL0"
+    driver._cmds = SimpleNamespace(CELL_STATE_ON="enable {cell}")
+    driver._visa_session = SimpleNamespace(timeout=5000)
+    driver._set_status = Mock()
+    driver._write = Mock()
+    driver._query = Mock(return_value="1")
+    queued = asyncio.Event()
+    release = threading.Event()
+    loop = asyncio.get_running_loop()
+    submit = loop.run_in_executor
+    with ThreadPoolExecutor(max_workers=1) as occupied:
+        occupied.submit(release.wait, 5)
+
+        def enqueue(executor, call, *args):
+            queued.set()
+            return submit(occupied, call, *args)
+        monkeypatch.setattr(loop, "run_in_executor", enqueue)
+
+        def verify():
+            if queued.is_set():
+                raise RuntimeError("排队期间校准已撤销")
+
+        channel = SimpleNamespace(set_conducted_output_enabled=AsyncMock(return_value=True))
+        try:
+            with pytest.raises(RuntimeError, match="排队期间"):
+                await asyncio.wait_for(_start_cell(driver, channel, [1, 2], asyncio.Event(), verify), 3)
+        finally:
+            release.set()
+        assert channel.set_conducted_output_enabled.await_count == 2
+    driver._write.assert_not_called()
+    driver._query.assert_not_called()
+    assert driver._visa_session.timeout == 5000
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked_query", ["operation_complete", "connection_status"])
+async def test_slow_uxm_reply_releases_independent_outputs_before_session_handoff(blocked_query):
+    import threading
+    from unittest.mock import Mock
+
+    from app.hal.uxm_base_station import RealUxmDriver
+    from app.services.road_test.conducted_hardware import _start_cell
+
+    driver = object.__new__(RealUxmDriver)
+    driver._cell_id = "CELL0"
+    driver._cmds = SimpleNamespace(CELL_STATE_ON="enable {cell}")
+    driver._cmd = Mock(return_value="connection_status")
+    driver._set_status = Mock()
+    driver._visa_session = SimpleNamespace(timeout=5000)
+    driver._write = Mock()
+    waiting, release, finished = threading.Event(), threading.Event(), threading.Event()
+    def query(command):
+        if (command == "connection_status") == (blocked_query == "connection_status"):
+            waiting.set()
+            release.wait(timeout=5)
+            finished.set()
+        return "IDLE" if command == "connection_status" else "1"
+    driver._query = query
+
+    def verify():
+        if waiting.is_set():
+            raise RuntimeError("等待回读期间校准已撤销")
+
+    muted = []
+    async def disable(port, enabled):
+        assert not enabled and not finished.is_set()
+        muted.append(port)
+        if len(muted) == 2:
+            release.set()
+        return True
+    channel = SimpleNamespace(set_conducted_output_enabled=disable)
+    try:
+        with pytest.raises(RuntimeError, match="撤销"):
+            await _start_cell(driver, channel, [1, 2], asyncio.Event(), verify)
+    finally:
+        release.set()
+    assert muted == [1, 2] and finished.is_set()
+    assert driver._visa_session.timeout == 5000
 
 
 @pytest.mark.asyncio
@@ -247,7 +351,7 @@ async def test_working_point_reads_integrated_power_from_controlled_cell_only(ac
         setup = {"binding":{"real_preflight":{"calibration":{"applicable":True, "scope":scope}}},
                  "port_mapping":[]}
         with pytest.raises(RuntimeError, match="载频"):
-            async with hardware_playback(setup, driver, channel, asyncio.Event(), lambda: None):
+            async with hardware_playback(setup, driver, channel, asyncio.Event(), lambda: None, lambda: None):
                 pytest.fail("实际中频不符仍进入播放")
         channel.load_local_scenario.assert_not_awaited()
 

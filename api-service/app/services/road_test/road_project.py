@@ -23,6 +23,22 @@ def manifest_clock(manifest):
     return dict(full_duration_s=(count - 1) / rate, duration_source="模拟文件首末响应间隔")
 
 
+def registrations_for_project(ref, mode, candidates):
+    """按所选版本挑出可能的登记，实际文件仍在准备和启动时核对。"""
+    if not ref:
+        return candidates
+    from app.api.mpdb_projects import _scene_library
+
+    kind = "ota_manifest" if mode == "ota" else "asc_manifest"
+    digest = None
+    if any(entry.get("kind") == kind for entry in candidates):
+        member = "dynamic/manifest.json" if mode == "ota" else "manifest.json"
+        with ZipFile(_scene_library() / ref.source_sha256 / ref.version / "project.zip") as archive:
+            digest = hashlib.sha256(archive.read(member)).hexdigest()
+    return [entry for entry in candidates if
+            (entry.get("sha256") == digest if entry.get("kind") == kind else entry.get("road_project_version") == ref.version)]
+
+
 def project_playback(ref, mode, asset, registrations):
     from app.api.mpdb_projects import _file_digest, _scene_library
 

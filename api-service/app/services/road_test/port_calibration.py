@@ -14,6 +14,7 @@ from uuid import UUID
 from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from app.models.vrt_port_calibration import VrtPortCalibration
+from app.services.road_test.scenario_reference import same_operating_conditions, scenario_digest
 
 Text = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=500)]
 Digest = Annotated[str, Field(pattern=r"^[0-9a-f]{64}$")]
@@ -79,7 +80,8 @@ class MeasuredPath(StrictModel):
 
 
 class CalibrationEvidence(StrictModel):
-    schema_version: Literal["vrt_conducted_port_calibration_v1"]
+    schema_version: Literal["vrt_conducted_port_calibration_v1", "vrt_conducted_port_calibration_v2"]
+    reference_scenario: dict | None = None
     issuer: Text
     readings_file: Text
     readings_sha256: Digest
@@ -98,6 +100,11 @@ class CalibrationEvidence(StrictModel):
 
     @model_validator(mode="after")
     def complete(self):
+        if self.schema_version == "vrt_conducted_port_calibration_v2":
+            if not self.reference_scenario or not self.reference_scenario.get("id") or scenario_digest(self.reference_scenario) != self.scope.scenario_sha256:
+                raise ValueError("校准所附的登记场景原文与原件中的场景摘要不符。")
+        elif "reference_scenario" in self.model_fields_set:
+            raise ValueError("旧版校准原件不能附加场景复用依据。")
         if not self.measured_at < self.valid_until <= self.meter_certificate_expires_at:
             raise ValueError("校准有效期必须晚于采集时间，且不能超过测量仪器证书有效期")
         if {(p.tx, p.rx) for p in self.ports} != {(t, r) for t in range(1, 5) for r in range(1, 3)}:
@@ -185,7 +192,7 @@ def read_report(filename):
     return evidence, data, readings, raw
 
 
-def applicability(db, calibration_id, scope, mapping, *, duration_s=0):
+def applicability(db, calibration_id, scope, mapping, *, duration_s=0, scenario_snapshot=None):
     result = {"id": str(calibration_id) if calibration_id else None, "scope": scope,
               "applicable": False, "reasons": [], "ports": []}
     reasons = result["reasons"]
@@ -214,10 +221,30 @@ def applicability(db, calibration_id, scope, mapping, *, duration_s=0):
         reasons.append("当前时间不在传导校准有效期内。")
     elif not math.isfinite(duration_s) or duration_s < 0 or (evidence.valid_until - now).total_seconds() <= duration_s:
         reasons.append("传导校准有效期未覆盖整段播放。")
-    if evidence.scope.model_dump(mode="json") != scope:
-        reasons.append("传导校准的实验室、绑定、接线、工程或功率工作点与本次执行不一致。")
+    expected = evidence.scope.model_dump(mode="json")
+    actual = dict(scope)
+    if evidence.reference_scenario is not None and same_operating_conditions(
+            evidence.reference_scenario, expected["scenario_sha256"], scenario_snapshot):
+        if scenario_digest(scenario_snapshot) == actual.get("scenario_sha256"):
+            actual["scenario_sha256"] = expected["scenario_sha256"]
+    labels = {"topology_sha256":"实际接线", "asset_sha256":"工程文件摘要", "tx_power_dbm":"基站功率工作点",
+              "center_frequency_hz":"中心频率", "bandwidth_mhz":"带宽", "lab_profile_id":"实验室",
+              "topology_id":"接线方案", "base_station_binding_digest":"基站绑定",
+              "channel_emulator_binding_digest":"信道仿真器绑定", "direction":"链路方向",
+              "base_station_id":"基站", "channel_emulator_id":"信道仿真器", "dut_id":"被测设备"}
+    for key in sorted(actual.keys() | expected.keys()):
+        if key in actual and key in expected and actual[key] == expected[key]:
+            continue
+        if actual.get(key) is None:
+            reasons.append(f"本次执行缺少{labels.get(key, '场景工作条件')}，尚无法核对校准。")
+        elif key == "scenario_sha256" and evidence.reference_scenario is None:
+            reasons.append("旧校准原件与当前场景摘要不符，需重新登记经审核的校准依据。")
+        else:
+            reasons.append(f"校准原件与本次执行的{labels.get(key, '场景工作条件')}不一致。")
     measured = {(p.tx, p.rx, p.input_port, p.output_port) for p in evidence.ports}
-    if measured != {tuple(p[k] for k in ("tx", "rx", "input_port", "output_port")) for p in mapping}:
+    if not mapping:
+        reasons.append("尚未取得端口映射，无法核对现场接线。")
+    elif measured != {tuple(p[k] for k in ("tx", "rx", "input_port", "output_port")) for p in mapping}:
         reasons.append("传导校准的八路物理端口映射与本次接线不一致。")
     for p in evidence.ports:
         item = {**p.model_dump(), **raw[p.tx, p.rx, p.input_port, p.output_port]}
