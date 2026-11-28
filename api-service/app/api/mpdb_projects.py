@@ -754,3 +754,135 @@ def download_purpose_evaluation(comparison_id: UUID, artifact: Literal['report.z
         data = package.read('points.csv')
     return Response(data,media_type='text/csv; charset=utf-8',headers={
         'Content-Disposition':f'attachment; filename="channel-purpose-evaluation-{comparison_id}.csv"'})
+
+
+class SceneName(BaseModel):
+    name: str = Field(min_length=1, max_length=160)
+
+
+def _scene_library():
+    return Path("data/road-scenes")
+
+
+def _file_digest(path):
+    with path.open("rb") as stream:
+        return hashlib.file_digest(stream, "sha256").hexdigest()
+
+
+@router.post("/{source_id}/{project_id}/scene")
+def register_scene(source_id: UUID, project_id: UUID, request: SceneName):
+    """从已生成的包登记一个持久版本。来源摘要相同的版本归入同一道路场景。"""
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(422, "请输入道路场景名称")
+    folder = storage() / str(source_id)
+    package = folder / f"{project_id}.zip"
+    root = _scene_library()
+    root.mkdir(parents=True, exist_ok=True)
+    try:
+        with tempfile.TemporaryDirectory(dir=root) as temporary:
+            stage = Path(temporary) / "version"
+            stage.mkdir()
+            archived = stage / "project.zip"
+            shutil.copyfile(package, archived)
+            with zipfile.ZipFile(folder / "source.zip") as original:
+                with original.open("R0B0S0D.mpdb") as stream:
+                    source = hashlib.file_digest(stream, "sha256").hexdigest()
+            timing = json.loads((folder / "timing.json").read_text())
+            with zipfile.ZipFile(archived) as archive:
+                names = archive.namelist()
+                if len(names) != len(set(names)):
+                    raise ValueError("工程包包含重名文件")
+                roles = [""] if "manifest.json" in names else ["baseline/", "dynamic/"]
+                version = hashlib.sha256()
+                for prefix in roles:
+                    raw = archive.read(prefix + "manifest.json")
+                    version.update(hashlib.sha256(raw).digest())
+                    manifest = json.loads(raw)
+                    mode = "ota" if prefix else "conducted"
+                    digest = manifest["source_sha256"] if prefix else manifest["source"]["mpdb"]
+                    if mode == "conducted":
+                        pairs = [(item["tx"], item["rx"]) for item in manifest["links"]]
+                        expected = [(tx, rx) for tx in timing["tx_ports"] for rx in timing["rx_ports"]]
+                        if sorted(pairs) != sorted(expected) or manifest["frames"] != timing["frame_ids"]:
+                            raise ValueError("传导工程的源帧或端口对不完整")
+                    elif manifest["tx_ports"] != timing["tx_ports"] or manifest["rx_ports"] != timing["rx_ports"]:
+                        raise ValueError("空口工程端口与原文件不一致")
+                    if (digest != source or manifest["mode"] != mode or manifest["direction"] != "downlink"
+                            or any(manifest.get(k, timing[k]) != timing[k] for k in ("tx_ports", "rx_ports"))):
+                        raise ValueError("工程来源、方向或端口与原文件不一致")
+                    for row in manifest["links"]:
+                        with archive.open(prefix + row["file"]) as stream:
+                            if hashlib.file_digest(stream,"sha256").hexdigest() != row["sha256"]:
+                                raise ValueError("工程文件摘要不符：" + row["file"])
+            clock = manifest if mode == "ota" else timing
+            version.update(json.dumps([clock.get("source_times_s"), clock.get("time_source")],
+                                      allow_nan=False).encode())
+            package_digest = _file_digest(archived)
+            version.update(bytes.fromhex(package_digest))
+            key = version.hexdigest()
+            record = dict(name=name, source_sha256=source, version=key, mode=mode, direction="downlink",
+                          tx_ports=timing["tx_ports"], rx_ports=timing["rx_ports"],
+                          source_frames=len(timing["frame_ids"]), carrier_hz=manifest["header"]["carrier_hz"],
+                          time_source=clock.get("time_source"),
+                          source_times_s=clock.get("source_times_s"), package_sha256=package_digest,
+                          source_id=str(source_id), project_id=str(project_id))
+            (stage / "scene.json").write_text(json.dumps(record, ensure_ascii=False))
+            target = root / source / key
+            target.parent.mkdir(exist_ok=True)
+            try:
+                stage.rename(target)
+            except OSError:
+                if not (target / "scene.json").is_file():
+                    raise
+            saved = json.loads((target / "scene.json").read_text())
+            if saved["name"] != name:
+                raise HTTPException(409, f"此工程版本已登记为“{saved['name']}”")
+            return saved
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "工作台工程已过期或文件缺失，请重新生成") from exc
+    except (KeyError, ValueError, zipfile.BadZipFile) as exc:
+        raise HTTPException(422, f"道路场景登记失败：{exc}") from exc
+
+
+@router.get("/scenes")
+def list_project_scenes():
+    rows = []
+    for path in sorted(_scene_library().glob("[0-9a-f]*/*/scene.json")):
+        try:
+            record = json.loads(path.read_text())
+            if record["version"] != path.parent.name or record["source_sha256"] != path.parent.parent.name:
+                raise ValueError("目录与来源不一致")
+        except (FileNotFoundError, ValueError, KeyError, TypeError) as exc:
+            logger.error("道路场景登记损坏：%s (%s)", path, exc)
+            continue
+        record["available"] = (path.parent / "project.zip").is_file()
+        rows.append(record)
+    return rows
+
+@router.get("/scene-candidates")
+def scene_candidates():
+    candidates = []
+    for timing_path in sorted(storage().glob("*/timing.json")):
+        try:
+            source = UUID(timing_path.parent.name)
+            timing = json.loads(timing_path.read_text())
+        except (FileNotFoundError, ValueError):
+            continue
+        for package in sorted(timing_path.parent.glob("*.zip")):
+            try:
+                project = UUID(package.stem)
+                with zipfile.ZipFile(package) as archive:
+                    names = archive.namelist()
+            except (ValueError, FileNotFoundError, zipfile.BadZipFile):
+                continue
+            if "manifest.json" in names:
+                mode = "conducted"
+            elif "baseline/manifest.json" in names and "dynamic/manifest.json" in names:
+                mode = "ota"
+            else:
+                continue
+            candidates.append(dict(source_id=source, project_id=project, mode=mode,
+                                   tx_ports=timing["tx_ports"], rx_ports=timing["rx_ports"],
+                                   source_frames=len(timing["frame_ids"])))
+    return candidates

@@ -4,6 +4,60 @@
  */
 
 export interface paths {
+    "/api/v1/channel-assets/mpdb-projects/scene-candidates": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Scene Candidates */
+        get: operations["scene_candidates_api_v1_channel_assets_mpdb_projects_scene_candidates_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/mpdb-projects/scenes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Project Scenes */
+        get: operations["list_project_scenes_api_v1_channel_assets_mpdb_projects_scenes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/channel-assets/mpdb-projects/{source_id}/{project_id}/scene": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Register Scene
+         * @description 从已生成的包登记一个持久版本。来源摘要相同的版本归入同一道路场景。
+         */
+        post: operations["register_scene_api_v1_channel_assets_mpdb_projects__source_id___project_id__scene_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/channel-assets/mpdb-projects/port-evidence": {
         parameters: {
             query?: never;
@@ -3627,6 +3681,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** SceneName */
+        SceneName: {
+            /** Name */
+            name: string;
+        };
         /** Body_analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post */
         Body_analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post: {
             /**
@@ -8052,6 +8111,82 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    scene_candidates_api_v1_channel_assets_mpdb_projects_scene_candidates_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    list_project_scenes_api_v1_channel_assets_mpdb_projects_scenes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    register_scene_api_v1_channel_assets_mpdb_projects__source_id___project_id__scene_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                source_id: string;
+                project_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SceneName"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     analyze_port_evidence_api_v1_channel_assets_mpdb_projects_port_evidence_post: {
         parameters: {
             query?: never;

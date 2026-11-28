@@ -142,7 +142,7 @@ export default function ScenarioCard({ scenario, onViewHistory, onRefresh }: Pro
         </Group>
         <Group gap="xs">
           <Badge color="gray" variant="outline" size="xs">
-            {scenario.source}
+            {scenario.source === 'standard' ? '内置场景' : scenario.tags.includes('软件模拟预设') ? '软件模拟预设' : '自定义 · 传播来源未登记'}
           </Badge>
           {/* Actions Menu */}
           <Menu shadow="md" width={140} position="bottom-end">
