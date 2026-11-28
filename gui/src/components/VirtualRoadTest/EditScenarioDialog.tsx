@@ -173,7 +173,7 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
     <Modal
       opened={opened}
       onClose={handleClose}
-      title={`编辑场景: ${scenario?.name || ''}`}
+      title={`${scenario?.source === 'standard' ? '另存为自定义场景' : '编辑场景'} · ${scenario?.name || ''}`}
       size="lg"
       centered
     >
@@ -473,7 +473,7 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
             disabled={!isFormValid || updateMutation.isPending}
             loading={updateMutation.isPending}
           >
-            保存更改
+            {scenario?.source === 'standard' ? '保存自定义副本' : '保存更改'}
           </Button>
         </Group>
       </Stack>

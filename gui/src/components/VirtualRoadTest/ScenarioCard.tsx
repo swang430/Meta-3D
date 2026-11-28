@@ -156,8 +156,9 @@ export default function ScenarioCard({ scenario, onViewHistory, onRefresh }: Pro
                 leftSection={<IconEdit size={14} />}
                 onClick={handleEdit}
               >
-                编辑
+                {scenario.source === 'standard' ? '另存为自定义场景' : '编辑'}
               </Menu.Item>
+              {scenario.source === 'custom' && <>
               <Menu.Divider />
               <Menu.Item
                 color="red"
@@ -166,6 +167,7 @@ export default function ScenarioCard({ scenario, onViewHistory, onRefresh }: Pro
               >
                 删除
               </Menu.Item>
+              </>}
             </Menu.Dropdown>
           </Menu>
         </Group>
