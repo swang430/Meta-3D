@@ -220,3 +220,59 @@ def test_changed_source_rejected_before_driver_receives_copy(tmp_path):
     staged.mkdir()
     with pytest.raises(ValueError, match="摘要不一致"):
         _stage_waveforms(tmp_path, [link], staged)
+
+
+def test_archived_pdf_shows_frozen_business_target_and_planned_playback():
+    from app.services.pdf_generator import PDFGenerator
+    from reportlab.platypus import Paragraph
+
+    setup = {
+        "scenario_version": "1.2", "road_project": {"version": "v-project-a"},
+        "scenario_snapshot": {"network": {"type": "5G_NR", "band": "n78", "bandwidth_mhz": 100},
+                              "traffic": {"type": "video", "direction": "DL", "data_rate_mbps": 12}},
+        "test_settings": {"terminal_protocol": "终端 <A>", "traffic": {"type": "ftp", "direction": "DL",
+                                                                           "data_rate_mbps": 25}},
+        "playback": {"project_name": "道路工程 A", "source_frames": 38, "source_duration_s": None,
+                     "start_s": 0, "duration_s": 0.5, "full_duration_s": 37},
+        "binding": {"execution_mode": "simulated", "mock_only": True},
+    }
+    rendered = PDFGenerator()._generate_vrt_kpi_summary_section({}, {"conducted_setup": setup})
+    text = " ".join(p.getPlainText() for p in rendered if isinstance(p, Paragraph))
+    for value in ("v-project-a", "道路工程 A", "38 帧", "0.5 秒", "25 Mbps", "终端 <A>", "源轨迹时长未核验"):
+        assert value in text
+    assert "12 Mbps" not in text
+
+
+def test_pdf_discloses_rejected_requested_working_point_and_frozen_project():
+    from app.services.pdf_generator import PDFGenerator
+    setup = {
+        "road_project": {"version": "version-A"},
+        "playback": {"package_sha256": "digest-of-original-zip"},
+        "binding": {"real_preflight": {"calibration": {
+            "applicable": False, "scope": {"tx_power_dbm": -10},
+            "reasons": ["与校准原文中的 -20 dBm 不一致。"],
+        }}},
+        "test_settings": {"kpi_definitions": [{"kpi_type": "latency", "target_value": 20, "unit": "ms",
+                                                "percentile": 95, "threshold_max": 50, "threshold_min": 0}]},
+    }
+    paragraphs = PDFGenerator()._generate_vrt_kpi_summary_section({}, {"conducted_setup": setup})
+    text = " ".join(p.getPlainText() for p in paragraphs)
+    for term in ("digest-of-original-zip", "本次申请的工作点", "校准未通过", "-20 dBm", "第 95 百分位", "上限 50 ms", "下限 0 ms"):
+        assert term in text
+
+
+def test_older_preparation_can_lack_display_frame_count_only():
+    from app.services.road_test.conducted_runner import _preparation_matches
+    saved = {"playback": {"duration_s": 37, "package_sha256": "saved"}}
+    fresh = {"playback": {**saved["playback"], "source_frames": 38}}
+    assert _preparation_matches(fresh, saved)
+    assert not _preparation_matches({"playback": {**fresh["playback"], "duration_s": 36}}, saved)
+    assert not _preparation_matches({"playback": {**fresh["playback"], "package_sha256": "changed"}}, saved)
+    assert not _preparation_matches({"playback": {**fresh["playback"], "source_frames": 37}}, fresh)
+
+
+def test_old_digital_twin_does_not_borrow_current_scenario():
+    from types import SimpleNamespace
+    from app.api.road_test import _execution_scenario
+    row = SimpleNamespace(mode="digital_twin", vrt_twin_input=None, scenario_id="3gpp-uma-handover-001")
+    assert _execution_scenario(None, row) is None

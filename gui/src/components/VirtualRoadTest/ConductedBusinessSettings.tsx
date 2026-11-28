@@ -1,6 +1,8 @@
 import { Checkbox, NumberInput, Select, Stack, Text, TextInput } from '@mantine/core'
 import type { ConductedPreparation, ConductedSelection, ConductedTestSettings } from '../../types/roadTest'
 
+import { trafficOptions } from './roadTraffic'
+
 export function ConductedBusinessSettings({selection, preset, onChange, mockOnly}: {
   selection: ConductedSelection
   preset: ConductedPreparation['scenario_snapshot']
@@ -22,7 +24,7 @@ export function ConductedBusinessSettings({selection, preset, onChange, mockOnly
       <TextInput label="终端协议配置（仅记录）" maxLength={120} value={settings.terminal_protocol ?? ''}
         onChange={e=>update({...settings,terminal_protocol:e.currentTarget.value || null})}/>
       <Select label="业务类型" value={settings.traffic.type}
-        data={[{value:'ftp',label:'文件传输'},{value:'video',label:'视频'},{value:'voip',label:'语音'},{value:'web',label:'网页'},{value:'gaming',label:'游戏'}]}
+        data={trafficOptions}
         onChange={type=>type && update({...settings, traffic:{...settings.traffic,type}})}/>
       <NumberInput label="业务目标速率（Mbps）" min={0} value={settings.traffic.data_rate_mbps ?? ''}
         onChange={v=>update({...settings,traffic:{...settings.traffic,data_rate_mbps:typeof v === 'number'?v:null}})}/>

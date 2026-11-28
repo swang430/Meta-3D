@@ -30,6 +30,7 @@ import { DigitalTwinExecutionModal } from './DigitalTwinExecutionModal'
 import { OtaExecutionModal } from './OtaExecutionModal'
 import { ConductedExecutionModal } from './ConductedExecutionModal'
 import { TestReportModal } from './TestReportModal'
+import { describeTraffic } from './roadTraffic'
 import { TestMode } from '../../types/roadTest'
 import { fetchExecutions } from '../../api/roadTestService'
 
@@ -154,6 +155,8 @@ export function VirtualExecutionHistory({ scenarioId, scenarioName, initialExecu
               const statusConfig = STATUS_CONFIG[exec.status] || STATUS_CONFIG.idle
               const StatusIcon = statusConfig.icon
               const isCompleted = exec.status === 'completed'
+              const setup = exec.conducted ?? exec.ota
+              const traffic = exec.conducted?.test_settings?.traffic ?? setup?.scenario_snapshot?.traffic
 
               return (
                 <Table.Tr key={exec.execution_id}>
@@ -162,6 +165,7 @@ export function VirtualExecutionHistory({ scenarioId, scenarioName, initialExecu
                   </Table.Td>
                   <Table.Td>
                     <Text size="sm">{exec.scenario_name}</Text>
+                    {setup?.road_project && <Text size="xs">{setup.playback?.project_name || '工程名称未知'} · {describeTraffic(traffic)}</Text>}
                   </Table.Td>
                   <Table.Td>
                     <Badge size="sm" variant="light">
@@ -202,6 +206,7 @@ export function VirtualExecutionHistory({ scenarioId, scenarioName, initialExecu
                       {isCompleted && (
                         <Tooltip label="查看报告">
                           <ActionIcon
+                            aria-label="查看报告"
                             variant="light"
                             color="blue"
                             onClick={() => handleViewReport(exec.execution_id)}

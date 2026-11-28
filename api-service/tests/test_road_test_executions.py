@@ -715,3 +715,35 @@ def test_twin_comparison_requires_matching_route_evidence(digest, source_time, d
                      [{"source_frame_time_s": 5, "dl_throughput_mbps": 60}], [observation])
     assert result["formal_kpi"] is False and result["comparable"] is matched
     assert result["differences"] == ([{"source_frame_time_s": 5, "delta_dl_throughput_mbps": 10}] if matched else [])
+
+
+def test_legacy_twin_archive_without_snapshot_rebuilds_from_execution(client, monkeypatch, tmp_path):
+    from uuid import UUID
+    from app.models.report import TestReport
+    from app.models.test_plan import TestExecution
+
+    monkeypatch.chdir(tmp_path)
+    root = "/api/v1/road-test"
+    scenario_id = client.get(root + "/scenarios").json()[0]["id"]
+    record = client.post(root + "/executions", json={"mode": "digital_twin", "scenario_id": scenario_id}).json()
+    key = record["execution_id"]
+    url = root + "/executions/" + key
+    for command in ("start", "complete"):
+        assert client.post(url + "/control", json={"action": command}).is_success
+    assert client.post(url + "/archive-report").is_success
+    with _TestingSessionLocal() as db:
+        db.get(TestExecution, UUID(key)).vrt_twin_input = None
+        archive = db.query(TestReport).filter_by(road_test_execution_id=key).one()
+        report_url = "/api/v1/reports/" + str(archive.id)
+        assert archive.content_data["scenario"] and archive.content_data["network"]
+        archive.content_data = {**archive.content_data, "simulation_input": None}
+        db.commit()
+
+    for suffix in ("", "/download"):
+        assert client.get(report_url + suffix).status_code == 409
+    assert client.post(url + "/archive-report").is_success
+    assert client.get(report_url + "/download").is_success
+    with _TestingSessionLocal() as db:
+        rebuilt = db.query(TestReport).filter_by(road_test_execution_id=key).one()
+        assert rebuilt.content_data["scenario_name"] == scenario_id
+        assert rebuilt.content_data["network"] is None and rebuilt.content_data["scenario"] is None

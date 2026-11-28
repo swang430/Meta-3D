@@ -418,6 +418,15 @@ def report_has_vrt_archive_trust(content_data: Any) -> bool:
     marker = content_data.get(VRT_ARCHIVE_TRUST_FIELD)
     if type(marker) is not int or marker not in (1, VRT_ARCHIVE_TRUST_SCHEMA_VERSION):
         return False
+    if content_data.get("mode") == "digital_twin":
+        inputs = content_data.get("simulation_input")
+        has_frozen_scene = isinstance(inputs, dict) and bool(inputs.get("scenario_snapshot"))
+        # 旧版会在没有当次快照时借用现行场景。此类归档必须从执行记录重建。
+        if not has_frozen_scene and any(content_data.get(key) for key in (
+            "scenario", "network", "environment", "route", "base_stations", "step_configs",
+            "network_config_detail", "base_station_config_detail", "trajectory", "custom_config_highlights",
+        )):
+            return False
     observations = content_data.get("observations") or []
     if not isinstance(observations, list) or any(not isinstance(item, dict) for item in observations):
         return False

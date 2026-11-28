@@ -788,7 +788,7 @@ export interface TestExecution {
 
 export interface ExecutionSummary {
   ota?: OtaPreparation | null
-  conducted?: { binding?: { execution_mode?: string | null } | null } | null
+  conducted?: Partial<ConductedPreparation> | null
   execution_id: string
   mode: TestMode
   status: ExecutionStatus
@@ -1004,6 +1004,7 @@ export interface PortMeasurement {
 }
 
 export interface ConductedCalibrationCheck {
+  scope?: { center_frequency_hz?: number | null; bandwidth_mhz?: number | null; tx_power_dbm?: number | null; base_station_id?: string; channel_emulator_id?: string; dut_id?: string }
   id: string | null
   evidence_sha256?: string | null
   applicable: boolean
@@ -1048,7 +1049,7 @@ export interface ConductedSelection {
 }
 
 export interface ConductedPreparation extends ConductedSelection {
-  playback?: { duration_s: number; full_duration_s: number; duration_source: string; source_duration_s?: number | null; project_name?: string }
+  playback?: { duration_s: number; full_duration_s: number; duration_source: string; source_duration_s?: number | null; project_name?: string; source_frames?: number; start_s?: number; package_sha256?: string }
 
   binding?: { receiver_power_plan?: {reference_frame:number;common_offset_db:number;predictions:{rx:number;physical_rx:number;output_port:number|null;frame:number;target_dut_dbm:number|null;f64_connector_target_dbm:number|null}[]}; execution_mode: 'simulated' | 'real' | null; real_preflight?: { calibration?: ConductedCalibrationCheck } | null } | null
   scenario_version: string
@@ -1148,7 +1149,7 @@ export interface OtaPreparation extends OtaSelection {
   playback?: ConductedPreparation["playback"]
   scenario_version: string
   scenario_sha256: string
-  scenario_snapshot: { name: string }
+  scenario_snapshot: NonNullable<ConductedPreparation["scenario_snapshot"]>
   lab_name: string | null
   chamber: { id: string; name: string; quiet_zone_diameter_m: number | null } | null
   asset: { id: string; name: string; sha256: string; mock_only: boolean; links: { file: string; sha256: string }[] } | null

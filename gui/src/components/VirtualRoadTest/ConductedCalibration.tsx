@@ -54,8 +54,12 @@ export function ConductedCalibration({ value, onSelect, disabled }: {
 
 export function CalibrationDetails({ check }: { check: ConductedCalibrationCheck }) {
   return <Stack gap="xs">
-    <Text fw={600}>逐端口校准{check.applicable ? '适用于本次执行' : '尚未通过核验'}</Text>
+    <Text fw={600}>逐端口校准{check.applicable === true ? '适用于本次执行' : check.applicable === false ? '尚未通过核验' : '结果未知'}</Text>
     {check.report_number && <Text>报告编号 {check.report_number} · 签发方 {check.issuer} · 有效期至 {check.valid_until}</Text>}
+    {check.scope && <>
+      <Text>本次校准核对的中心频率 {check.scope.center_frequency_hz ?? '未知'} Hz，带宽 {check.scope.bandwidth_mhz ?? '未知'} MHz，基站小区设定功率 {check.scope.tx_power_dbm ?? '未知'} dBm。</Text>
+      <Text>基站 {check.scope.base_station_id || '未知'} · 信道仿真器 {check.scope.channel_emulator_id || '未知'} · 车载设备 {check.scope.dut_id || '未知'}</Text>
+    </>}
     {check.required_margin_db != null && <Text>要求的最小安全余量 {check.required_margin_db} dB</Text>}
     {check.reasons.map(message => <Text key={message} c="red">{message}</Text>)}
     {!!check.ports.length && <Table.ScrollContainer minWidth={660}><Table><Table.Thead><Table.Tr>
