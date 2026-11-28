@@ -6,7 +6,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import UUID
 from zipfile import BadZipFile
-from app.services.road_test.road_project import RoadProjectReference, manifest_clock, project_playback
+from app.services.road_test.scenario_reference import matching_registrations, scenario_digest
+from app.services.road_test.road_project import RoadProjectReference, manifest_clock, project_playback, registrations_for_project
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
@@ -97,7 +98,7 @@ def resolve(db, selection, *, playback_files=None):
     if not scenario:
         raise HTTPException(404, '所选场景不存在。')
     snapshot = scenario.model_dump(mode='json', exclude={'created_at','updated_at'})
-    digest = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(',',':'), ensure_ascii=False).encode()).hexdigest()
+    digest = scenario_digest(snapshot)
     reasons = []
     lab = db.get(LabProfile, selection.lab_profile_id) if selection.lab_profile_id else None
     chamber = db.get(ChamberConfiguration, selection.chamber_id) if selection.chamber_id else None
@@ -109,7 +110,13 @@ def resolve(db, selection, *, playback_files=None):
         reasons.append('所选暗室与实验室实际绑定不一致。')
     if selection.direction != 'downlink':
         reasons.append('当前仅支持下行 OTA 模拟执行；其他方向需要独立资产与验证。')
-    matches = [r for r in registrations(lab) if all(r.get(k)==ids[k] for k in ('scenario_id','chamber_id','asset_id','direction'))] if lab and lab.is_active else []
+    candidates = [r for r in registrations(lab) if all(r.get(k)==ids[k] for k in ('scenario_id','chamber_id','asset_id','direction'))] if lab and lab.is_active else []
+    try:
+        candidates = registrations_for_project(selection.road_project, "ota", candidates)
+    except (OSError, KeyError, ValueError, BadZipFile) as exc:
+        candidates = []
+        reasons.append(f"道路工程清单无法核对：{exc}")
+    matches = matching_registrations(candidates, snapshot, digest)
     asset, mapping, calibration = None, [], None
     playback = {}
     chamber_snapshot = None
@@ -117,11 +124,13 @@ def resolve(db, selection, *, playback_files=None):
         chamber_snapshot = dict(id=str(chamber.id), name=chamber.name, quiet_zone_diameter_m=chamber.quiet_zone_diameter_m,
                                 freq_min_mhz=chamber.freq_min_mhz, freq_max_mhz=chamber.freq_max_mhz)
     if len(matches) != 1:
-        reasons.append('实验室缺少唯一匹配场景、暗室、方向和 OTA 资产的登记。')
+        if candidates and not matches:
+            reasons.append('场景版本或内容已变化，请重新核对 OTA 登记。')
+        else:
+            reasons.append('实验室缺少唯一匹配场景、暗室、方向和 OTA 资产的登记。')
     else:
         reg = matches[0]
-        if reg.get('scenario_version') != scenario.version or reg.get('scenario_sha256') != digest:
-            reasons.append('场景版本或内容已变化，请重新核对 OTA 登记。')
+
         if reg.get('kind') != 'ota_manifest':
             reasons.append('真实 OTA 执行仍待暗室场、功率和安全停机现场验收。')
         else:

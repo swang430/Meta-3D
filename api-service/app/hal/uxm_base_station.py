@@ -20,6 +20,8 @@ SCPI 子系统参考:
 
 import logging
 import asyncio
+from concurrent.futures import Future
+from threading import Event
 import re
 from enum import Enum
 from typing import Dict, Any, List, Optional, Tuple, TYPE_CHECKING
@@ -3512,7 +3514,13 @@ class RealUxmDriver(BaseStationDriver):
             operation_succeeded=operation_succeeded,
         )
 
-    async def _run_attach_operation(self, timeout_s: float = 60.0) -> bool:
+    async def start_conducted_signaling(self, cancelled: Event, timeout_s: float = 60.0) -> bool:
+        """在传导测试独占设备期间，仪器等待不能占用校准撤销检查的事件循环。"""
+        with capture_scpi_exchanges() as exchanges:
+            succeeded = await self._run_attach_operation(timeout_s, cancelled=cancelled)
+        return self._build_attach_receipt(exchanges, operation_succeeded=succeeded).diagnostic_execution_allowed
+
+    async def _run_attach_operation(self, timeout_s: float = 60.0, *, cancelled: Event | None = None) -> bool:
         """
         激活小区并等待 UE Attach。
 
@@ -3520,6 +3528,27 @@ class RealUxmDriver(BaseStationDriver):
           CONFig:NR5G:CELL0:ACTive:STATe ON → *OPC?
           → 轮询 Cell State 直到 UE Connected 或超时
         """
+        async def perform(operation, *args):
+            if cancelled is None:
+                return operation(*args)
+            from app.services.instrument_test_lease import await_completion_despite_cancellation
+            started = Future()
+
+            def dispatch():
+                if not started.set_running_or_notify_cancel() or cancelled.is_set():
+                    return None
+                return operation(*args)
+
+            pending = asyncio.create_task(asyncio.to_thread(dispatch))
+            try:
+                return await asyncio.shield(pending)
+            except asyncio.CancelledError:
+                if started.cancel():
+                    pending.cancel()
+                await await_completion_despite_cancellation(pending)
+                raise
+
+        old_timeout = None
         cell = self._cell_id
         try:
             logger.info(f"[UXM] Starting signaling on {cell}")
@@ -3532,8 +3561,8 @@ class RealUxmDriver(BaseStationDriver):
             # 激活小区。⚠ P0-2 D1: 这里**不再**写 `self._cell_state = ON` ——
             # 那是"我发了命令"的缓存断言, 不是仪器的话 (F64 `_emulation_running`
             # 同款毛病)。状态只从下面的轮询解析来。
-            self._write(self._cmds.CELL_STATE_ON.format(cell=cell))
-            self._query("*OPC?")
+            await perform(self._write, self._cmds.CELL_STATE_ON.format(cell=cell))
+            await perform(self._query, "*OPC?")
 
             # 恢复超时并等待 UE Attach
             self._visa_session.timeout = VISA_TIMEOUT_ATTACH
@@ -3561,7 +3590,7 @@ class RealUxmDriver(BaseStationDriver):
                 await asyncio.sleep(poll_interval)
                 elapsed += poll_interval
 
-                last_raw = (self._query(poll_q) or "").strip()
+                last_raw = (await perform(self._query, poll_q) or "").strip()
                 parsed = self._parse_cell_status(last_raw)
                 if parsed is None:
                     # 白名单外 (含 IRAT 开关回读误接线时的 "0"/"1") — 不猜,
@@ -3575,9 +3604,6 @@ class RealUxmDriver(BaseStationDriver):
                     attached = True
                     logger.info(f"[UXM] UE attached after {elapsed:.1f}s")
                     break
-
-            # 恢复默认超时
-            self._visa_session.timeout = old_timeout
 
             if attached:
                 return True
@@ -3593,6 +3619,9 @@ class RealUxmDriver(BaseStationDriver):
             logger.error(f"[UXM] start_signaling failed: {e}")
             self._set_status(InstrumentStatus.ERROR, str(e))
             return False
+        finally:
+            if old_timeout is not None and self._visa_session is not None:
+                self._visa_session.timeout = old_timeout
 
     async def stop_signaling(self) -> bool:
         """关闭小区信令"""

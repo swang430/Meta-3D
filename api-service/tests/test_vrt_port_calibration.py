@@ -157,3 +157,35 @@ def test_conflicting_output_setting_for_same_port(client, monkeypatch, tmp_path)
     response = client.post(ROOT, json={"report_file": "report.json"})
     assert response.status_code == 422
     assert "平均功率设置" in response.json()["detail"]
+
+
+def test_signed_reference_allows_threshold_edit_and_rechecks_physical_scope(client, monkeypatch, tmp_path):
+    import hashlib
+    import json
+    from uuid import UUID
+    from app.services.road_test.port_calibration import applicability
+    from tests.test_road_test_executions import _TestingSessionLocal
+
+    monkeypatch.setenv("VRT_CALIBRATION_APPROVED_DIR", str(tmp_path))
+    doc, mapping = _site_files(tmp_path)
+    scenario_id = client.get("/api/v1/road-test/scenarios").json()[0]["id"]
+    initial = client.post("/api/v1/road-test/conducted/prepare", json={"scenario_id": scenario_id}).json()
+    doc["scope"]["scenario_sha256"] = initial["scenario_sha256"]
+    doc.update(schema_version="vrt_conducted_port_calibration_v2", reference_scenario=initial["scenario_snapshot"])
+    (tmp_path/"report.json").write_text(json.dumps(doc))
+    response = client.post(ROOT, json={"report_file":"report.json"})
+    assert response.status_code == 201, response.text
+    recorded = client.get(ROOT+"/"+response.json()["id"]).json()["evidence_b64"]
+    current = dict(doc["reference_scenario"], description="换个说明", version="2.0", kpi_definitions=[])
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",",":")).encode()).hexdigest()
+    with _TestingSessionLocal() as db:
+        def check(scenario, **changes):
+            scope = {**doc["scope"], "scenario_sha256": digest(scenario), **changes}
+            return applicability(db, UUID(response.json()["id"]), scope, mapping, scenario_snapshot=scenario)
+        assert check(current)["applicable"]
+        for change in ({"bandwidth_mhz":40}, {"center_frequency_hz":3.5e9}, {"tx_power_dbm":-10},
+                       {"asset_sha256":"f"*64}, {"topology_sha256":"e"*64}):
+            assert not check(current, **change)["applicable"]
+        assert not check(dict(current, route={**current["route"],"duration_s":0.3}))["applicable"]
+    assert client.get(ROOT+"/"+response.json()["id"]).json()["evidence_b64"] == recorded

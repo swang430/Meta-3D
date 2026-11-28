@@ -28,7 +28,7 @@ import {
   IconCheck,
   IconSettings,
 } from '@tabler/icons-react'
-import { updateScenario } from '../../api/roadTestService'
+import { fetchScenarioDetail, updateScenario } from '../../api/roadTestService'
 import type { ScenarioSummary, RoadTestScenario, StepConfiguration, TestMode, ChannelModel } from '../../types/roadTest'
 import { StepConfigurationEditor } from './StepConfigurationEditor'
 
@@ -93,7 +93,7 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
         // Codex #259: 无模型场景预填空占位 — 预填 'UMa' 会让"用户主动选 UMa"
         // 与"没动 UI 缺省"不可区分, 主动选择被上一轮收窄丢弃
         channelModel: scenario.channel_model || '',
-        speed: scenario.avg_speed_kmh || 50,
+        speed: scenario.avg_speed_kmh ?? 50,
         duration: scenario.duration_s || 60,
         stepConfiguration: scenario.step_configuration,
       })
@@ -104,47 +104,38 @@ export function EditScenarioDialog({ opened, onClose, scenario, testMode }: Prop
     mutationFn: async () => {
       if (!scenario) throw new Error('No scenario to update')
 
-      const updates: Partial<RoadTestScenario> = {
-        name: formData.name,
-        description: formData.description,
-        category: formData.category as any,
-        tags: [formData.category, formData.channelModel].filter(Boolean),
-        network: {
-          type: formData.networkType as any,
-          band: formData.band,
-          bandwidth_mhz: formData.bandwidth,
-          duplex_mode: 'TDD',
-          scs_khz: 30,
-        },
-        route: {
-          type: 'generated',
-          waypoints: [],
-          duration_s: formData.duration,
-          total_distance_m: formData.speed * formData.duration,
-        },
-        environment: {
-          type: 'urban_street',
-          // P2-20: 表单选的信道模型写进快照真值位置 (此前恒发 [])。
-          // 内审 F5 收窄: 源场景摘要无模型 (无快照 / Custom 矩阵) 时保持发 []
-          // — 预填的 'UMa' 只是 UI 缺省, 写回去会把 Custom 场景静默升成
-          // 看似合法的 3GPP/UMa 错值, 比空值更难发现
-          // Codex #259: 判据 = 表单当前值非空 (用户显式选择或源场景真值),
-          // 空占位 (无模型场景未选) 才保持 [] — 主动选择要落快照, UI 缺省不
-          channel_snapshots: formData.channelModel
-            ? [
-                {
-                  timestamp_s: 0,
-                  duration_s: formData.duration,
-                  channel_type: '3GPP' as const,
-                  standard_model: formData.channelModel as ChannelModel,
-                },
-              ]
-            : [],
-          weather: 'clear',
-          traffic_density: 'medium',
-        },
-        // Always send step_configuration (even if empty or null)
-        step_configuration: formData.stepConfiguration || {},
+      const updates: Partial<RoadTestScenario> = {}
+      if (formData.name !== scenario.name) updates.name = formData.name
+      if (formData.description !== (scenario.description || '')) updates.description = formData.description
+      if (formData.category !== scenario.category) updates.category = formData.category as ScenarioSummary['category']
+      const modelChanged = formData.channelModel !== (scenario.channel_model || '')
+      const routeChanged = formData.duration !== (scenario.duration_s || 60)
+        || formData.speed !== (scenario.avg_speed_kmh ?? 50)
+      const networkChanged = formData.networkType !== (scenario.network_type || '5G_NR')
+        || formData.band !== (scenario.band || 'n78') || formData.bandwidth !== (scenario.bandwidth_mhz || 100)
+      if (modelChanged || routeChanged || networkChanged) {
+        const original = await fetchScenarioDetail(scenario.id)
+        if (networkChanged) {
+          if (!original.network) throw new Error('原场景缺少网络配置，无法保存本次修改。')
+          updates.network = { ...original.network, type: formData.networkType as NonNullable<RoadTestScenario['network']>['type'],
+            band: formData.band, bandwidth_mhz: formData.bandwidth }
+        }
+        if (routeChanged) {
+          if (original.route?.waypoints.length) {
+            throw new Error('已有路线包含逐点位置和时间。请保留原车速和时长，或在数据源调整轨迹后重新导入。')
+          }
+          updates.route = { type: 'generated', waypoints: [], duration_s: formData.duration,
+            total_distance_m: formData.speed * formData.duration / 3.6 }
+        }
+        if (modelChanged) {
+          if (!original.environment) throw new Error('原场景缺少环境配置，无法保存本次修改。')
+          updates.environment = { ...original.environment, channel_snapshots: formData.channelModel
+            ? [{ timestamp_s: 0, duration_s: formData.duration, channel_type: '3GPP',
+              standard_model: formData.channelModel as ChannelModel }] : [] }
+        }
+      }
+      if (JSON.stringify(formData.stepConfiguration) !== JSON.stringify(scenario.step_configuration)) {
+        updates.step_configuration = formData.stepConfiguration || {}
       }
       return updateScenario(scenario.id, updates)
     },
