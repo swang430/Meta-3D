@@ -6,6 +6,7 @@ import {
   archiveExecutionReport, controlExecution, fetchConductedOptions, fetchExecutionDetail,
   fetchExecutionObservations, fetchExecutionStatus, prepareConducted, saveConducted,
 } from '../../api/roadTestService'
+import { ConductedBusinessSettings } from './ConductedBusinessSettings'
 import { ConductedCalibration } from './ConductedCalibration'
 import { ConductedNoisePreview } from './ConductedNoisePreview'
 import { ConductedSetup } from './ConductedSetup'
@@ -21,17 +22,18 @@ const fields = [
   ['实验室', 'labs', 'lab_profile_id'], ['接线方案', 'topologies', 'topology_id'], ['可播放工程', 'assets', 'asset_id'],
 ] as const
 
-export function ConductedExecutionModal({ opened, onClose, scenario, initialId, onViewExecution }: {
+export function ConductedExecutionModal({ opened, onClose, scenario, initialId, initialSelection, onViewExecution }: {
   opened: boolean
   onClose: () => void
   scenario: { id: string; name: string }
   onViewExecution?: (id: string) => void
+  initialSelection?: ConductedSelection
   initialId?: string
 }) {
   const cache = useQueryClient()
-  const key = 'vrt-conducted:' + scenario.id
-  const [id, setId] = useState(() => initialId || sessionStorage.getItem(key) || '')
-  const [selection, setSelection] = useState<ConductedSelection>({
+  const key = 'vrt-conducted:' + scenario.id + (initialSelection?.road_project?.version || '')
+  const [id, setId] = useState(() => initialId || (!initialSelection && sessionStorage.getItem(key)) || '')
+  const [selection, setSelection] = useState<ConductedSelection>(initialSelection ?? {
     scenario_id: scenario.id, direction: 'downlink', lab_profile_id: null, topology_id: null, asset_id: null,
   })
   const [report, setReport] = useState(false)
@@ -39,7 +41,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId, 
   const detail = useQuery({ queryKey: ['vrt-detail', id], queryFn: () => fetchExecutionDetail(id), enabled: opened && !!id })
   const missing = isAxiosError(detail.error) && detail.error.response?.status === 404
   const matches = !missing && detail.data?.mode === 'conducted' && (initialId === id || detail.data.scenario_id === selection.scenario_id)
-  const preview = useQuery({ queryKey: ['vrt-prepare', selection], queryFn: () => prepareConducted(selection), enabled: opened && !id })
+  const preview = useQuery({ queryKey: ['vrt-prepare', selection], placeholderData: previous => previous, queryFn: () => prepareConducted(selection), enabled: opened && !id })
   const snapshot: ConductedPreparation | undefined = id ? (matches && detail.data?.config.conducted || undefined) : preview.data
   const state = useQuery({
     queryKey: ['vrt-status', id], queryFn: () => fetchExecutionStatus(id),
@@ -53,7 +55,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId, 
   const save = useMutation({
     mutationFn: () => saveConducted(selection),
     onSuccess: record => {
-      sessionStorage.setItem('vrt-conducted:' + record.scenario_id, record.execution_id)
+      sessionStorage.setItem(key, record.execution_id)
       setId(record.execution_id)
       void cache.invalidateQueries({ queryKey: ['road-test-executions'] })
     },
@@ -77,8 +79,8 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId, 
   function retry() {
     if (!snapshot && detail.data) setSelection(previous => ({ ...previous, scenario_id: detail.data!.scenario_id }))
     if (snapshot) setSelection({ scenario_id: snapshot.scenario_id, direction: 'downlink', lab_profile_id: snapshot.lab_profile_id,
-      topology_id: snapshot.topology_id, asset_id: snapshot.asset_id, calibration_id: snapshot.calibration_id, receiver_power: snapshot.receiver_power })
-    const storedKey = 'vrt-conducted:' + (detail.data?.scenario_id || selection.scenario_id)
+      topology_id: snapshot.topology_id, asset_id: snapshot.asset_id, calibration_id: snapshot.calibration_id, receiver_power: snapshot.receiver_power, road_project: snapshot.road_project, test_settings: snapshot.test_settings })
+    const storedKey = key
     if (sessionStorage.getItem(storedKey) === id) sessionStorage.removeItem(storedKey)
     setId(''); archive.reset(); start.reset(); stop.reset(); save.reset()
   }
@@ -91,6 +93,8 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId, 
         disabled={!!id || save.isPending} placeholder={'请选择' + label} clearable searchable
         data={(options.data?.[list] || []).map(x => ({ value: x.id, label: x.name }))}
         onChange={value => setSelection(previous => ({ ...previous, [field]: value }))} />)}
+      {!id && (selection.test_settings || snapshot?.scenario_snapshot?.traffic) && <ConductedBusinessSettings selection={selection}
+        preset={snapshot?.scenario_snapshot} onChange={setSelection} mockOnly={snapshot?.asset?.mock_only === true}/>}
       {!id && <ConductedCalibration value={selection.calibration_id || null} disabled={save.isPending}
         onSelect={calibration_id => setSelection(previous => ({ ...previous, calibration_id }))} />}
       {!id && <Checkbox label="按接收插口功率准备" checked={!!selection.receiver_power}
@@ -108,7 +112,7 @@ export function ConductedExecutionModal({ opened, onClose, scenario, initialId, 
       </>}
       <ConductedNoisePreview />
       {snapshot && <ConductedSetup snapshot={snapshot} />}
-      {!id && <Button disabled={!snapshot} loading={save.isPending} onClick={() => save.mutate()}>保存准备记录</Button>}
+      {!id && <Button disabled={!snapshot || preview.isPlaceholderData || preview.isError} loading={save.isPending} onClick={() => save.mutate()}>保存准备记录</Button>}
       {id && <Text>执行编号 {id} · 服务端状态 {status ? labels[status] : '尚未取得'}</Text>}
       {state.data && <Text>服务端进度 {state.data.progress_percent}% · 已用 {state.data.elapsed_time_s} 秒</Text>}
       {state.data?.last_error && <Alert color="red">{state.data.last_error}</Alert>}

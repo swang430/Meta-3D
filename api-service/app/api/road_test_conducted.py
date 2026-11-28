@@ -1,8 +1,10 @@
 """传导准备与建档。设备控制由执行器负责。"""
 import hashlib
 import json
+import math
 import re
 from pathlib import Path as Directory
+from zipfile import BadZipFile
 from uuid import UUID
 
 from fastapi import APIRouter, Body, Depends, HTTPException
@@ -11,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api import vrt_port_calibration
 from app.services.road_test.port_calibration import applicability
+from app.services.road_test.road_project import RoadProjectReference, manifest_clock, project_playback
 from app.services.road_test.sinr_plan import Waveforms, Window, budget, render_waveforms
 from app.api.road_test import _get_custom_scenario
 from app.data.scenario_library import get_scenario_by_id
@@ -19,6 +22,7 @@ from app.models.channel_asset import ChannelAsset
 from app.models.lab_profile import LabProfile
 from app.models.topology import Topology
 from app.schemas.road_test import TestExecution, TestMode
+from app.schemas.road_test.scenario import TrafficConfig, KPIDefinition, NetworkType
 from app.services.channel_emulator_binding import resolve_channel_emulator_binding
 from app.services.instrument_hal_service import get_hal_service, is_mock_driver
 from app.services.base_station_binding import resolve_base_station_binding
@@ -37,6 +41,16 @@ class ReceiverPowerRequest(BaseModel):
     targets_dbm: dict[int, float] = Field(default_factory=dict)
 
 
+class ConductedTestSettings(BaseModel):
+    """本次测试的业务和指标目标，随执行保存。设备采样与正式判定另有依据。"""
+    model_config = ConfigDict(extra="forbid", allow_inf_nan=False)
+    expected_network: NetworkType | None = None
+    terminal_protocol: str | None = Field(default=None, min_length=1, max_length=120)
+    playback_seconds: float | None = Field(default=None, gt=0)
+    traffic: TrafficConfig
+    kpi_definitions: list[KPIDefinition] | None = None
+
+
 class Selection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     scenario_id: str = Field(min_length=1)
@@ -46,6 +60,8 @@ class Selection(BaseModel):
     asset_id: UUID | None = None
     calibration_id: UUID | None = None
     receiver_power: ReceiverPowerRequest | None = None
+    test_settings: ConductedTestSettings | None = None
+    road_project: RoadProjectReference | None = None
 
 
 def _options(db, model):
@@ -57,7 +73,7 @@ def _options(db, model):
     return [{"id": str(row.id), "name": row.name} for row in query.order_by(model.name, model.id)]
 
 
-def mock_asset(directory: Directory, name: str):
+def mock_asset(directory: Directory, name: str, *, playback_clock: dict | None = None):
     raw = (directory / "manifest.json").read_bytes()
     manifest = json.loads(raw)
     links = manifest["links"]
@@ -78,6 +94,8 @@ def mock_asset(directory: Directory, name: str):
         if digest != link["sha256"]:
             raise ValueError(f"文件 {filename} 的内容与登记摘要不一致。")
         verified.append(dict(tx=tx, rx=rx, file=filename, sha256=digest))
+    if playback_clock is not None:
+        playback_clock.update(manifest_clock(manifest))
     digest = hashlib.sha256(raw).hexdigest()
     return {"kind": "asc_manifest", "mock_only": True, "mock_ref": "mock-asc:" + digest,
             "name": name, "sha256": digest, "links": verified}
@@ -178,6 +196,10 @@ def real_preflight(db, hal, lab, asset, network, *, calibration_id=None, scope=N
 
 def resolve(db: Session, selection: Selection, *, playback_files=None):
     ids = selection.model_dump(mode="json")
+    if selection.road_project is None:
+        ids.pop("road_project")
+    if selection.test_settings is None:
+        ids.pop("test_settings")
     if selection.receiver_power is None:
         ids.pop("receiver_power")
     if selection.calibration_id is None:
@@ -212,10 +234,12 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
         reasons.append("实验室登记缺少当前场景内容的摘要，或场景已修改，请重新核对登记。")
     asset = db.get(ChannelAsset, selection.asset_id) if selection.asset_id else None
     summary = None
+    playback = {}
     mock_registration = matches[0] if len(matches) == 1 and matches[0].get("kind") == "asc_manifest" else None
     if mock_registration:
         try:
-            summary = mock_asset(Directory(mock_registration["manifest_dir"]), mock_registration["name"])
+            summary = mock_asset(Directory(mock_registration["manifest_dir"]), mock_registration["name"],
+                                 playback_clock=None if selection.road_project else playback)
             summary["id"] = ids["asset_id"]
             if playback_files is not None:
                 playback_files["directory"] = mock_registration["manifest_dir"]
@@ -281,6 +305,28 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                 reasons.append("工程所属的仪器型号或连接与实验室绑定不一致。")
         if str(asset.payload["scd_config"].get("mimo", "")).lower() != "4x2":
             reasons.append("工程登记的天线规模与下行四发二收不一致。")
+    if selection.road_project:
+        try:
+            playback = project_playback(selection.road_project, "conducted", summary, matches)
+        except (OSError, ValueError, TypeError, KeyError, BadZipFile) as exc:
+            reasons.append(f"道路工程无法核对：{exc}")
+
+    if (selection.test_settings and selection.test_settings.expected_network
+            and selection.test_settings.expected_network != scenario.network.type):
+        reasons.append("本次指定的基站协议与已登记场景的协议不符。")
+    if mock_registration or selection.test_settings or selection.road_project:
+        requested = selection.test_settings.playback_seconds if selection.test_settings else None
+        full = playback.get("full_duration_s") if mock_registration else scenario.route.duration_s
+        duration_source = playback.get("duration_source") if mock_registration else "场景预设运行时长"
+        if full is None or not math.isfinite(full) or full <= 0:
+            reasons.append("未取得可用的播放时长。")
+        else:
+            if requested is not None and (not mock_registration or requested > full):
+                reasons.append("仅模拟清单可从起点缩短播放时长，且不能超过整段时长。")
+            playback.update(start_s=0, duration_s=full if requested is None else requested,
+                            full_duration_s=full, duration_source=duration_source)
+    if binding and binding.get("execution_mode") == "simulated" and summary and not summary.get("mock_only"):
+        reasons.append("模拟绑定需要模拟专用播放清单，不能启动设备工程。")
     if selection.receiver_power is not None:
         from app.services.road_test.receiver_power_plan import registered_plan
         try:
@@ -295,6 +341,8 @@ def resolve(db: Session, selection: Selection, *, playback_files=None):
                 reasons.append("需核对工程电平参考面、输出范围及目标平均功率工作点，方可按此预测发射。")
         except (OSError, ValueError, KeyError, TypeError) as exc:
             reasons.append(f"接收功率计划未通过核对：{exc}")
+    if playback:
+        ids["playback"] = playback
     return {**ids, "scenario_version": scenario.version, "scenario_sha256": scenario_sha256,
             "scenario_snapshot": scenario_snapshot, "lab_name": lab.name if lab else None,
             "asset": summary, "binding": binding, "port_mapping": mapping, "ready": not reasons, "reasons": reasons}
@@ -324,6 +372,7 @@ class ConductedBinding(BaseModel):
 
 
 class ConductedPreparation(Selection):
+    playback: dict | None = None
     scenario_sha256: str
     scenario_version: str
     scenario_snapshot: dict

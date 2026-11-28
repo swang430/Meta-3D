@@ -18,7 +18,7 @@ def setup_ota(client, tmp_path, *, frequency_mhz=3500):
     scenario = client.post(ROOT+'/scenarios', json=scenario).json()
     sid = scenario['id']
     (tmp_path/'route.asc').write_bytes(b'ota waveform')
-    raw = json.dumps(dict(mode='ota', direction='downlink', links=[dict(file='route.asc',sha256=hashlib.sha256(b'ota waveform').hexdigest())])).encode()
+    raw = json.dumps(dict(mode='ota', direction='downlink', header=dict(cir_count=38, rate_hz=1), links=[dict(file='route.asc',sha256=hashlib.sha256(b'ota waveform').hexdigest())])).encode()
     (tmp_path/'manifest.json').write_bytes(raw)
     preview = client.post(ROOT+'/ota/prepare',json={'scenario_id':sid})
     assert preview.status_code == 200, preview.text
@@ -45,7 +45,7 @@ def test_missing_ota_draft(client):
     assert client.post(ROOT+'/executions/'+data['execution_id']+'/control',json={'action':'start'}).status_code==409
 
 
-@pytest.mark.parametrize('change',['none','position','polarization','mapping','calibration','direction','bytes','mixed','duplicate'])
+@pytest.mark.parametrize('change',['none','position','polarization','mapping','calibration','direction','bytes','missing_clock','mixed','duplicate'])
 def test_ota_evidence_and_control(client,tmp_path,monkeypatch,change):
     from app.models.lab_profile import LabProfile
     sel,reg,lab_id=setup_ota(client,tmp_path)
@@ -55,6 +55,13 @@ def test_ota_evidence_and_control(client,tmp_path,monkeypatch,change):
     if change=='calibration': reg['calibration']['frequency_max_mhz']=1
     if change=='direction': reg['direction']='uplink'
     if change=='bytes': (tmp_path/'route.asc').write_bytes(b'changed')
+    if change=='missing_clock':
+        path = tmp_path / 'manifest.json'
+        manifest = json.loads(path.read_bytes())
+        del manifest['header']
+        raw = json.dumps(manifest).encode()
+        path.write_bytes(raw)
+        reg['sha256'] = hashlib.sha256(raw).hexdigest()
     if change=='mixed':
         from app.services.instrument_hal_service import get_hal_service
         monkeypatch.setitem(get_hal_service().drivers,'channelEmulator',object())
@@ -64,8 +71,11 @@ def test_ota_evidence_and_control(client,tmp_path,monkeypatch,change):
     assert r.status_code==200,r.text
     snapshot=r.json()
     assert snapshot['ready'] is (change=='none'),snapshot
+    if change=='missing_clock':
+        assert any('播放文件头' in reason for reason in snapshot['reasons'])
     if change!='none':
         assert snapshot['reasons'];return
+    assert snapshot['playback']['duration_s'] == 37
     created=client.post(ROOT+'/ota/executions',json=sel).json()
     url=ROOT+'/executions/'+created['execution_id']
     assert created['config']['ota']==snapshot

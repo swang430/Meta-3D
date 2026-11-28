@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Alert, Button, Group, Modal, Select, Stack, Text } from '@mantine/core'
+import { Alert, Button, NumberInput, Group, Modal, Select, Stack, Text } from '@mantine/core'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { isAxiosError } from 'axios'
 import {
@@ -19,17 +19,18 @@ const fields = [
   ['实验室', 'labs', 'lab_profile_id'], ['暗室', 'chambers', 'chamber_id'], ['可播放工程', 'assets', 'asset_id'],
 ] as const
 
-export function OtaExecutionModal({ opened, onClose, scenario, initialId, onViewExecution }: {
+export function OtaExecutionModal({ opened, onClose, scenario, initialId, initialSelection, onViewExecution }: {
   opened: boolean
   onClose: () => void
   scenario: { id: string; name: string }
   onViewExecution?: (id: string) => void
+  initialSelection?: OtaSelection
   initialId?: string
 }) {
   const cache = useQueryClient()
-  const key = 'vrt-ota:' + scenario.id
-  const [id, setId] = useState(() => initialId || sessionStorage.getItem(key) || '')
-  const [selection, setSelection] = useState<OtaSelection>({
+  const key = 'vrt-ota:' + scenario.id + (initialSelection?.road_project?.version || '')
+  const [id, setId] = useState(() => initialId || (!initialSelection && sessionStorage.getItem(key)) || '')
+  const [selection, setSelection] = useState<OtaSelection>(initialSelection ?? {
     scenario_id: scenario.id, direction: 'downlink', lab_profile_id: null, chamber_id: null, asset_id: null,
   })
   const [report, setReport] = useState(false)
@@ -51,7 +52,7 @@ export function OtaExecutionModal({ opened, onClose, scenario, initialId, onView
   const save = useMutation({
     mutationFn: () => saveOta(selection),
     onSuccess: record => {
-      sessionStorage.setItem('vrt-ota:' + record.scenario_id, record.execution_id)
+      sessionStorage.setItem(key, record.execution_id)
       setId(record.execution_id)
       void cache.invalidateQueries({ queryKey: ['road-test-executions'] })
     },
@@ -71,8 +72,8 @@ export function OtaExecutionModal({ opened, onClose, scenario, initialId, onView
   function retry() {
     if (!snapshot && detail.data) setSelection(previous => ({ ...previous, scenario_id: detail.data!.scenario_id }))
     if (snapshot) setSelection({ scenario_id: snapshot.scenario_id, direction: 'downlink', lab_profile_id: snapshot.lab_profile_id,
-      chamber_id: snapshot.chamber_id, asset_id: snapshot.asset_id })
-    const storedKey = 'vrt-ota:' + (detail.data?.scenario_id || selection.scenario_id)
+      chamber_id: snapshot.chamber_id, asset_id: snapshot.asset_id, road_project:snapshot.road_project, target_field_v_m:snapshot.target_field_v_m })
+    const storedKey = key
     if (sessionStorage.getItem(storedKey) === id) sessionStorage.removeItem(storedKey)
     setId(''); archive.reset(); start.reset(); stop.reset(); save.reset()
   }
@@ -87,6 +88,8 @@ export function OtaExecutionModal({ opened, onClose, scenario, initialId, onView
         onChange={value => { save.reset(); setSelection(previous => field === 'lab_profile_id'
           ? { ...previous, lab_profile_id: value, chamber_id: null, asset_id: null }
           : field === 'chamber_id' ? { ...previous, chamber_id: value, asset_id: null } : { ...previous, asset_id: value }) }} />)}
+      {!id && <NumberInput label="本次测试区目标场强（V/m，仅记录）" min={0} value={selection.target_field_v_m ?? ''}
+        onChange={v=>setSelection(prev=>({...prev,target_field_v_m:typeof v==='number'?v:null}))}/>}
       <Alert color="orange">本入口使用模拟基站和模拟信道仿真器。模拟样本不参与正式性能判定，真实暗室场、功率与安全停机仍待现场验收。</Alert>
       {snapshot && <OtaSetup snapshot={snapshot} />}
       {!id && <Button disabled={!snapshot} loading={save.isPending} onClick={() => save.mutate()}>保存准备记录</Button>}

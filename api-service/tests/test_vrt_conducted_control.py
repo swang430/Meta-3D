@@ -31,7 +31,7 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
     scenario = client.get(root + "/scenarios").json()[0]
     scenario = client.get(root + "/scenarios/" + scenario["id"]).json()
     if outcome in ("complete", "scenario_changed"):
-        scenario["route"]["duration_s"] = 0.15
+        scenario["route"]["duration_s"] = 30
         scenario["name"] = "冻结场景"
         result = client.post(root + "/scenarios", json=scenario)
         assert result.status_code == 201, result.text
@@ -46,7 +46,7 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
                 name = f"fixture_TX{tx}_RX{rx}_H.asc"
                 (directory / name).write_bytes(name.encode())
                 links.append(dict(tx=tx, rx=rx, file=name, sha256=hashlib.sha256(name.encode()).hexdigest()))
-        (directory / "manifest.json").write_text(json.dumps(dict(mode="conducted", direction="downlink", links=links)))
+        (directory / "manifest.json").write_text(json.dumps(dict(mode="conducted", direction="downlink", links=links, header=dict(cir_count=3, rate_hz=2))))
     if outcome in ("extra_file", "changed_bytes") and directory != tmp_path:
         import shutil
         directory = Path(shutil.copytree(directory, tmp_path / "source"))
@@ -71,6 +71,20 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
         db.add(lab)
         db.commit()
         selection["lab_profile_id"] = str(lab.id)
+    if outcome == "complete":
+        settings = {"traffic": {"type": "video", "direction": "DL"}}
+        header = json.loads((directory / "manifest.json").read_bytes())["header"]
+        span = (header["cir_count"] - 1) / header["rate_hz"]
+        default = client.post(root + "/conducted/prepare", json=selection).json()
+        assert default["ready"] and default["playback"]["duration_s"] == span
+        preview = client.post(root + "/conducted/prepare", json={**selection, "test_settings": settings}).json()
+        assert preview["ready"] and preview["playback"]["duration_s"] == span
+        assert preview["playback"]["duration_source"] == "模拟文件首末响应间隔"
+        exceeded = client.post(root + "/conducted/prepare", json={
+            **selection, "test_settings": {**settings, "playback_seconds": span + 0.1}
+        }).json()
+        assert not exceeded["ready"] and any("超过整段时长" in r for r in exceeded["reasons"])
+        selection["test_settings"] = {**settings, "playback_seconds": 0.08}
     saved = client.post(root + "/conducted/executions", json=selection).json()
     if outcome == "missing_digest":
         assert not saved["config"]["conducted"]["ready"]
@@ -141,7 +155,13 @@ def test_mock_manifest_playback_and_stop(client, sample_topology_data, tmp_path,
             time.sleep(0.05)
         assert client.get(url).json()["status"] == "completed"
         report = client.get(url + "/report").json()
-        assert report["route"]["duration_s"] == 0.15
+        assert report["route"]["duration_s"] == 30
+        elapsed = client.get(url + "/status").json()["elapsed_time_s"]
+        assert 0.08 <= elapsed < 5
+        observations = client.get(url + "/metrics").json()["observations"]
+        assert observations and all(0 <= row["time_s"] <= 0.08 for row in observations)
+        assert report["conducted_setup"]["playback"]["duration_s"] == 0.08
+        assert report["conducted_setup"]["test_settings"]["traffic"]["type"] == "video"
         report.pop("generated_at")
         scenario_url = root + "/scenarios/" + scenario["id"]
         for edit in (lambda: client.put(scenario_url, json={"name": "新名称"}), lambda: client.delete(scenario_url)):
