@@ -87,7 +87,7 @@ export function CreateScenarioDialog({ opened, onClose, testMode }: Props) {
         description: formData.description,
         category: formData.category as any,
         source: 'custom',
-        tags: [formData.category, formData.channelModel],
+        tags: [formData.category, formData.channelModel, '软件模拟预设'],
         network: {
           type: formData.networkType as any,
           band: formData.band,

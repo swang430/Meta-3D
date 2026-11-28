@@ -20,6 +20,7 @@ import {
 import { IconSearch, IconPlus, IconAlertCircle, IconBooks } from '@tabler/icons-react'
 import { fetchScenarios } from '../../api/roadTestService'
 import type { ScenarioCategory } from '../../types/roadTest'
+import { ProjectSceneLibrary } from './ProjectSceneLibrary'
 import ScenarioCard from './ScenarioCard'
 import { CreateScenarioDialog } from './CreateScenarioDialog'
 
@@ -70,6 +71,7 @@ export default function ScenarioLibrary({ onViewHistory }: ScenarioLibraryProps)
 
   return (
     <Stack gap="md">
+      <ProjectSceneLibrary />
       {/* 筛选栏 */}
       <Group>
         <TextInput
@@ -107,7 +109,7 @@ export default function ScenarioLibrary({ onViewHistory }: ScenarioLibraryProps)
           variant="light"
           onClick={() => setCreateDialogOpened(true)}
         >
-          创建场景
+          创建软件模拟场景
         </Button>
       </Group>
 
