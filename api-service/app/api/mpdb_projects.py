@@ -815,7 +815,8 @@ def register_scene(source_id: UUID, project_id: UUID, request: SceneName):
                         with archive.open(prefix + row["file"]) as stream:
                             if hashlib.file_digest(stream,"sha256").hexdigest() != row["sha256"]:
                                 raise ValueError("工程文件摘要不符：" + row["file"])
-            version.update(json.dumps([timing.get("source_times_s"), timing.get("time_source")],
+            clock = manifest if mode == "ota" else timing
+            version.update(json.dumps([clock.get("source_times_s"), clock.get("time_source")],
                                       allow_nan=False).encode())
             package_digest = _file_digest(archived)
             version.update(bytes.fromhex(package_digest))
@@ -823,8 +824,8 @@ def register_scene(source_id: UUID, project_id: UUID, request: SceneName):
             record = dict(name=name, source_sha256=source, version=key, mode=mode, direction="downlink",
                           tx_ports=timing["tx_ports"], rx_ports=timing["rx_ports"],
                           source_frames=len(timing["frame_ids"]), carrier_hz=manifest["header"]["carrier_hz"],
-                          time_source=manifest.get("time_source") or timing.get("time_source"),
-                          source_times_s=timing.get("source_times_s"), package_sha256=package_digest,
+                          time_source=clock.get("time_source"),
+                          source_times_s=clock.get("source_times_s"), package_sha256=package_digest,
                           source_id=str(source_id), project_id=str(project_id))
             (stage / "scene.json").write_text(json.dumps(record, ensure_ascii=False))
             target = root / source / key

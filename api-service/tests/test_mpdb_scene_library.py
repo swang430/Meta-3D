@@ -54,3 +54,28 @@ def test_scene_reference_survives_workbench_cleanup_and_rejects_wrong_file(tmp_p
     saved = next((tmp_path / "data/road-scenes").glob("*/*/project.zip"))
     saved.unlink()
     assert client.get("/channel-assets/mpdb-projects/scenes").json()[0]["available"] is False
+
+
+def test_registered_ota_clock_matches_dynamic_manifest(tmp_path, monkeypatch):
+    from app.api.mpdb_projects import SceneName
+
+    source, project = uuid4(), uuid4()
+    folder = tmp_path / str(source)
+    folder.mkdir()
+    monkeypatch.setattr(projects, "storage", lambda: tmp_path)
+    monkeypatch.chdir(tmp_path)
+    with ZipFile(folder / "source.zip", "w") as archive:
+        archive.writestr("R0B0S0D.mpdb", b"mpdb")
+    timing = dict(frame_ids=[0, 1], tx_ports=[0], rx_ports=[0], time_source=None, source_times_s=None)
+    (folder / "timing.json").write_text(json.dumps(timing))
+    with ZipFile(folder / f"{project}.zip", "w") as archive:
+        for prefix in ("baseline/", "dynamic/"):
+            manifest = dict(source_sha256=hashlib.sha256(b"mpdb").hexdigest(), mode="ota",
+                            direction="downlink", tx_ports=[0], rx_ports=[0], header={"carrier_hz":2e9},
+                            links=[{"file":"a.asc","sha256":hashlib.sha256(b"asc").hexdigest()}])
+            if prefix == "dynamic/":
+                manifest.update(time_source="operator_constant_speed", source_times_s=[0., 1.25])
+            archive.writestr(prefix+"manifest.json", json.dumps(manifest))
+            archive.writestr(prefix+"a.asc", b"asc")
+    record = projects.register_scene(source, project, SceneName(name="恒速轨迹"))
+    assert (record["time_source"], record["source_times_s"]) == ("operator_constant_speed", [0., 1.25])
